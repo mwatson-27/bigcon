@@ -1,9 +1,9 @@
 # THE BIG CON
 
-Online multiplayer evidence-board game (2–8 players). Open `bigcon.html` in a browser.
+Online multiplayer evidence-board game (2–8 players). Open `bigcon.html` in a browser. Keep `game-data.js`, `game-engine.js` and `game-ui.js` in the same folder.
 
 - One player hosts and shares the 5-letter room code
-- Everyone else joins with the same file
+- Everyone else uses the same files
 - Needs internet the first time (PeerJS)
 
 ## This build
