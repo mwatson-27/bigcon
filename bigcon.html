@@ -3,104 +3,108 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>The Big Con — online multiplayer (2–8)</title>
+<title>THE BIG CON — jtportal edition</title>
+<link rel="icon" href="https://raw.githubusercontent.com/mwatson-27/jtportal/main/static/jtportal.ico">
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
-body{font-family:Georgia,'Times New Roman',serif;color:#e9ddc2;background:#0f0a05 radial-gradient(1100px 700px at 35% 12%,#281a0e,#0f0a05 78%);background-attachment:fixed}
-#toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-70px);background:#f2ead8;color:#241c12;font-weight:800;padding:10px 24px;border-radius:30px;border:2px solid #cf3a2e;box-shadow:0 10px 30px rgba(0,0,0,.6);opacity:0;transition:all .35s;z-index:90;pointer-events:none;font-size:14px;letter-spacing:1px;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
+body{font-family:'Times New Roman',Times,serif;color:#f2f2f2;background:#1d201f}
+#toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-70px);background:#168388;color:#fff;font-weight:800;padding:10px 24px;border-radius:0;border:2px solid #000;box-shadow:0 10px 30px rgba(0,0,0,.6);opacity:0;transition:all .35s;z-index:90;pointer-events:none;font-size:14px;letter-spacing:1px;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
 #toast.show{opacity:1;transform:translate(-50%,0)}
-#setup{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-.setupcard{background:#f2ead8;color:#241c12;max-width:700px;width:100%;border-radius:14px;border:3px solid #b0453a;padding:30px 34px;box-shadow:0 24px 80px rgba(0,0,0,.75)}
-.bigtitle{font-size:40px;font-weight:900;letter-spacing:6px;border-bottom:4px solid #cf3a2e;display:inline-block;padding-bottom:4px}
-.tag{font-size:17px;font-style:italic;color:#5c4a33;margin:12px 0 4px}
-.intro{font-size:13px;line-height:1.55;color:#3b2f1e}
+#motd{width:100%;background:#000;color:#fff;overflow:hidden;white-space:nowrap;position:relative;font-family:Times New Roman,Times,serif;font-size:22px;padding:8px 0;border-bottom:2px solid #168388}
+#motd span{display:inline-block;white-space:nowrap;animation:ticker 180s linear infinite}
+@keyframes ticker{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+#setup{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:0 24px 24px}
+.setupcard{background:#111413;color:#f2f2f2;max-width:720px;width:100%;border-radius:0;border:2px solid #168388;padding:28px 32px;box-shadow:0 24px 80px rgba(0,0,0,.75);margin-top:28px}
+.bigtitle{font-size:44px;font-weight:900;letter-spacing:4px;background:#168388;color:#fff;display:inline-block;padding:10px 18px;margin:0 0 8px}
+.tag{font-size:17px;font-style:italic;color:burlywood;margin:12px 0 4px}
+.intro{font-size:13px;line-height:1.55;color:#d8d8d8}
 .chooserow{display:flex;gap:10px;margin:18px 0}
-.modebtn{flex:1;font-family:inherit;font-size:16px;font-weight:900;letter-spacing:1px;padding:16px 10px;border-radius:10px;border:2px solid #241c12;background:none;cursor:pointer;color:#241c12}
-.modebtn:hover{background:#241c12;color:#f2ead8}
+.modebtn{flex:1;font-family:inherit;font-size:16px;font-weight:900;letter-spacing:1px;padding:16px 10px;border-radius:0;border:2px solid #168388;background:#000;cursor:pointer;color:#fff}
+.modebtn:hover{background:#168388;color:#fff}
 .netform{display:none;flex-direction:column;gap:10px;margin:14px 0}
 .netform.show{display:flex}
 .namelab{display:flex;align-items:center;gap:10px}
-.namelab input{flex:1;font-family:inherit;font-size:15px;padding:9px 12px;border-radius:8px;border:2px solid #b8a888;background:#fffaf0;color:#241c12;min-width:0}
+.namelab input{flex:1;font-family:inherit;font-size:15px;padding:9px 12px;border-radius:0;border:2px solid #168388;background:#000;color:#fff;min-width:0}
 .namelab input.code{text-transform:uppercase;letter-spacing:4px;font-weight:800;text-align:center;flex:0 0 170px}
-.gobtn{font-family:inherit;font-size:16px;font-weight:900;letter-spacing:1px;padding:12px;border-radius:10px;border:none;background:#cf3a2e;color:#fff3df;cursor:pointer}
-.gobtn:hover{background:#b0453a}
+.gobtn{font-family:inherit;font-size:16px;font-weight:900;letter-spacing:1px;padding:12px;border-radius:0;border:2px solid #000;background:#168388;color:#fff;cursor:pointer}
+.gobtn:hover{background:#0e5c60}
 .gobtn:disabled{opacity:.4;cursor:not-allowed}
-#netStatus{font-size:12.5px;color:#8a5a20;min-height:18px;margin-top:8px;font-style:italic}
-#netStatus.err{color:#a02015;font-weight:700}
+#netStatus{font-size:12.5px;color:aqua;min-height:18px;margin-top:8px;font-style:italic}
+#netStatus.err{color:#ff6b5e;font-weight:700}
 #lobbyView{display:none;margin:14px 0}
-.codeline{background:#241c12;color:#f5c542;border-radius:10px;padding:12px;text-align:center}
-.codeline .cl{font-size:10px;letter-spacing:3px;color:#a08c6a}
+.codeline{background:#000;color:aqua;border-radius:0;padding:12px;text-align:center;border:1px solid #168388}
+.codeline .cl{font-size:10px;letter-spacing:3px;color:#9ad}
 .codeline .cc{font-size:34px;font-weight:900;letter-spacing:10px}
-.copybtn{margin-top:6px;font-family:inherit;font-size:11px;background:none;border:1px solid #6b5335;color:#d8c69e;border-radius:6px;padding:4px 12px;cursor:pointer}
+.copybtn{margin-top:6px;font-family:inherit;font-size:11px;background:none;border:1px solid #168388;color:#9ad;border-radius:0;padding:4px 12px;cursor:pointer}
 .lobbylist{margin-top:12px}
-.lrow{display:flex;align-items:center;gap:9px;background:#e8ddc4;border-radius:8px;padding:8px 12px;font-size:14px;margin-top:6px}
+.lrow{display:flex;align-items:center;gap:9px;background:#000;border:1px solid #333;border-radius:0;padding:8px 12px;font-size:14px;margin-top:6px}
 .lrow .ld{width:12px;height:12px;border-radius:50%}
 .lrow .ln{font-weight:800}
 .lrow .lh{margin-left:auto;font-size:10.5px;letter-spacing:1px;color:#8a7a5f}
 .setuplinks{margin-top:12px;text-align:center}
-.setuplinks button{background:none;border:none;color:#8e2620;font-family:inherit;font-size:13px;cursor:pointer;text-decoration:underline;padding:4px}
+.setuplinks button{background:none;border:none;color:aqua;font-family:inherit;font-size:13px;cursor:pointer;text-decoration:underline;padding:4px}
 #app{display:none;flex-wrap:wrap;gap:14px;padding:14px;align-items:flex-start}
 #boardWrap{flex:1 1 640px;min-width:300px;position:relative}
 #board{display:block;width:100%;height:auto;border-radius:12px;box-shadow:0 14px 50px rgba(0,0,0,.65);cursor:grab;touch-action:none}
 #board.panning{cursor:grabbing}
 .zoombar{position:absolute;top:10px;right:12px;display:flex;gap:6px;z-index:5}
-.zoombar button{width:34px;height:34px;border-radius:8px;border:1px solid #6b5335;background:rgba(20,14,8,.82);color:#e9ddc2;font-family:inherit;font-size:16px;font-weight:800;cursor:pointer}
-.zoombar button:hover{background:#cf3a2e}
-.panhint{position:absolute;left:12px;bottom:10px;font-size:11px;letter-spacing:1px;color:#a08c6a;background:rgba(20,14,8,.75);padding:4px 10px;border-radius:20px;border:1px solid #4a3a28;z-index:5;pointer-events:none}
+.zoombar button{width:34px;height:34px;border-radius:0;border:1px solid #168388;background:#000;color:#fff;font-family:inherit;font-size:16px;font-weight:800;cursor:pointer}
+.zoombar button:hover{background:#168388}
+.panhint{position:absolute;left:12px;bottom:10px;font-size:11px;letter-spacing:1px;color:#9ad;background:#000;padding:4px 10px;border-radius:0;border:1px solid #168388;z-index:5;pointer-events:none}
 #side{flex:0 1 384px;max-width:100%;display:flex;flex-direction:column;gap:10px}
 @media(max-width:1080px){#app{flex-direction:column}#side{flex:1 1 auto;width:100%}}
-.netstrip{background:#171009;border:1px solid #4a3a28;border-radius:8px;padding:6px 11px;font-size:11px;letter-spacing:1px;color:#c9ae7e;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.netstrip b{color:#f5c542;letter-spacing:3px}
-.moodstrip{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#171009;border:1px solid #4a3a28;border-radius:8px;padding:6px 11px;font-size:11px;letter-spacing:.5px;color:#c9ae7e}
+.netstrip{background:#000;border:1px solid #168388;border-radius:0;padding:6px 11px;font-size:11px;letter-spacing:1px;color:#cde;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.netstrip b{color:aqua;letter-spacing:3px}
+.moodstrip{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#000;border:1px solid #168388;border-radius:0;padding:6px 11px;font-size:11px;letter-spacing:.5px;color:#cde}
 .moodstrip .mdot{width:9px;height:9px;border-radius:50%;flex:0 0 9px;animation:blink 1.4s infinite}
-.moodstrip .mwire{font-style:italic;color:#a08c6a;flex-basis:100%;font-size:10.5px;line-height:1.3}
-.brand .t1{font-size:26px;font-weight:900;letter-spacing:5px;color:#f2ead8;border-bottom:3px solid #cf3a2e;display:inline-block;padding-bottom:3px}
-.brand .t2{font-size:10px;letter-spacing:1px;color:#a08c6a;margin-top:5px}
-.turncard{background:#211813;border:2px solid #6b5335;border-radius:10px;padding:10px 14px}
-.turnlab{font-size:10px;letter-spacing:3px;color:#a08c6a}
+.moodstrip .mwire{font-style:italic;color:burlywood;flex-basis:100%;font-size:10.5px;line-height:1.3}
+.brand .t1{font-size:26px;font-weight:900;letter-spacing:4px;color:#fff;background:#168388;display:inline-block;padding:6px 10px}
+.brand .t2{font-size:10px;letter-spacing:1px;color:#9ad;margin-top:5px}
+.turncard{background:#111413;border:2px solid #168388;border-radius:0;padding:10px 14px}
+.turnlab{font-size:10px;letter-spacing:3px;color:#9ad}
 .turnname{font-size:23px;font-weight:800;line-height:1.15}
 .resline{font-size:15px;margin-top:3px;font-variant-numeric:tabular-nums}
 .holds{font-size:15px;margin-top:3px;letter-spacing:2px;min-height:18px;line-height:1.3}
 .danger{color:#ff6b5e;animation:blink 1s infinite;font-size:11px;letter-spacing:1px}
 @keyframes blink{50%{opacity:.35}}
-.phasecard{background:#211813;border:1px solid #4a3a28;border-radius:10px;padding:12px 14px;min-height:120px}
-.phlabel{font-size:10px;letter-spacing:3px;color:#e05a4d;font-weight:800;margin-bottom:6px}
+.phasecard{background:#111413;border:1px solid #168388;border-radius:0;padding:12px 14px;min-height:120px}
+.phlabel{font-size:10px;letter-spacing:3px;color:aqua;font-weight:800;margin-bottom:6px}
 .phasecard p{font-size:12.5px;margin:6px 0;line-height:1.45}
-.phasecard i{color:#c9ae7e}
-.pow{background:#191209;border:1px dashed #5a4530;border-radius:8px;padding:7px 9px;font-size:11.5px;color:#d8c69e;line-height:1.4;margin-bottom:7px}
+.phasecard i{color:burlywood}
+.pow{background:#000;border:1px dashed #168388;border-radius:0;padding:7px 9px;font-size:11.5px;color:#d8d8d8;line-height:1.4;margin-bottom:7px}
 .btns{display:flex;flex-direction:column;gap:6px}
-.sublabel{font-size:9.5px;letter-spacing:2px;color:#a08c6a;margin:7px 0 1px;font-weight:800}
-button.act{font-family:inherit;font-size:13px;padding:8px 11px;border-radius:8px;border:1px solid #6b5335;background:#f2ead8;color:#241c12;font-weight:700;cursor:pointer;text-align:left}
-button.act:hover:not(:disabled){background:#fff8e6;box-shadow:0 0 0 2px rgba(207,58,46,.45)}
+.sublabel{font-size:9.5px;letter-spacing:2px;color:#9ad;margin:7px 0 1px;font-weight:800}
+button.act{font-family:inherit;font-size:13px;padding:8px 11px;border-radius:0;border:1px solid #168388;background:#000;color:#fff;font-weight:700;cursor:pointer;text-align:left}
+button.act:hover:not(:disabled){background:#168388}
 button.act:disabled{opacity:.42;cursor:not-allowed}
-button.act.primary{background:#cf3a2e;color:#fff3df;border-color:#8e2620}
-button.act.primary:hover:not(:disabled){background:#b0453a}
-.ownnote{font-size:12.5px;color:#c9ae7e;font-style:italic}
-.dots{font-size:17px;color:#cf3a2e;letter-spacing:4px;margin:7px 0}
-.dots span{font-size:11px;color:#a08c6a;letter-spacing:1px}
-.paneltitle{font-size:10px;letter-spacing:3px;color:#a08c6a;margin-top:8px}
-.prow{display:flex;align-items:center;gap:9px;background:#1d150e;border:1px solid #3c2f1f;border-radius:8px;padding:7px 11px;font-size:13px;margin-top:5px}
-.prow.me{border-color:var(--pc);background:#271a10}
+button.act.primary{background:#168388;color:#fff;border-color:#000}
+button.act.primary:hover:not(:disabled){background:#0e5c60}
+.ownnote{font-size:12.5px;color:burlywood;font-style:italic}
+.dots{font-size:17px;color:aqua;letter-spacing:4px;margin:7px 0}
+.dots span{font-size:11px;color:#9ad;letter-spacing:1px}
+.paneltitle{font-size:10px;letter-spacing:3px;color:#9ad;margin-top:8px}
+.prow{display:flex;align-items:center;gap:9px;background:#000;border:1px solid #333;border-radius:0;padding:7px 11px;font-size:13px;margin-top:5px}
+.prow.me{border-color:var(--pc);background:#111413}
 .prow.targetable{cursor:pointer;border-color:#55c1ff;animation:blink 1.1s infinite}
 .prow .pdot{width:12px;height:12px;border-radius:50%;background:var(--pc,#999);flex:0 0 12px}
 .prow .pnum{font-weight:900;width:14px;text-align:center;color:var(--pc)}
 .pname{font-weight:700;max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pstats{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
-.pnodes{font-size:10px;color:#a08c6a;white-space:nowrap}
+.pnodes{font-size:10px;color:#9ad;white-space:nowrap}
 .prow.hot .pstats{color:#ff8a7a}
-.log{background:#191209;border:1px solid #3c2f1f;border-radius:8px;padding:9px 11px;height:190px;overflow-y:auto;font-size:11.5px;line-height:1.5;color:#cbb992}
+.log{background:#000;border:1px solid #333;border-radius:0;padding:9px 11px;height:190px;overflow-y:auto;font-size:11.5px;line-height:1.5;color:#cde}
 .log div{margin-bottom:2px}
-.chatbox{background:#191209;border:1px solid #3c2f1f;border-radius:8px;padding:8px 10px}
-.chatlist{height:96px;overflow-y:auto;font-size:11.5px;line-height:1.5;color:#d8c69e;margin-bottom:6px}
-.chatlist b{color:#f5c542}
+.chatbox{background:#000;border:1px solid #333;border-radius:0;padding:8px 10px}
+.chatlist{height:96px;overflow-y:auto;font-size:11.5px;line-height:1.5;color:#d8d8d8;margin-bottom:6px}
+.chatlist b{color:aqua}
 .chatrow{display:flex;gap:6px}
-.chatrow input{flex:1;font-family:inherit;font-size:12px;padding:6px 9px;border-radius:6px;border:1px solid #4a3a28;background:#0f0a05;color:#e9ddc2;min-width:0}
-.chatrow button{font-family:inherit;font-size:11px;font-weight:800;border-radius:6px;border:1px solid #6b5335;background:#2a1f12;color:#d8c69e;padding:6px 10px;cursor:pointer}
+.chatrow input{flex:1;font-family:inherit;font-size:12px;padding:6px 9px;border-radius:0;border:1px solid #168388;background:#111413;color:#fff;min-width:0}
+.chatrow button{font-family:inherit;font-size:11px;font-weight:800;border-radius:0;border:1px solid #168388;background:#000;color:#fff;padding:6px 10px;cursor:pointer}
 .footbtns{display:flex;gap:8px}
-button.mini{flex:1;font-family:inherit;background:none;border:1px solid #6b5335;color:#d8c69e;border-radius:8px;padding:7px;cursor:pointer;font-size:12px;letter-spacing:1px}
-button.mini:hover{background:#2a1f12}
+button.mini{flex:1;font-family:inherit;background:#000;border:1px solid #168388;color:#fff;border-radius:0;padding:7px;cursor:pointer;font-size:12px;letter-spacing:1px}
+button.mini:hover{background:#168388}
 .node{cursor:default}
 .node.click{cursor:pointer}
 .node .card{filter:drop-shadow(3px 5px 3px rgba(0,0,0,.55))}
@@ -118,34 +122,36 @@ button.mini:hover{background:#2a1f12}
 .fxb{pointer-events:none;animation:fxbig 3.4s ease-out forwards}
 @keyframes fxrise{0%{opacity:0;transform:translateY(16px)}12%{opacity:1;transform:translateY(0)}70%{opacity:1}100%{opacity:0;transform:translateY(-44px)}}
 @keyframes fxbig{0%{opacity:0;transform:translateY(30px) scale(.75)}15%{opacity:1;transform:translateY(0) scale(1)}75%{opacity:1}100%{opacity:0;transform:translateY(-56px) scale(1)}}
-.overlay{position:fixed;inset:0;background:rgba(5,3,1,.78);display:flex;align-items:center;justify-content:center;z-index:60;padding:18px}
-.mcard{background:#f2ead8;color:#241c12;border-radius:12px;max-width:620px;width:100%;border:2px solid #b0453a;box-shadow:0 24px 70px rgba(0,0,0,.8);max-height:88vh;overflow-y:auto}
-.mtitle{background:#cf3a2e;color:#fff3df;font-weight:800;letter-spacing:2px;padding:11px 18px;font-size:15px}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;z-index:60;padding:18px}
+.mcard{background:#111413;color:#f2f2f2;border-radius:0;max-width:620px;width:100%;border:2px solid #168388;box-shadow:0 24px 70px rgba(0,0,0,.8);max-height:88vh;overflow-y:auto}
+.mtitle{background:#168388;color:#fff;font-weight:800;letter-spacing:2px;padding:11px 18px;font-size:15px}
 .mbody{padding:15px 20px;font-size:14px;line-height:1.55}
 .mbody p{margin:8px 0}
-.mbody h4{margin:13px 0 3px;color:#8e2620;letter-spacing:1.5px;font-size:11.5px;text-transform:uppercase}
+.mbody h4{margin:13px 0 3px;color:aqua;letter-spacing:1.5px;font-size:11.5px;text-transform:uppercase}
 .mbody ul{margin:6px 0;padding-left:20px}
 .mbody li{margin:4px 0}
-.fine{font-size:11.5px;color:#8a7a5f;font-style:italic}
+.fine{font-size:11.5px;color:#9ad;font-style:italic}
 .mopts{display:flex;flex-wrap:wrap;gap:8px;padding:2px 18px 18px}
-.mopts button{font-family:inherit;background:#241c12;color:#f2ead8;border:none;border-radius:8px;padding:10px 15px;font-size:14px;font-weight:700;cursor:pointer}
-.mopts button:hover{background:#cf3a2e}
+.mopts button{font-family:inherit;background:#000;color:#fff;border:2px solid #168388;border-radius:0;padding:10px 15px;font-size:14px;font-weight:700;cursor:pointer}
+.mopts button:hover{background:#168388}
 .eventcard{text-align:center;padding:4px 2px 2px}
 .eicon{font-size:46px}
-.etitle{font-size:19px;font-weight:900;letter-spacing:.5px;margin:6px 0 2px;color:#8e2620}
-.etext{font-style:italic;color:#5c4a33;font-size:13px}
+.etitle{font-size:19px;font-weight:900;letter-spacing:.5px;margin:6px 0 2px;color:aqua}
+.etext{font-style:italic;color:burlywood;font-size:13px}
 .winname{font-size:30px;font-weight:900;text-align:center;margin:8px 0 2px}
-.winlist{font-size:12.5px;text-align:center;background:#e8ddc4;border-radius:8px;padding:9px;line-height:1.6;margin:8px 0}
+.winlist{font-size:12.5px;text-align:center;background:#000;border:1px solid #168388;border-radius:0;padding:9px;line-height:1.6;margin:8px 0}
 </style>
 </head>
 <body>
 <div id="toast"></div>
+<div id="motd"><span>THE BIG CON &nbsp;&nbsp;&nbsp; quite frankly, the dice were rigged from the start &nbsp;&nbsp;&nbsp; ECONOMICS BY MISTAKE &nbsp;&nbsp;&nbsp; jt portal 🔥🔥🔥 &nbsp;&nbsp;&nbsp; </span></div>
 
 <div id="setup">
  <div class="setupcard">
   <div class="bigtitle">THE BIG CON</div>
-  <p class="tag">The complete evidence board — now played across the internet. Seats 2–8.</p>
-  <p class="intro">All 76 exhibits are on the board: JTPortal, St Andrew's Cathedral School, the ACCC, the RBA, Citi, CommBank, NAB, ANZ, ASIC, the coat of arms, PETRONAS, MarketPlace Leichhardt, Quikstop, MADE, the World Economic Forum, Fox Business, the whole chart wall (10-year yields, real yield, inflation compensation, US·Japan·Germany·UK·Australia·Canada yields, cash rate, debt, spending, stocks, timeline, econ graphs), the commodities (WTI pit, blue barrels, tanker fleet, gold coins, banknotes, coal train, coal terminal, forklift), the headlines (“Quite frankly, JTPortal…”, “Bond Markets Revolt”, “Big Bessent”, “The Jim…”, INSIDER TRADING, CEO COAL, BRAD PITT, The Big Short) and the polaroids — Watson, Bessent, Chalmers, Albanese, Trump, Bullock, James Bond of Citibank, The Rock, the Whistleblower — plus the IB Diploma, the Sisyphus Boulder and the Australian Monetary Policy Competition.<br><br>
+  <p class="tag">The complete evidence board — charts unstacked, Quikstop on the move. Seats 2–8.</p>
+  <p class="intro">All 82 exhibits are on the board: JTPortal, St Andrew's Cathedral School, the ACCC, the RBA, Citi, CommBank, NAB, ANZ, Westpac, ASIC, the coat of arms, PETRONAS, BHP, MarketPlace Leichhardt, Quikstop, MADE, the World Economic Forum, Fox Business, Herald Sun / The Jim Reaper, the charts now pinned all over the collage (10-year master in the middle; US by Trump; Japan by the tankers; Germany by Davos; UK by the papers; Australia by the coat of arms; Canada by the vault), the commodities (WTI pit, blue barrels, tanker fleet, gold coins, banknotes, coal train, coal terminal, forklift, BHP), the headlines (“Quite frankly, JTPortal…”, “Bond Markets Revolt”, “Big Bessent”, “The Jim…”, INSIDER TRADING, CEO COAL, BRAD PITT, The Big Short) and the polaroids — Watson, Bessent, Chalmers, Albanese, Trump, Bullock, James Bond of Citibank, The Rock, the Whistleblower, Toktimer — plus the IB Diploma, the Sisyphus Boulder, the circled ASICS shoe, the bullet train and the Australian Monetary Policy Competition.<br><br>
+  <b>Each game Quikstop opens in a different neighbourhood</b> — the inner west, the docks, across from the RBA, down by MarketPlace, or next to MADE — so the opening map is never the same.<br><br>
   Every market event now <b>shifts the mood of the whole board</b> — watch the ticker, the tint and the glowing nodes — and money, Heat and Intel <b>pop up on the board as they happen</b>. Intel is a currency with teeth: <b>burn favors, spy on the event deck, open the Dossier, sweep for bugs, or sell rumors at the exchange</b> (rates rise when the market panics).<br><br>
   <b>Online play (2–8 players):</b> one player hosts and gets a room code; everyone else joins with it. Each screen sees only its own secret prompts. Everyone must run <b>this same file</b>.</p>
   <div class="chooserow">
@@ -182,34 +188,35 @@ button.mini:hover{background:#2a1f12}
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-/* ================= THE COMPLETE EVIDENCE BOARD — 76 exhibits ================= */
+/* ================= THE COMPLETE EVIDENCE BOARD — 82 exhibits ================= */
 const NODES=[
-{id:'citi',name:['CITI TOWER'],icon:'🏦',type:'BANK',shape:'logo',band:'#1a5fa8',income:3,cost:8,x:230,y:165,rot:-2,sub:'too big to fail · 007 on payroll',sp:'+$1 income per CORPORATE node you own (James Bond is on the payroll).'},
-{id:'commbank',name:['COMMONWEALTH BANK'],icon:'🏦',type:'BANK',shape:'logo',band:'#d4a017',income:2,cost:6,x:425,y:105,rot:2,sub:'can’t be beat? we’ll see',sp:'+$2 income while you own any other BANK (the big four stick together).'},
-{id:'nab',name:['NAB'],icon:'🏦',type:'BANK',shape:'logo',band:'#c0392b',income:2,cost:6,x:615,y:170,rot:-1,sub:'more than money',sp:'Seizing CHART nodes costs you $1 less (their analysts share screens).'},
-{id:'anz',name:['ANZ'],icon:'🏦',type:'BANK',shape:'logo',band:'#2e7d64',income:2,cost:6,x:805,y:110,rot:2,sub:'the blue bank',sp:'+$1 income per CHART node you own (ANZ reads the data).'},
-{id:'bond',name:['THE BOND DESK'],icon:'💼',type:'BANK',income:3,cost:8,x:1050,y:305,rot:1,sub:'“Government Bond: the collapse of the world’s safest investment.”',sp:'Gain 2 Intel when you seize it. Collects the tolls when BOND MARKETS REVOLT.'},
-{id:'hedge',name:['THE HEDGE FUND'],icon:'🕶️',type:'BANK',income:2,cost:6,x:1240,y:300,rot:-2,sub:'somebody’s shorting',sp:'+$3 whenever ANY player is raided — even you.'},
-{id:'rba',name:['RESERVE BANK','OF AUSTRALIA'],icon:'🏛️',type:'REGULATOR',shape:'logo',band:'#4a5a66',income:2,cost:10,x:1000,y:165,rot:1,sub:'sets the price of money',sp:'−1 Heat at the start of each of your turns. The cash rate is whatever you say it is.'},
-{id:'asic',name:['ASIC'],icon:'⚖️',type:'REGULATOR',shape:'logo',band:'#1f3a5f',income:1,cost:5,x:1185,y:110,rot:-1,sub:'the corporate cop',sp:'Unlocks AUDIT ($4): any rival +1 Heat, once per turn.'},
-{id:'accc',name:['ACCC'],icon:'🧐',type:'REGULATOR',shape:'logo',band:'#233a8f',income:1,cost:5,x:1370,y:170,rot:1,sub:'reviews every merger',sp:'When a rival hostile-takes one of YOUR nodes, they pay you an extra $2 (ACCC review fee).'},
-{id:'gov',name:['AUSTRALIAN GOVERNMENT','COAT OF ARMS'],icon:'🦘',type:'REGULATOR',shape:'logo',band:'#1b3a2a',income:2,cost:8,x:1560,y:110,rot:-1,sub:'documents, logos & ribbons',sp:'Unlocks BUDGET NIGHT ($3): every rival pays you $1 and you gain +1 Intel.'},
-/* — the chart wall — */
-{id:'us',name:['US BOND','YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:2150,y:100,rot:1,sub:'the safe haven',sp:'+$1 while you own the 10-YEAR MASTER CHART; +$1 on BOND MARKETS REVOLT; +$2 on TRUMP TWEETS TARIFFS.'},
-{id:'japan',name:['JAPAN BOND','YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:2305,y:100,rot:-1,sub:'curve control',sp:'+$1 while you own the MASTER CHART; +$3 on BOND MARKETS REVOLT (curve control fails).'},
-{id:'ger',name:['GERMANY BOND','YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:2150,y:180,rot:-1,sub:'the bund',sp:'+$1 while you own the MASTER CHART; +$1 on BOND MARKETS REVOLT.'},
-{id:'uk',name:['UK BOND','YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:2305,y:180,rot:1,sub:'gilts gone wild',sp:'+$1 while you own the MASTER CHART; +$1 on BOND MARKETS REVOLT.'},
-{id:'aus',name:['AUSTRALIAN','BOND YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:2150,y:260,rot:1,sub:'home soil',sp:'+$1 while you own the MASTER CHART; +$1 on BOND MARKETS REVOLT.'},
-{id:'can',name:['CANADIAN','BOND YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:2305,y:260,rot:-1,sub:'the polite one',sp:'+$1 while you own the MASTER CHART; +$1 on BOND MARKETS REVOLT.'},
-{id:'tenyear',name:['10-YEAR GOVT','BOND YIELDS'],type:'CHART',shape:'chart',spark:'up',income:1,cost:4,x:2150,y:345,rot:1,sub:'the master chart',sp:'THE MASTER CHART: +$1 income for every other CHART node you own.'},
-{id:'real',name:['REAL YIELD','CHART'],type:'CHART',shape:'chart',spark:'down',income:0,cost:3,x:2305,y:345,rot:-1,sub:'what things really cost',sp:'Stand here (once owned) to SCRUB: free −1 Heat — the real numbers calm everyone.'},
-{id:'infl',name:['INFLATION','COMPENSATION'],type:'CHART',shape:'chart',spark:'up',income:1,cost:3,x:2150,y:425,rot:-1,sub:'the hidden tax',sp:'Your salary is $4, not $3 — indexed to CPI.'},
-{id:'cash',name:['CASH-RATE','CHART'],type:'CHART',shape:'chart',spark:'step',income:1,cost:3,x:2305,y:425,rot:1,sub:'the RBA headline',sp:'+$2 whenever the RBA CASH-RATE DECISION is drawn (you set it).'},
-{id:'debt',name:['GOVERNMENT DEBT','COMPARISON'],type:'CHART',shape:'chart',spark:'up',income:1,cost:3,x:2150,y:510,rot:-1,sub:'who owes whom',sp:'+$1 income while you own the AUSTRALIAN GOVERNMENT (you own the debt).'},
-{id:'spend',name:['GOVERNMENT','SPENDING'],type:'CHART',shape:'chart',spark:'spike',income:1,cost:3,x:2305,y:510,rot:1,sub:'the graphic that keeps growing',sp:'Start of your turn: 50% chance of +$2 — spending finds its way to you.'},
-{id:'stock',name:['STOCK-MARKET','CHARTS'],type:'CHART',shape:'chart',spark:'vola',income:1,cost:3,x:2150,y:592,rot:1,sub:'green days, red days',sp:'+$1 while you own THE TERMINAL or FOX BUSINESS (fast data).'},
-{id:'timeline',name:['FINANCIAL','TIMELINE'],type:'CHART',shape:'chart',spark:'flat',income:0,cost:2,x:2305,y:592,rot:-1,sub:'the diagram of everything',sp:'End movement here (once owned) to PEEK at the top Event card — history rhymes.'},
-{id:'econ',name:['ECONOMIC CHARTS','& GRAPHS'],type:'CHART',shape:'chart',spark:'vola',income:0,cost:2,x:2228,y:672,rot:1,sub:'all the rest of them',sp:'Seizing any CHART node costs $1 less (you’ve seen these before).'},
+{id:'citi',name:['CITI TOWER'],icon:'🏦',type:'BANK',shape:'logo',band:'#1a5fa8',income:3,cost:8,x:210,y:150,rot:-2,sub:'too big to fail · 007 on payroll',sp:'+$1 income per CORPORATE node you own (James Bond is on the payroll).'},
+{id:'commbank',name:['COMMONWEALTH BANK'],icon:'🏦',type:'BANK',shape:'logo',band:'#d4a017',income:2,cost:6,x:400,y:95,rot:2,sub:'can’t be beat? we’ll see',sp:'+$2 income while you own any other BANK (the big four stick together).'},
+{id:'nab',name:['NAB'],icon:'🏦',type:'BANK',shape:'logo',band:'#c0392b',income:2,cost:6,x:590,y:165,rot:-1,sub:'more than money',sp:'Seizing CHART nodes costs you $1 less (their analysts share screens).'},
+{id:'anz',name:['ANZ'],icon:'🏦',type:'BANK',shape:'logo',band:'#2e7d64',income:2,cost:6,x:770,y:100,rot:2,sub:'the blue bank',sp:'+$1 income per CHART node you own (ANZ reads the data).'},
+{id:'westpac',name:['WESTPAC'],icon:'🏦',type:'BANK',shape:'logo',band:'#d21e2b',income:2,cost:6,x:500,y:270,rot:1,sub:'the red bank · the other fourth',sp:'+$1 income per REGULATOR you own (they have sat through every inquiry).'},
+{id:'bond',name:['THE BOND DESK'],icon:'💼',type:'BANK',income:3,cost:8,x:1040,y:310,rot:1,sub:'“Government Bond: the collapse of the world’s safest investment.”',sp:'Gain 2 Intel when you seize it. Collects the tolls when BOND MARKETS REVOLT.'},
+{id:'hedge',name:['THE HEDGE FUND'],icon:'🕶️',type:'BANK',income:2,cost:6,x:1260,y:300,rot:-2,sub:'somebody’s shorting',sp:'+$3 whenever ANY player is raided — even you.'},
+{id:'rba',name:['RESERVE BANK','OF AUSTRALIA'],icon:'🏛️',type:'REGULATOR',shape:'logo',band:'#4a5a66',income:2,cost:10,x:960,y:145,rot:1,sub:'sets the price of money',sp:'−1 Heat at the start of each of your turns. The cash rate is whatever you say it is.'},
+{id:'asic',name:['ASIC'],icon:'⚖️',type:'REGULATOR',shape:'logo',band:'#1f3a5f',income:1,cost:5,x:1160,y:95,rot:-1,sub:'the corporate cop',sp:'Unlocks AUDIT ($4): any rival +1 Heat, once per turn.'},
+{id:'accc',name:['ACCC'],icon:'🧐',type:'REGULATOR',shape:'logo',band:'#233a8f',income:1,cost:5,x:1360,y:155,rot:1,sub:'reviews every merger',sp:'When a rival hostile-takes one of YOUR nodes, they pay you an extra $2 (ACCC review fee).'},
+{id:'gov',name:['AUSTRALIAN GOVERNMENT','COAT OF ARMS'],icon:'🦘',type:'REGULATOR',shape:'logo',band:'#1b3a2a',income:2,cost:8,x:1540,y:100,rot:-1,sub:'documents, logos & ribbons',sp:'Unlocks BUDGET NIGHT ($3): every rival pays you $1 and you gain +1 Intel.'},
+/* — charts pinned across the collage, not stacked in one corner — */
+{id:'us',name:['US BOND','YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:1980,y:95,rot:1,sub:'the safe haven',sp:'+$1 while you own the 10-YEAR MASTER CHART; +$1 on BOND MARKETS REVOLT; +$2 on TRUMP TWEETS TARIFFS.'},
+{id:'japan',name:['JAPAN BOND','YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:2260,y:455,rot:-1,sub:'largest foreign holder, allegedly',sp:'+$1 while you own the MASTER CHART; +$3 on BOND MARKETS REVOLT (curve control fails).'},
+{id:'ger',name:['GERMANY BOND','YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:1680,y:1425,rot:-1,sub:'the bund',sp:'+$1 while you own the MASTER CHART; +$1 on BOND MARKETS REVOLT.'},
+{id:'uk',name:['UK BOND','YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:980,y:1165,rot:1,sub:'gilts gone wild',sp:'+$1 while you own the MASTER CHART; +$1 on BOND MARKETS REVOLT.'},
+{id:'aus',name:['AUSTRALIAN','BOND YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:1325,y:85,rot:1,sub:'home soil',sp:'+$1 while you own the MASTER CHART; +$1 on BOND MARKETS REVOLT.'},
+{id:'can',name:['CANADIAN','BOND YIELDS'],type:'CHART',shape:'chart',spark:'up',income:0,cost:2,x:1765,y:755,rot:-1,sub:'the polite one',sp:'+$1 while you own the MASTER CHART; +$1 on BOND MARKETS REVOLT.'},
+{id:'tenyear',name:['10-YEAR GOVT','BOND YIELDS'],type:'CHART',shape:'chart',spark:'up',income:1,cost:4,x:1285,y:205,rot:1,sub:'the master chart — now in the middle of everything',sp:'THE MASTER CHART: +$1 income for every other CHART node you own.'},
+{id:'real',name:['REAL YIELD','CHART'],type:'CHART',shape:'chart',spark:'down',income:0,cost:3,x:255,y:1195,rot:-1,sub:'what things really cost',sp:'Stand here (once owned) to SCRUB: free −1 Heat — the real numbers calm everyone.'},
+{id:'infl',name:['INFLATION','COMPENSATION'],type:'CHART',shape:'chart',spark:'up',income:1,cost:3,x:1085,y:675,rot:-1,sub:'the hidden tax',sp:'Your salary is $4, not $3 — indexed to CPI.'},
+{id:'cash',name:['CASH-RATE','CHART'],type:'CHART',shape:'chart',spark:'step',income:1,cost:3,x:880,y:210,rot:1,sub:'the RBA headline',sp:'+$2 whenever the RBA CASH-RATE DECISION is drawn (you set it).'},
+{id:'debt',name:['GOVERNMENT DEBT','COMPARISON'],type:'CHART',shape:'chart',spark:'up',income:1,cost:3,x:1588,y:210,rot:-1,sub:'who owns all the bonds, anyway',sp:'+$1 income while you own the AUSTRALIAN GOVERNMENT (you own the debt).'},
+{id:'spend',name:['GOVERNMENT','SPENDING'],type:'CHART',shape:'chart',spark:'spike',income:1,cost:3,x:1488,y:815,rot:1,sub:'the graphic that keeps growing',sp:'Start of your turn: 50% chance of +$2 — spending finds its way to you.'},
+{id:'stock',name:['STOCK-MARKET','CHARTS'],type:'CHART',shape:'chart',spark:'vola',income:1,cost:3,x:1365,y:365,rot:1,sub:'green days, red days',sp:'+$1 while you own THE TERMINAL or FOX BUSINESS (fast data).'},
+{id:'timeline',name:['FINANCIAL','TIMELINE'],type:'CHART',shape:'chart',spark:'flat',income:0,cost:2,x:1090,y:1260,rot:-1,sub:'the diagram of everything',sp:'End movement here (once owned) to PEEK at the top Event card — history rhymes.'},
+{id:'econ',name:['ECONOMIC CHARTS','& GRAPHS'],type:'CHART',shape:'chart',spark:'vola',income:0,cost:2,x:790,y:1405,rot:1,sub:'all the rest of them',sp:'Seizing any CHART node costs $1 less (you’ve seen these before).'},
 /* — the commodities — */
 {id:'oil',name:['CRUDE OIL PIT','WTI · USD/BBL'],icon:'🛢️',type:'COMMODITY',income:4,cost:9,x:1500,y:470,rot:-2,sub:'the ticker that never sleeps',sp:'$6 windfall whenever OIL SPIKES is drawn.'},
 {id:'oilgraph',name:['OIL PRICE','INCREASE'],type:'COMMODITY',shape:'chart',spark:'up',income:1,cost:3,x:1680,y:540,rot:2,sub:'the graph that called it',sp:'+$2 whenever OIL SPIKES (you drew the graph).'},
@@ -218,8 +225,9 @@ const NODES=[
 {id:'petronas',name:['PETRONAS'],icon:'🛢️',type:'COMMODITY',shape:'logo',band:'#00a19b',income:3,cost:7,x:2000,y:530,rot:-1,sub:'the national oil company',sp:'+$3 on OIL SPIKES.'},
 {id:'gold',name:['GOLD-COLOURED','COINS'],icon:'🪙',type:'COMMODITY',income:2,cost:5,x:1330,y:620,rot:-2,sub:'shiny. suspiciously shiny.',sp:'+$5 whenever GOLD RUSH is drawn.'},
 {id:'notes',name:['AUSTRALIAN','BANKNOTES'],icon:'💵',type:'COMMODITY',income:2,cost:5,x:1140,y:700,rot:2,sub:'currency images, all denominations',sp:'+$1 income per BANK node you own (deposits).'},
-{id:'train',name:['THE COAL TRAIN'],icon:'🚃',type:'COMMODITY',income:2,cost:5,x:770,y:700,rot:-2,sub:'tonnage by rail',sp:'+1 movement step each turn while owned (the express).'},
+{id:'train',name:['THE COAL TRAIN'],icon:'🚃',type:'COMMODITY',income:2,cost:5,x:770,y:700,rot:-2,sub:'tonnage by rail',sp:'+1 movement step each turn while owned (the express). Does not stack with THE BULLET TRAIN.'},
 {id:'port',name:['COAL TERMINAL','THE DOCKS'],icon:'⚓',type:'COMMODITY',income:3,cost:7,x:950,y:800,rot:2,sub:'ships in the night',sp:'+$5 on CEO PHOTO LEAKS if you also own COAL CORP HQ (shipped before the news).'},
+{id:'bhp',name:['BHP','THE BIG AUSTRALIAN'],icon:'⛏️',type:'COMMODITY',shape:'logo',band:'#ee3a23',income:3,cost:7,x:560,y:820,rot:-2,sub:'pit to port · ore and more',sp:'+$3 on COAL RUSH or GOLD RUSH. +$1 income while you own THE COAL TRAIN.'},
 {id:'forklift',name:['THE FORKLIFT'],icon:'🚜',type:'COMMODITY',income:1,cost:4,x:1520,y:650,rot:-1,sub:'it moves everything',sp:'+$1 income per COMMODITY node you own.'},
 /* — the corporates — */
 {id:'coal',name:['COAL CORP HQ','CEO COAL'],icon:'🚂',type:'CORPORATE',shape:'logo',band:'#3f3f3f',income:3,cost:7,x:150,y:480,rot:-2,sub:'Mark Watson, Chief Executive',sp:'+1 movement step per turn. With THE COAL TRAIN too: 4 steps — the private express.'},
@@ -229,11 +237,13 @@ const NODES=[
 {id:'office',name:['THE HEAD OFFICE'],icon:'🏢',type:'CORPORATE',shape:'logo',band:'#34506b',income:2,cost:5,x:170,y:850,rot:2,sub:'the modern tower',sp:'+$1 income per CORPORATE node you own.'},
 {id:'unid1',name:['UNIDENTIFIED','LOGO №1'],icon:'❓',type:'CORPORATE',shape:'logo',band:'#555555',income:1,cost:2,x:380,y:930,rot:-2,sub:'nobody knows',sp:'Whenever MADE pays out, you gain the same (kindred mysteries).'},
 {id:'unid2',name:['UNIDENTIFIED','LOGO №2'],icon:'❓',type:'CORPORATE',shape:'logo',band:'#555555',income:1,cost:2,x:2240,y:1000,rot:2,sub:'still nobody',sp:'Whenever MADE pays out, you gain the same (kindred mysteries).'},
+{id:'bullet',name:['THE BULLET TRAIN'],icon:'🚄',type:'CORPORATE',income:2,cost:6,x:95,y:1240,rot:-1,sub:'fast enough to outrun a hearing',sp:'+1 movement step each turn. Does not stack with THE COAL TRAIN — pick the faster service.'},
 /* — the media — */
 {id:'press',name:['“QUITE FRANKLY,','JTPORTAL…” PRESS ROOM'],icon:'🗣️',type:'MEDIA',shape:'bubble',income:2,cost:6,x:760,y:900,rot:-1,sub:'narrative for sale',sp:'Unlocks SPIN ($3): −2 own Heat or +1 rival Heat.'},
 {id:'fox',name:['FOX BUSINESS'],icon:'🦊',type:'MEDIA',shape:'logo',band:'#1a2f6b',income:2,cost:6,x:980,y:1000,rot:2,sub:'fair & furious',sp:'Unlocks FOX SPIN ($2): −3 own Heat or +1 rival’s. Deflects the CEO photo leak.'},
 {id:'leak',name:['“BOND MARKETS','REVOLT” — THE LEAK'],icon:'📰',type:'MEDIA',shape:'bubble',income:2,cost:6,x:1200,y:930,rot:2,sub:'someone talked',sp:'+1 Intel when you seize it; +$2 whenever BOND MARKETS REVOLT runs.'},
 {id:'jim',name:['“THE JIM…”','TREASURY EXCLUSIVE'],icon:'🗞️',type:'MEDIA',shape:'news',income:1,cost:4,x:1420,y:880,rot:-2,sub:'bond-market news graphic',sp:'+$2 whenever a GOVERNMENT event runs (budgets & rate decisions).'},
+{id:'herald',name:['HERALD SUN','THE JIM REAPER'],icon:'📰',type:'MEDIA',shape:'news',income:1,cost:4,x:1725,y:265,rot:2,sub:'front page, every page',sp:'+$2 whenever a GOVERNMENT event runs. +1 Intel whenever any rival gains Heat from an event.'},
 {id:'bess',name:['“BIG BESSENT”','BREAKING'],icon:'📣',type:'MEDIA',shape:'bubble',income:1,cost:4,x:1630,y:930,rot:-1,sub:'the big man speaks',sp:'+$2 whenever BOND or RATE events run — he moves markets by talking.'},
 {id:'insider',name:['“INSIDER TRADING”','THE GRAPHIC'],icon:'⚠️',type:'MEDIA',shape:'news',income:1,cost:4,x:1830,y:860,rot:2,sub:'circled in red marker',sp:'Your BUG actions cost 0 Intel (it’s only insider trading if you’re on the outside).'},
 {id:'tv',name:['THE TV INTERVIEW','PRIME TIME'],icon:'📺',type:'MEDIA',shape:'bubble',income:1,cost:4,x:2050,y:800,rot:-2,sub:'soft lights, soft questions',sp:'Event Heat you gain is reduced by 1.'},
@@ -266,12 +276,98 @@ const NODES=[
 {id:'rock',name:['THE ROCK','CAN SMELL IT'],icon:'💪',type:'WILD',shape:'photo',income:1,cost:7,x:660,y:450,rot:2,sub:'final boss energy',sp:'Unlocks COOK THE BOOKS ($3): −3 Heat. +$1 income per DIFFERENT node type you own.'},
 {id:'brad',name:['BRAD PITT','“THE BIG SHORT”'],icon:'😎',type:'WILD',shape:'photo',income:1,cost:5,x:1630,y:1120,rot:-2,sub:'explained it in the movie',sp:'+$2 whenever a BOND event runs (he had it explained to him).'},
 {id:'jt',name:['JTPORTAL','QUITE FRANKLY'],icon:'🌐',type:'WILD',shape:'photo',income:1,cost:9,x:1150,y:540,rot:-1,sub:'the legend of the board',sp:'+1 Intel each turn. ONCE PER GAME: cancel a Market Event as it is revealed — “quite frankly, it never happened.”'},
-{id:'made',name:['MADE','(???)'],type:'WILD',shape:'made',income:1,cost:3,x:1000,y:1380,rot:-2,sub:'the purple graphic',sp:'Start of your turn: 50% chance of +$3. Nobody knows why. NOBODY.'}
+{id:'made',name:['MADE','(???)'],type:'WILD',shape:'made',income:1,cost:3,x:1000,y:1380,rot:-2,sub:'the purple graphic',sp:'Start of your turn: 50% chance of +$3. Nobody knows why. NOBODY.'},
+{id:'asics',name:['THE RUNNING SHOE','ASICS'],icon:'👟',type:'WILD',shape:'photo',income:1,cost:3,x:430,y:1360,rot:3,sub:'circled in red · why is this here',sp:'+1 movement step (you are always jogging). Stand here (once owned) to JOG: free −1 Heat.'},
+{id:'toktimer',name:['TOKTIMER'],icon:'⏱️',type:'WILD',shape:'photo',income:1,cost:5,x:1920,y:1020,rot:-2,sub:'the clock is running',sp:'+1 Intel whenever a Market Event is revealed. Time is information.'}
 ];
 const NMAP={};NODES.forEach(n=>NMAP[n.id]=n);
 const COUNTRY=['us','japan','ger','uk','aus','can'];
-const EDGES=[['citi','commbank'],['commbank','nab'],['nab','anz'],['anz','rba'],['citi','bond007'],['citi','coal'],['rba','bullock'],['rba','asic'],['asic','accc'],['accc','gov'],['gov','chalmers'],['chalmers','albo'],['albo','trump'],['rba','bond'],['rba','cash'],['bond','hedge'],['bond','bessent'],['bond','back'],['hedge','term'],['hedge','bigshort'],['term','vault'],['term','bessent'],['tenyear','us'],['tenyear','japan'],['tenyear','ger'],['tenyear','uk'],['tenyear','aus'],['tenyear','can'],['real','tenyear'],['real','infl'],['infl','cash'],['debt','spend'],['debt','gov'],['spend','jim'],['stock','econ'],['timeline','econ'],['stock','oilgraph'],['stock','timeline'],['us','trump'],['econ','unid2'],['econ','iface'],['oil','oilgraph'],['oil','tanker'],['oil','petronas'],['oil','barrels'],['oil','jt'],['barrels','forklift'],['forklift','port'],['forklift','gold'],['tanker','port'],['tanker','petronas'],['petronas','trump'],['gold','notes'],['gold','vault'],['notes','back'],['notes','jt'],['train','coal'],['train','watson'],['train','port'],['train','quik'],['train','rock'],['coal','watson'],['coal','quik'],['quik','market'],['quik','bond007'],['quik','watson'],['market','f1'],['market','office'],['f1','office'],['f1','unid1'],['office','unid1'],['office','golf'],['office','ib'],['back','press'],['back','leak'],['back','jt'],['vault','whistle'],['vault','iface'],['iface','tv'],['iface','unid2'],['school','ib'],['school','mpc'],['school','golf'],['ib','mpc'],['ib','unid1'],['mpc','sisy'],['sisy','group'],['sisy','sat'],['group','sat'],['group','press'],['group','news'],['sat','made'],['press','leak'],['press','fox'],['press','golf'],['press','news'],['leak','photo'],['photo','news'],['photo','bigshort'],['photo','made'],['news','fox'],['news','made'],['fox','jim'],['jim','bess'],['bess','insider'],['bess','wef'],['insider','tv'],['insider','whistle'],['tv','whistle'],['wef','brad'],['wef','iface'],['bigshort','brad'],['bigshort','photo'],['bullock','rock'],['rock','jt'],['jt','press'],['bessent','tenyear'],['watson','golf']];
-const ADJ={};EDGES.forEach(e=>{(ADJ[e[0]]=ADJ[e[0]]||[]).push(e[1]);(ADJ[e[1]]=ADJ[e[1]]||[]).push(e[0])});
+const BASE_EDGES=[
+ /* banks & the missing fourth */
+ ['citi','commbank'],['commbank','nab'],['nab','anz'],['nab','westpac'],['westpac','commbank'],['westpac','citi'],['anz','rba'],['citi','bond007'],['citi','coal'],
+ /* regulators row */
+ ['rba','bullock'],['rba','asic'],['asic','accc'],['accc','gov'],['gov','chalmers'],['chalmers','albo'],['albo','trump'],['rba','bond'],['gov','herald'],
+ /* desks & screens */
+ ['bond','hedge'],['bond','bessent'],['bond','back'],['hedge','term'],['hedge','stock'],['term','vault'],['term','bessent'],['term','stock'],
+ /* charts — each lives in a different neighbourhood, linked to neighbours AND the master */
+ ['rba','cash'],['cash','bullock'],['cash','tenyear'],['aus','gov'],['aus','accc'],['aus','tenyear'],['debt','gov'],['debt','chalmers'],['debt','tenyear'],
+ ['us','trump'],['us','albo'],['us','tenyear'],['japan','petronas'],['japan','tanker'],['japan','tenyear'],['can','vault'],['can','gold'],['can','tenyear'],
+ ['ger','wef'],['ger','brad'],['ger','tenyear'],['uk','press'],['uk','news'],['uk','tenyear'],['tenyear','bessent'],['tenyear','bond'],
+ ['real','school'],['real','ib'],['real','mpc'],['infl','notes'],['infl','jt'],['infl','back'],
+ ['spend','jim'],['spend','herald'],['spend','port'],['stock','oilgraph'],['timeline','photo'],['timeline','news'],['timeline','econ'],
+ ['econ','made'],['econ','sat'],['econ','unid2'],
+ /* commodities */
+ ['oil','oilgraph'],['oil','tanker'],['oil','petronas'],['oil','barrels'],['oil','jt'],['barrels','forklift'],['forklift','port'],['forklift','gold'],
+ ['tanker','port'],['tanker','petronas'],['petronas','trump'],['gold','notes'],['gold','vault'],['notes','back'],['notes','jt'],
+ ['train','coal'],['train','watson'],['train','port'],['train','rock'],['train','bhp'],['bhp','coal'],['bhp','watson'],['bhp','market'],
+ /* corporates & the wandering servo */
+ ['coal','watson'],['coal','quik'],['quik','market'],['quik','bond007'],['quik','watson'],['market','f1'],['market','office'],
+ ['f1','office'],['f1','unid1'],['office','unid1'],['office','golf'],['office','ib'],['bullet','school'],['bullet','albo'],['bullet','golf'],['bullet','asics'],
+ /* media ring */
+ ['back','press'],['back','leak'],['back','jt'],['vault','whistle'],['vault','iface'],['iface','tv'],['iface','unid2'],['iface','toktimer'],
+ ['press','leak'],['press','fox'],['press','golf'],['press','news'],['leak','photo'],['photo','news'],['photo','bigshort'],['photo','made'],
+ ['news','fox'],['news','made'],['fox','jim'],['jim','bess'],['jim','herald'],['bess','insider'],['bess','wef'],['bess','herald'],
+ ['insider','tv'],['insider','whistle'],['tv','whistle'],['tv','toktimer'],['wef','brad'],['wef','iface'],['bigshort','brad'],['hedge','bigshort'],
+ /* school, fate, shoes, the clock */
+ ['school','ib'],['school','mpc'],['school','golf'],['ib','mpc'],['ib','unid1'],['mpc','sisy'],['sisy','group'],['sisy','sat'],
+ ['group','sat'],['group','press'],['group','news'],['sat','made'],['sat','asics'],['asics','mpc'],['asics','sisy'],
+ ['toktimer','whistle'],['toktimer','brad'],['toktimer','unid2'],
+ /* people bridges */
+ ['bullock','rock'],['rock','jt'],['jt','press'],['watson','golf'],['chalmers','herald']
+];
+let EDGES=BASE_EDGES.map(e=>e.slice());
+const ADJ={};
+function rebuildAdj(){
+ Object.keys(ADJ).forEach(k=>delete ADJ[k]);
+ EDGES.forEach(e=>{
+  if(!NMAP[e[0]]||!NMAP[e[1]])return;
+  (ADJ[e[0]]=ADJ[e[0]]||[]).push(e[1]);
+  (ADJ[e[1]]=ADJ[e[1]]||[]).push(e[0]);
+ });
+}
+rebuildAdj();
+/* Quikstop is the only exhibit that physically moves each game — five neighbourhoods, same servo */
+const QUIK_HOME={x:350,y:430,rot:2};
+const QUIK_SLOTS=[
+ {x:350,y:430,rot:2,links:['coal','watson','bond007','market','train'],label:'the original servo · inner west'},
+ {x:1540,y:1210,rot:-2,links:['photo','bigshort','market','news','timeline'],label:'down by MarketPlace · the late shift'},
+ {x:2060,y:680,rot:1,links:['forklift','petronas','tv','whistle','can'],label:'the docks servo · petrol & crude'},
+ {x:700,y:280,rot:-1,links:['rba','bullock','rock','westpac','cash'],label:'across from the Reserve Bank'},
+ {x:1120,y:1410,rot:2,links:['made','sat','news','econ','photo'],label:'the unexplained servo · next to MADE'}
+];
+function nodeBox(n){
+ const sizes={photo:[140,92],wide:[170,100],bubble:[150,80],logo:[150,80],chart:[130,64],news:[150,84],made:[140,74],mpc:[164,96],sat:[170,90]};
+ return sizes[n.shape]||[150,80];
+}
+function separateNodes(){
+ const pad=16,minX=95,maxX=2305,minY=95,maxY=1455;
+ for(let iter=0;iter<90;iter++){
+  let moved=false;
+  for(let i=0;i<NODES.length;i++){
+   for(let j=i+1;j<NODES.length;j++){
+    const A=NODES[i],B=NODES[j];
+    const [aw,ah]=nodeBox(A),[bw,bh]=nodeBox(B);
+    const dx=B.x-A.x,dy=B.y-A.y;
+    const ox=(aw+bw)/2+pad-Math.abs(dx);
+    const oy=(ah+bh)/2+pad-Math.abs(dy);
+    if(ox>0&&oy>0){
+     if(ox<oy){const s=dx===0?(i%2?1:-1):Math.sign(dx);const p=ox/2+.6;A.x-=s*p;B.x+=s*p}
+     else{const s=dy===0?(i%2?1:-1):Math.sign(dy);const p=oy/2+.6;A.y-=s*p;B.y+=s*p}
+     moved=true;
+    }
+   }
+  }
+  NODES.forEach(n=>{n.x=Math.max(minX,Math.min(maxX,n.x));n.y=Math.max(minY,Math.min(maxY,n.y))});
+  if(!moved)break;
+ }
+}
+function applyQuikSlot(slot){
+ const q=NMAP.quik;if(!q||!slot)return;
+ q.x=slot.x;q.y=slot.y;q.rot=slot.rot;
+ EDGES=BASE_EDGES.filter(e=>e[0]!=='quik'&&e[1]!=='quik').concat((slot.links||[]).map(id=>['quik',id]));
+ rebuildAdj();
+ separateNodes();
+}
 const TYPE_COLORS={BANK:'#a87511',COMMODITY:'#c05621',MEDIA:'#b5308c',CORPORATE:'#1f6f8b',REGULATOR:'#5c6b73',CHART:'#2e8b57',WILD:'#6b4fa0'};
 const PCOLORS=['#f5c542','#55c1ff','#e19bff','#7fe08d','#ff5e9c','#ffffff','#00e5c0','#ffa94d'];
 const MAXPLAYERS=8;
@@ -297,9 +393,9 @@ const CARDS=[
 {id:'oilspike',icon:'🛢️',title:'OIL SPIKES — WTI +12%',text:'Crude goes vertical. The pit pays out, the tankers get rich, and everyone pays at the pump.',
  run(){setMood('BOOM','WTI +12% — crude goes vertical');[['oil',6,'crude windfall'],['oilgraph',2,'the graph called it'],['tanker',3,'tankers rechartered at panic rates'],['petronas',3,'the national oil company'],['barrels',2,'the barrel yard']].forEach(a=>{const o=S.owner[a[0]];if(o!=null)gain(o,a[1],a[2])});const q=S.owner.quik;S.players.forEach((pl,i)=>{if(i===q)return;if(q==null)payVoid(i,1,'fuel costs — nobody minds the till');else payTo(i,1,q,'fuel costs → QuikStop')});}},
 {id:'coalrush',icon:'🚃',title:'COAL RUSH',text:'Demand for black rock goes nuclear. Everything on rails and water makes money.',
- run(){setMood('BOOM','coal rush — everything on rails makes money');[['port',4,'the docks work overtime'],['train',2,'the train runs all night'],['tanker',3,'freight rates through the roof'],['coal',2,'COAL Corp books all of it'],['forklift',1,'pallets upon pallets']].forEach(a=>{const o=S.owner[a[0]];if(o!=null)gain(o,a[1],a[2])});}},
+ run(){setMood('BOOM','coal rush — everything on rails makes money');[['port',4,'the docks work overtime'],['train',2,'the train runs all night'],['tanker',3,'freight rates through the roof'],['coal',2,'COAL Corp books all of it'],['forklift',1,'pallets upon pallets'],['bhp',3,'the Big Australian books the tonnes']].forEach(a=>{const o=S.owner[a[0]];if(o!=null)gain(o,a[1],a[2])});}},
 {id:'rates',icon:'🏛️',title:'RBA CASH-RATE DECISION',text:'Governor Bullock leans into the microphone. Money gets expensive — for everyone but the insiders.',
- run(){setMood('CALM','the RBA decides — the market holds its breath, then exhales');const r=S.owner.rba,b=S.owner.bullock;S.players.forEach((pl,i)=>{if(i===r||i===b)return;payFee(i,2,'the cost of money')});if(r!=null)log('🏛️ '+pname(r)+' set the rate — pays nothing.');if(b!=null)log('👩‍💼 The Governor takes '+pname(b)+'’s calls — pays nothing.');const c=S.owner.cash;if(c!=null)gain(c,2,'you literally set it');const j=S.owner.jim;if(j!=null)gain(j,2,'the headline sells papers');const be=S.owner.bess;if(be!=null)gain(be,2,'“BIG BESSENT” reacts live');}},
+ run(){setMood('CALM','the RBA decides — the market holds its breath, then exhales');const r=S.owner.rba,b=S.owner.bullock;S.players.forEach((pl,i)=>{if(i===r||i===b)return;payFee(i,2,'the cost of money')});if(r!=null)log('🏛️ '+pname(r)+' set the rate — pays nothing.');if(b!=null)log('👩‍💼 The Governor takes '+pname(b)+'’s calls — pays nothing.');const c=S.owner.cash;if(c!=null)gain(c,2,'you literally set it');const j=S.owner.jim;if(j!=null)gain(j,2,'the headline sells papers');const be=S.owner.bess;if(be!=null)gain(be,2,'“BIG BESSENT” reacts live');const hs=S.owner.herald;if(hs!=null)gain(hs,2,'THE JIM REAPER reprints the decision');}},
 {id:'bondrevolt',icon:'💥',title:'BOND MARKETS REVOLT',text:'“Government Bond: the collapse of the world’s safest investment.” Yields go vertical from Tokyo to Toronto.',
  run(){setMood('PANIC','“the collapse of the world’s safest investment”');const bd=S.owner.bond;S.players.forEach((pl,i)=>{const banks=NODES.filter(n=>n.type==='BANK'&&S.owner[n.id]===i).length;if(!banks)return;const amt=banks*2;if(bd!=null)payTo(i,amt,bd,'the revolt eats '+banks+' bank position'+(banks>1?'s':'')+' → The Bond Desk');else payVoid(i,amt,'the revolt eats the banking book')});COUNTRY.forEach(c=>{const o=S.owner[c];if(o!=null)gain(o,c==='japan'?3:1,NMAP[c].name.join(' ')+' pays its reader')});const t=S.owner.tenyear;if(t!=null)gain(t,2,'the master chart was right');const be=S.owner.bess;if(be!=null)gain(be,2,'Big Bessent called it on air');const br=S.owner.brad;if(br!=null)gain(br,2,'he had it explained in the movie');const bs=S.owner.bigshort;if(bs!=null)gain(bs,3,'the cinema saw it coming');const lk=S.owner.leak;if(lk!=null)gain(lk,2,'the leak was first with it');}},
 {id:'ceophoto',icon:'📸',title:'CEO PHOTO LEAKS — COAL CORP',text:'Mark Watson, photographed exactly where he should not have been. Someone is holding matches.',
@@ -308,7 +404,7 @@ const CARDS=[
  async run(){setMood('PANIC','TARIFFS! ALL CAPS! markets swan-dive');const t=S.owner.trump;let chain;const opts=[{label:'🛢️ OIL chain +$3 each',v:'oil'},{label:'🚂 COAL chain +$3 each',v:'coal'}];
  if(t!=null)chain=await askPlayer(t,{title:'TRUMP TWEETS TARIFFS',body:'You own THE DONALD — which chain gets the windfall?',options:opts,def:Math.random()<.5?'oil':'coal'});
  else chain=Math.random()<.5?'oil':'coal';
- const list=chain==='oil'?['oil','oilgraph','barrels','tanker','petronas']:['coal','train','port','watson','forklift'];
+ const list=chain==='oil'?['oil','oilgraph','barrels','tanker','petronas']:['coal','train','port','watson','forklift','bhp'];
  const winners=new Set();list.forEach(id=>{const o=S.owner[id];if(o!=null){gain(o,3,chain+' windfall via '+NMAP[id].name[0]);winners.add(o)}});
  const u=S.owner.us;if(u!=null){gain(u,2,'the safe-haven bid');winners.add(u)}
  S.players.forEach((pl,i)=>{if(!winners.has(i))payVoid(i,1,'the tariff bill')});
@@ -316,13 +412,13 @@ const CARDS=[
 {id:'besspeak',icon:'🎤',title:'BIG BESSENT SPEAKS',text:'The Treasury clears its throat. Bond desks straighten their ties. Markets listen.',
  run(){setMood('CALM','Big Bessent soothes the desk');const b=S.owner.bessent;if(b!=null)gain(b,3,'the big man speaks');const d=S.owner.bond;if(d!=null)gain(d,2,'the desk frontran the speech');const t=S.owner.tenyear;if(t!=null)gain(t,2,'yields obey');const br=S.owner.brad;if(br!=null)gain(br,2,'he had it explained to him');}},
 {id:'budget',icon:'📰',title:'THE JIM DELIVERS THE BUDGET',text:'“The Jim…” reads numbers to a sleepy chamber. Somebody, somewhere, is counting.',
- run(){setMood('CALM','the budget is delivered — mostly numbers');const s=S.owner.spend;if(s!=null)gain(s,3,'the spending graphic glows');const ch=S.owner.chalmers;if(ch!=null)gain(ch,2,'the Treasurer delivers');const j=S.owner.jim;if(j!=null)gain(j,2,'the exclusive pays');const a=S.owner.albo;if(a!=null)gain(a,1,'the PM signs it');S.players.forEach((pl,i)=>{if(i!==s&&i!==ch&&i!==j&&i!==a)payVoid(i,1,'return to sender (taxes)')});}},
+ run(){setMood('CALM','the budget is delivered — mostly numbers');const s=S.owner.spend;if(s!=null)gain(s,3,'the spending graphic glows');const ch=S.owner.chalmers;if(ch!=null)gain(ch,2,'the Treasurer delivers');const j=S.owner.jim;if(j!=null)gain(j,2,'the exclusive pays');const hs=S.owner.herald;if(hs!=null)gain(hs,2,'THE JIM REAPER special edition');const a=S.owner.albo;if(a!=null)gain(a,1,'the PM signs it');S.players.forEach((pl,i)=>{if(i!==s&&i!==ch&&i!==j&&i!==a&&i!==hs)payVoid(i,1,'return to sender (taxes)')});}},
 {id:'mpcfinals',icon:'🏆',title:'MONETARY POLICY COMPETITION FINALS',text:'The RBA’s big night. Schools. Charts. Trophies. JTPortal is rumoured to be judging.',
  run(){setMood('BOOM','monetary policy finals — the schools deliver');const m=S.owner.mpc;if(m!=null){gain(m,4,'the champions’ purse');giveIntel(m,1,'the finalists’ data')}const sc=S.owner.school;if(sc!=null)gain(sc,2,'the school places');const ib=S.owner.ib;if(ib!=null)gain(ib,2,'the IB cohort delivers');const jt=S.owner.jt;if(jt!=null)giveIntel(jt,1,'JTPortal judged the submissions');}},
 {id:'sisyroll',icon:'🪨',title:'THE BOULDER ROLLS BACK DOWN',text:'Empires, portfolios, homework — everything heavy slides. The biggest players feel it most.',
  run(){setMood('CALM','the boulder rolls back down, as ever');const counts=S.players.map((pl,i)=>NODES.filter(n=>S.owner[n.id]===i).length);const mx=Math.max(...counts);S.players.forEach((pl,i)=>{if(counts[i]===mx&&S.owner.sisy!==i)payVoid(i,2,'the boulder finds the biggest stack')});const s=S.owner.sisy;if(s!=null)log('🪨 '+pname(s)+' is used to this — immune.');}},
 {id:'goldrush',icon:'🪙',title:'GOLD RUSH',text:'The gold-coloured coins gleam. Paper money suddenly looks like a rumor.',
- run(){setMood('BOOM','gold gleams — paper looks like a rumor');const g=S.owner.gold;if(g!=null)gain(g,5,'everything gleams');const n=S.owner.notes;if(n!=null)gain(n,2,'collectors pay up');S.players.forEach((pl,i)=>{if(i!==g&&i!==n)payVoid(i,1,'inflation bites')});}},
+ run(){setMood('BOOM','gold gleams — paper looks like a rumor');const g=S.owner.gold;if(g!=null)gain(g,5,'everything gleams');const n=S.owner.notes;if(n!=null)gain(n,2,'collectors pay up');const bh=S.owner.bhp;if(bh!=null)gain(bh,3,'ore prices sneak up with the gold');S.players.forEach((pl,i)=>{if(i!==g&&i!==n&&i!==bh)payVoid(i,1,'inflation bites')});}},
 {id:'rockcooks',icon:'💪',title:'THE ROCK COOKS',text:'A gym, a blender, a set of books that needed cooking. The smell is unmistakable.',
  run(){setMood('CALM','the books are cooked; the gym is calm');const r=S.owner.rock;if(r!=null){gain(r,3,'ladder of opportunity');addHeat(r,-1,'the calm after the cook')}else log('💪 Nobody owns The Rock. The books stay raw.');}},
 {id:'davos',icon:'🏔️',title:'DAVOS — THE CONFERENCE STAGE',text:'Lanyards, panels, fondue. Global networks tighten over canapés.',
@@ -394,6 +490,7 @@ function payFee(i,amt,why){let a=amt;if(S.owner.vault===i&&a>0)a=Math.max(0,a-1)
 function addHeat(i,n,why,ev){
  if(!n)return;
  if(ev&&n>0&&S.owner.tv===i){n-=1;if(n<=0){log('📺 The TV Interview buries the story — '+pname(i)+' takes no Heat at all.');return}log('📺 Soft questions soften the story — '+pname(i)+' takes only +'+n+' Heat.')}
+ if(ev&&n>0){const h=S.owner.herald;if(h!=null&&h!==i)giveIntel(h,1,'THE JIM REAPER files the heat')}
  const p=S.players[i];p.heat=Math.max(0,Math.min(10,p.heat+n));
  log('🔥 '+pname(i)+(n>0?' +'+n:' '+n)+' Heat (now '+p.heat+')'+(why?' — '+why:'')+'.');
  fxAt(i,(n>0?'🔥+'+n:'🔥'+n),'#ffa94d');
@@ -435,13 +532,36 @@ async function revealAll(title,html){
 }
 
 /* ================= GAME FLOW (host) ================= */
+function applyLayoutFromState(){
+ if(!S)return;
+ const slot=QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0];
+ applyQuikSlot(slot);
+}
 function initGame(defs){
- S={players:defs.map((d,i)=>({name:d.name,color:PCOLORS[i%PCOLORS.length],money:15,intel:2,heat:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:2,owner:{},bugs:{},deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:[]};
+ const quikSlot=Math.floor(Math.random()*QUIK_SLOTS.length);
+ const order=defs.map((_,i)=>i);
+ for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=order[i];order[i]=order[j];order[j]=t}
+ const seated=order.map(i=>defs[i]);
+ if(Net.conns&&Net.conns.length){
+  const hostWas=0;
+  Net.conns=order.map(i=>Net.conns[i]||null);
+  Net.myIdx=order.indexOf(hostWas);
+ }
+ S={players:seated.map((d,i)=>({name:d.name,color:PCOLORS[i%PCOLORS.length],money:15,intel:2,heat:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,owner:{},bugs:{},deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:[],quikSlot};
+ applyLayoutFromState();
  Net.started=true;
- log('🌅 The complete evidence board is pinned up — 76 exhibits, 118 threads, '+S.players.length+' players at the table. Everyone starts at QUIKSTOP with $15 and 2 Intel.');
- log('🏆 MAIN WIN: 8 connected nodes incl. a BANK, a COMMODITY, a MEDIA and 2 CHARTS. ALT WIN: hold THE MONETARY POLICY COMPETITION + ST ANDREW’S + THE IB + any 4 CHARTS.');
+ const slot=QUIK_SLOTS[quikSlot];
+ log('🌅 The board is pinned up — '+NODES.length+' exhibits, '+EDGES.length+' threads, '+S.players.length+' at the table.');
+ log('🎲 Seating was shuffled. First to move: '+S.players[0].name+'.');
+ log('⛽ Quikstop opened '+slot.label+' this game. Everyone starts there with $15 and 2 Intel.');
+ log('🏆 MAIN WIN: 8 connected nodes incl. BANK + COMMODITY + MEDIA + 2 CHARTS. SCHOOL: MPC + ST ANDREW’S + IB + 4 CHARTS. BANK RUN: own any 5 BANKS.');
  $('setup').style.display='none';$('app').style.display='flex';
- sendAll({t:'begin',s:pubState()});
+ const motd=$('motd');if(motd)motd.style.display='none';
+ const pub=pubState();
+ for(let i=0;i<Net.conns.length;i++){
+  const c=Net.conns[i];
+  if(c&&c.open){try{c.send({t:'begin',s:pub,idx:i})}catch(e){}}
+ }
  startTurn();
 }
 function startTurn(){
@@ -463,7 +583,8 @@ function startTurn(){
  if(own('news')&&media>=2)giveIntel(S.cur,1,'you read everything');
  if((own('made')||own('unid1')||own('unid2'))&&Math.random()<.5)madePay();
  if(own('spend')&&Math.random()<.5){p.money+=2;log('💸 Government spending finds its way to you: +$2.');fxAt(S.cur,'+$2','#7fe08d')}
- S.steps=2+(S.owner.coal===S.cur?1:0)+(S.owner.train===S.cur?1:0);
+ const rail=(S.owner.train===S.cur||S.owner.bullet===S.cur)?1:0;
+ S.steps=3+(S.owner.coal===S.cur?1:0)+rail+(S.owner.asics===S.cur?1:0);
  sysTo(S.cur,'👁️ YOUR TURN, '+p.name.toUpperCase());
  sync();
  if(p.dc){log('💤 '+pname(S.cur)+' is away — plays it quiet.');gain(S.cur,1,'away');endOfTurn()}
@@ -477,7 +598,9 @@ function income(i){
  let syn=0;
  if(own('citi')&&corp)syn+=corp;
  if(own('commbank')&&bank>1)syn+=2;
+ if(own('westpac')&&reg)syn+=reg;
  if(own('anz')&&chart)syn+=chart;
+ if(own('bhp')&&own('train'))syn+=1;
  if(own('tenyear')&&chart>1)syn+=chart-1;
  COUNTRY.forEach(c=>{if(own(c)&&own('tenyear'))syn+=1});
  if(own('debt')&&own('gov'))syn+=1;
@@ -552,6 +675,8 @@ async function applyIntent(pi,m){
    gain(pi,3,'pushed the boulder uphill');addHeat(pi,1,'it rolls back down by morning');await endOfTurn()}
   else if(act==='scrub'&&S.phase==='action'&&!S.mode&&p.pos==='real'&&S.owner.real===pi){
    log('📉 The real yields calm everyone.');addHeat(pi,-1,'real numbers, real calm');await endOfTurn()}
+  else if(act==='jog'&&S.phase==='action'&&!S.mode&&p.pos==='asics'&&S.owner.asics===pi){
+   log('👟 '+pname(pi)+' jogs a lap in the circled shoe. Why is it on the board? Irrelevant.');addHeat(pi,-1,'a cooling lap');await endOfTurn()}
   /* ---- INTEL OPS ---- */
   else if(act==='spy'&&S.phase==='action'&&!S.mode&&p.intel>=2){
    p.intel-=2;fxAt(pi,'🛈−2','#55c1ff');log('🛈 '+pname(pi)+' buys a look at tomorrow.');
@@ -702,6 +827,7 @@ async function endOfTurn(){
  }
  const card=drawCard();
  await revealAll('MARKET EVENT — TURN '+S.turn,cardFace(card));
+ const tk=S.owner.toktimer;if(tk!=null)giveIntel(tk,1,'Toktimer clocked the event');
  await card.run();
  sync();
  nextTurn();
@@ -711,6 +837,13 @@ async function winCheck(){
  const adj={};EDGES.forEach(e=>{(adj[e[0]]=adj[e[0]]||[]).push(e[1]);(adj[e[1]]=adj[e[1]]||[]).push(e[0])});
  for(let p=0;p<S.players.length;p++){
   const charts=NODES.filter(n=>n.type==='CHART'&&S.owner[n.id]===p);
+  const banks=NODES.filter(n=>n.type==='BANK'&&S.owner[n.id]===p);
+  if(banks.length>=5){
+   S.over=true;S.phase='over';sync();
+   log('🏦 '+pname(p)+' pulls THE BANK RUN — five desks, one syndicate.');
+   await revealAll('🏦 THE BANK RUN','<div class="winname" style="color:'+S.players[p].color+'">'+esc(S.players[p].name)+'</div><p>owns <b>'+banks.length+' banks</b>. The desks now answer to one table.</p><div class="winlist">'+banks.map(n=>n.name.join(' ')).join(' · ')+'</div>');
+   sendAll({t:'reload'});setTimeout(()=>location.reload(),400);return true;
+  }
   if(S.owner.mpc===p&&S.owner.school===p&&S.owner.ib===p&&charts.length>=4){
    S.over=true;S.phase='over';sync();
    log('🏆 '+pname(p)+' WINS THE AUSTRALIAN MONETARY POLICY COMPETITION.');
@@ -748,9 +881,9 @@ function showRules(){
  '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code; the others <b>join</b> — the table seats up to <b>eight</b>. Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. Chat in the sidebar.</p>'
  +'<h4>The market mood — events you can feel</h4><p>Every market event shifts the mood of the whole board — watch the <b>ticker</b> across the top, the <b>tint</b> of the board and the <b>glowing nodes</b>: <b style="color:#f5c542">BOOM</b> (commodities +$1/turn), <b style="color:#ff6b5e">PANIC</b> (banks −$1/turn, intel dearer), <b style="color:#e19bff">MEDIA FRENZY</b> (media +$1/turn), <b style="color:#8fbf7f">CALM</b>. Yields go vertical in a panic; the oil graph spikes in a boom. Money, Heat and Intel changes pop up on the board as they happen.</p>'
  +'<h4>Intel ops (🛈)</h4><ul><li><b>Burn a favor</b> (1 🛈, while moving) — +1 step this turn.</li><li><b>Spy on the deck</b> (2 🛈, free action) — privately see the next event card, anywhere.</li><li><b>The Dossier</b> (3 🛈, free action) — your hostile takeovers this turn cost <b>list price, not double</b>.</li><li><b>Sweep for bugs</b> (2 🛈, your action) — remove every bug on your nodes.</li><li><b>Sell intel</b> (your action) — at the Rumor Exchange: 1 🛈 = <b>$2</b> calm/boom, <b>$3</b> frenzy, <b>$4</b> panic. Bad news is good news.</li></ul>'
- +'<h4>The board is the whole collage</h4><p><b>76 exhibits, 118 red threads:</b> the banks (Citi, CommBank, NAB, ANZ, Bond Desk, Hedge Fund), regulators (RBA, ASIC, ACCC, coat of arms), the chart wall (10-year, real yield, inflation compensation, US·Japan·Germany·UK·Australia·Canada yields, cash rate, debt, spending, stocks, timeline, econ graphs), commodities (WTI pit, oil graph, barrels, tankers, PETRONAS, gold, banknotes, coal train, coal terminal, forklift), corporates (COAL Corp, Quikstop, MarketPlace Leichhardt, F1 car, head office, unidentified logos), media (“Quite frankly, JTPortal…”, Fox Business, “Bond Markets Revolt”, “The Jim…”, “Big Bessent”, INSIDER TRADING, TV interview, photo wall, The Big Short, newspapers, WEF, MADE), backrooms, the school (St Andrew’s, the IB, the Monetary Policy Competition, the Sisyphus boulder, group photo, the outback) and the polaroids (Watson, Bessent, Chalmers, Albanese, Trump, Bullock, James Bond, The Rock, Brad Pitt, the Whistleblower, JTPortal). Red threads are the paths. <i>Drag to pan, scroll to zoom.</i></p>'
- +'<h4>Winning</h4><p><b>MAIN WIN:</b> 8 connected nodes incl. one <b>BANK</b>, one <b>COMMODITY</b>, one <b>MEDIA</b> and <b>two CHARTS</b>. <b>ALT WIN:</b> the Monetary Policy Competition + St Andrew’s + the IB + any four charts.</p>'
- +'<h4>Your turn</h4><p><b>1 · Income</b> — $3 salary (+$1 CPI-indexed with Inflation Compensation) + holdings &amp; powers &amp; mood. <b>2 · Move</b> — 2 steps (+1 with COAL CORP HQ, +1 with the Coal Train, +1 by burning a favor). Tolls: $1 entering a rival’s node — $2 if they hold Albanese, free if you hold James Bond. <b>3 · One action</b> (plus free intel ops). <b>4 · Market event</b> for the whole table — and the mood moves.</p>'
+ +'<h4>The board is the whole collage</h4><p><b>82 exhibits.</b> Charts are no longer stacked in one corner — US yields sit by Trump, Japan by the tankers, Germany by Davos, UK by the papers, Australia by the coat of arms, Canada by the vault, the 10-year master in the middle. Each game <b>Quikstop opens in a different neighbourhood</b>, so the first moves change. New pins from the collage: <b>Westpac</b>, <b>BHP</b>, <b>Herald Sun / The Jim Reaper</b>, <b>the bullet train</b>, the circled <b>ASICS shoe</b>, and <b>Toktimer</b>. Red threads are the paths — long ones dash. <i>Drag to pan, scroll to zoom.</i></p>'
+ +'<h4>Winning</h4><p><b>MAIN WIN:</b> 8 connected nodes incl. one <b>BANK</b>, one <b>COMMODITY</b>, one <b>MEDIA</b> and <b>two CHARTS</b>. <b>SCHOOL WIN:</b> the Monetary Policy Competition + St Andrew’s + the IB + any four charts. <b>BANK RUN:</b> own any five BANK nodes (they do not need to be connected).</p>'
+ +'<h4>Your turn</h4><p><b>1 · Income</b> — $3 salary (+$1 CPI-indexed with Inflation Compensation) + holdings &amp; powers &amp; mood. <b>2 · Move</b> — 3 steps (+1 with COAL CORP HQ, +1 with the Coal Train <i>or</i> the Bullet Train, +1 with the ASICS shoe, +1 by burning a favor). Tolls: $1 entering a rival’s node — $2 if they hold Albanese, free if you hold James Bond. <b>3 · One action</b> (plus free intel ops). <b>4 · Market event</b> for the whole table — and the mood moves.</p>'
  +'<h4>Actions</h4><ul><li><b>Seize</b> the node you stand on (+1 🔥). Hostile takeover: double cost (list price with the Dossier), old owner pockets list price, +2 🔥, +$2 ACCC fee if they own the ACCC.</li><li><b>Plant a bug</b> (1 🛈; free with INSIDER TRADING) — skim $1/turn ($2 with the WEF).</li><li><b>Leak dirt</b> (2 🛈) · <b>Audit</b> ($4, ASIC) · <b>The Tweet</b> ($2, Trump) — rivals gain Heat.</li><li><b>Spin</b> ($3 Press Room) / <b>Fox Spin</b> ($2 Fox Business) · <b>Cook the books</b> ($3, The Rock) · <b>Budget night</b> ($3, the Government).</li><li><b>Push the boulder</b> (+$3, +1 🔥, forever) · <b>Scrub</b> (Real Yield) · <b>Fly the F1 jet</b> ($3, teleport) · <b>Lay low</b>.</li></ul>'
  +'<h4>Heat &amp; raids</h4><p>At 🔥8 the regulators raid you: lose your highest-income node, Heat resets to 3. The Hedge Fund pays $3 on every raid.</p>'
  +'<p class="fine">No dice. The dice were rigged from the start.</p>',
@@ -758,7 +891,7 @@ function showRules(){
 }
 
 /* ================= RENDERING (shared by host & guests) ================= */
-function render(){if(!S)return;renderBoard();renderSide()}
+function render(){if(!S)return;applyLayoutFromState();renderBoard();renderSide()}
 function moodBoost(n){
  if(!S)return 0;
  if(S.mood==='BOOM'&&n.type==='COMMODITY')return 1;
@@ -924,24 +1057,29 @@ function renderBoard(){
  const md=MOODS[S.mood]||MOODS.CALM;
  const curpos=S?S.players[S.cur].pos:null;
  let s='';
- s+='<defs><radialGradient id="bgg" cx="38%" cy="18%" r="95%"><stop offset="0%" stop-color="#2c1e11"/><stop offset="65%" stop-color="#191108"/><stop offset="100%" stop-color="#0e0906"/></radialGradient><pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="rgba(255,240,210,0.05)"/></pattern></defs>';
+ s+='<defs><radialGradient id="bgg" cx="38%" cy="18%" r="95%"><stop offset="0%" stop-color="#2a3332"/><stop offset="65%" stop-color="#1d201f"/><stop offset="100%" stop-color="#111413"/></radialGradient><pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="rgba(22,131,136,0.18)"/></pattern></defs>';
  s+='<rect width="2400" height="1560" fill="url(#bgg)"/><rect width="2400" height="1560" fill="url(#dots)"/>';
  s+='<rect width="2400" height="1560" fill="'+md.tint+'" pointer-events="none"/>';
- s+='<rect x="7" y="7" width="2386" height="1546" rx="12" fill="none" stroke="#5a3a22" stroke-width="2" opacity=".55"/>';
+ s+='<rect x="7" y="7" width="2386" height="1546" rx="0" fill="none" stroke="#168388" stroke-width="3" opacity=".7"/>';
  EDGES.forEach((e,i)=>{
   const A=NMAP[e[0]],B=NMAP[e[1]];
-  const mx=(A.x+B.x)/2,my=(A.y+B.y)/2+(i%3===0?24:(i%3===1?12:4));
+  if(!A||!B)return;
+  const dx=B.x-A.x,dy=B.y-A.y,len=Math.hypot(dx,dy)||1;
+  const nx=-dy/len,ny=dx/len;
+  const bow=(i%2===0?1:-1)*(18+Math.min(46,len*0.08));
+  const mx=(A.x+B.x)/2+nx*bow, my=(A.y+B.y)/2+ny*bow;
   const d='M'+A.x+','+A.y+' Q'+mx+','+my+' '+B.x+','+B.y;
   const hot=S&&!S.over&&S.phase==='move'&&S.mode!=='fly'&&S.steps>0&&(e[0]===curpos||e[1]===curpos);
-  s+='<path d="'+d+'" fill="none" stroke="#6e1a14" stroke-width="5" opacity="'+(hot?'.6':'.4')+'"/>';
-  s+='<path d="'+d+'" fill="none" stroke="'+(hot?'#ff6b5e':'#cf3a2e')+'" stroke-width="'+(hot?3:2)+'" opacity="'+(hot?'1':'.85')+'"/>';
+  const long=len>520;
+  s+='<path d="'+d+'" fill="none" stroke="#08383a" stroke-width="'+(hot?6:long?3.5:5)+'" opacity="'+(hot?'.7':'.35')+'"/>';
+  s+='<path d="'+d+'" fill="none" stroke="'+(hot?'#7ff6fb':'#168388')+'" stroke-width="'+(hot?3:long?1.6:2)+'" stroke-dasharray="'+(long?'11 8':'')+'" opacity="'+(hot?'1':'.9')+'"/>';
  });
  s+=scribble(1830,860,100,64,4)+scribble(1150,540,95,72,-3)+scribble(1000,1380,92,62,5)+scribble(1630,930,96,62,-4)+scribble(1500,470,98,62,3)+scribble(2020,185,92,66,-5)+scribble(390,1200,102,68,3);
  s+=redArrow(2090,330,1140,310)+redArrow(1965,235,1580,440)+redArrow(1080,585,480,1140)+redArrow(1130,1170,420,640);
  s+=scribText(1930,392,-4,'CASH RATE ↑')+scribText(1150,390,3,'“BOND…”')+scribText(1715,448,-6,'WTI +12%')+scribText(455,295,2,'TOO BIG TO FAIL')+scribText(1930,745,-3,'GOLD ↑')+scribText(1050,1150,4,'RATES ON HOLD')+scribText(640,810,-5,'INSIDER TRADING?');
- s+='<g transform="translate(58,40) rotate(-2)"><rect x="-4" y="-22" width="430" height="36" rx="5" fill="#f2ead8" stroke="#b0453a" stroke-width="2"/><circle cx="12" cy="-4" r="5" fill="#cf3a2e" stroke="#3a2a1a"/><text x="28" y="2" font-size="16" font-weight="900" letter-spacing="2" fill="#241c12">THE BIG CON — COMPLETE EVIDENCE BOARD</text></g>';
+ s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="470" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff">jt portal  —  THE BIG CON  —  econ by mistake</text></g>';
  /* the market wire — the mood, live */
- s+='<g transform="translate(1230,30)"><rect x="-700" y="-13" width="1400" height="26" rx="13" fill="#f2ead8" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-682" cy="0" r="5" fill="'+md.color+'"/><text x="-668" y="4" font-size="11" font-weight="900" letter-spacing="1.5" fill="#8e2620">'+md.label+'</text><text x="-20" y="4" text-anchor="middle" font-size="10.5" font-style="italic" fill="#5c4a33">'+esc((S.wire||'all quiet on the wire').slice(0,88))+'</text><text x="688" y="4" text-anchor="end" font-size="10" font-weight="800" fill="#3b2f1e">1🛈=$'+md.rate+'</text></g>';
+ s+='<g transform="translate(1230,30)"><rect x="-700" y="-13" width="1400" height="26" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-682" cy="0" r="5" fill="'+md.color+'"/><text x="-668" y="4" font-size="11" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="-20" y="4" text-anchor="middle" font-size="10.5" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,88))+'</text><text x="688" y="4" text-anchor="end" font-size="10" font-weight="800" fill="#9ad">1🛈=$'+md.rate+'</text></g>';
  let lx=560;
  s+='<g transform="translate(0,62)">';
  Object.keys(TYPE_COLORS).forEach(k=>{
@@ -949,8 +1087,8 @@ function renderBoard(){
   lx+=14+k.length*6.2+16;
  });
  s+='</g>';
- s+='<g transform="translate(1200,1495)"><rect x="-560" y="-14" width="1120" height="25" rx="5" fill="#f2ead8" stroke="#b0453a" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="11" font-weight="700" letter-spacing="1" fill="#5c4a33">MAIN WIN: 8 CONNECTED NODES — AT LEAST ONE BANK · ONE COMMODITY · ONE MEDIA · TWO CHARTS</text></g>';
- s+='<g transform="translate(1200,1530)"><rect x="-560" y="-12" width="1120" height="23" rx="5" fill="#f2ead8" stroke="#b08d2e" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10.5" font-weight="700" letter-spacing="1" fill="#8a6b1e">ALT WIN: HOLD THE MONETARY POLICY COMPETITION + ST ANDREW’S + THE IB + ANY 4 CHARTS — TAKE THE TROPHY</text></g>';
+ s+='<g transform="translate(1200,1490)"><rect x="-580" y="-14" width="1160" height="25" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10.5" font-weight="700" letter-spacing="1" fill="#fff">MAIN WIN: 8 CONNECTED — BANK · COMMODITY · MEDIA · TWO CHARTS &nbsp;·&nbsp; BANK RUN: ANY 5 BANKS</text></g>';
+ s+='<g transform="translate(1200,1526)"><rect x="-580" y="-12" width="1160" height="23" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10" font-weight="700" letter-spacing="1" fill="aqua">SCHOOL WIN: MONETARY POLICY COMPETITION + ST ANDREW’S + THE IB + ANY 4 CHARTS — TAKE THE TROPHY</text></g>';
  NODES.forEach(n=>{
   let cls='';
   if(S&&!S.over){
@@ -997,12 +1135,12 @@ function renderSide(){
   if(S.phase==='event')phaseHtml='<div class="phlabel">MARKET EVENT</div><p>The market moves whether anyone likes it or not…</p>';
   else phaseHtml='<div class="phlabel">STANDBY</div><p>⏳ Waiting for <b style="color:'+p.color+'">'+esc(p.name)+'</b>'+(p.dc?' <i>(away — auto-playing)</i>':'')+'…</p><p>Scheme in the chat. Hover exhibits to study their powers.</p>';
  } else if(S.phase==='move'){
-  const maxSteps=2+(S.owner.coal===me?1:0)+(S.owner.train===me?1:0)+(S.extraStep?1:0);
+  const maxSteps=3+(S.owner.coal===me?1:0)+((S.owner.train===me||S.owner.bullet===me)?1:0)+(S.owner.asics===me?1:0)+(S.extraStep?1:0);
   const dots='●'.repeat(Math.max(0,S.steps))+'○'.repeat(Math.max(0,maxSteps-S.steps));
   if(S.mode==='fly'){phaseHtml='<div class="phlabel">PHASE 1 · MOVE — FLYING</div><p><b>FLYING:</b> click <b>any node</b> on the board to land there ($3).</p><button class="act" data-act="cancel">Cancel flight</button>'}
   else{
    phaseHtml='<div class="phlabel">PHASE 1 · MOVE</div>'
-    +'<p>Click a <b>highlighted node</b> to move along the red threads. Tolls: <b>$1</b> entering a rival’s node (<b>$2</b> if they hold ALBANESE, <b>free</b> if you hold JAMES BOND).</p>'
+    +'<p>Click a <b>highlighted node</b> to move along the red threads (3 steps now — the board is wider). Tolls: <b>$1</b> entering a rival’s node (<b>$2</b> if they hold ALBANESE, <b>free</b> if you hold JAMES BOND).</p>'
     +'<div class="dots">'+dots+' <span>'+S.steps+' step'+(S.steps!==1?'s':'')+' left</span></div>'
     +'<button class="act" data-act="endmove">Stay put — end movement</button>'
     +((!S.extraStep&&p.intel>=1)?'<button class="act" data-act="favor">🛈 Burn a favor — 1 🛈 (+1 step this turn)</button>':'')
@@ -1028,6 +1166,7 @@ function renderSide(){
     btns.push('<div class="ownnote">You already control <b>'+n.name.join(' ')+'</b>.</div>');
     if(nid==='sisy')btns.push('<button class="act primary" data-act="push">Push the boulder — +$3, +1 🔥</button>');
     if(nid==='real')btns.push('<button class="act primary" data-act="scrub">Read the real yields — free −1 🔥</button>');
+    if(nid==='asics')btns.push('<button class="act primary" data-act="jog">Jog a lap — free −1 🔥</button>');
    }else{
     const afford=maxPay>=cost;
     const lbl=isTake?('Hostile takeover — $'+cost+(S.dossier?' (DOSSIER: list price)':' (owner pockets $'+n.cost+')')):('Seize '+n.name.join(' ')+' — $'+cost);
@@ -1070,9 +1209,9 @@ function renderSide(){
  }).join('');
  const chatHtml=(S.chat||[]).map(c=>'<div><b style="color:'+c.c+'">'+esc(c.n)+':</b> '+esc(c.t)+'</div>').join('')||'<div style="opacity:.4;font-style:italic">— the wire is quiet —</div>';
  const chatVal=(window.__chatDraft)||'';
- side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':'SEAT '+(Net.myIdx+1))+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+'</div>'
+ side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':'SEAT '+(Net.myIdx+1))+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
   +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
-  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">the complete evidence board · 76 exhibits · 118 threads · online, 2–8 players · no dice (they’re rigged)</div></div>'
+  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">82 exhibits · charts unstacked · Quikstop wanders · online, 2–8 · no dice (they’re rigged)</div></div>'
   +'<div class="turncard" style="border-color:'+p.color+'"><div class="turnlab">TURN '+S.turn+'</div><div class="turnname" style="color:'+p.color+'">'+esc(p.name)+(isTurn?' — that’s you':'')+'</div>'
   +'<div class="resline">$ '+p.money+' &nbsp;·&nbsp; 🛈 '+p.intel+' &nbsp;·&nbsp; 🔥 '+p.heat+(p.heat>=6?' <span class="danger">RAID AT 8</span>':'')+'</div>'
   +'<div class="holds" title="holdings of '+esc(p.name)+'">'+(isTurn?ownedIcons:'<span style="opacity:.5;font-size:12px">'+NODES.filter(n=>S.owner[n.id]===S.cur).length+' holdings</span>')+'</div></div>'
@@ -1091,12 +1230,12 @@ function renderSide(){
  }
 }
 function sendChat(t){
- if(Net.role==='host'){addChat(0,t)}
+ if(Net.role==='host'){addChat(Net.myIdx,t)}
  else if(Net.conn&&Net.conn.open){Net.conn.send({t:'chat',text:t})}
 }
 function dispatch(m){
  if(!S||S.over)return;
- if(Net.role==='host')applyIntent(0,m);
+ if(Net.role==='host')applyIntent(Net.myIdx,m);
  else if(Net.conn&&Net.conn.open)Net.conn.send({t:'intent',act:m.act,id:m.id,target:m.target,kind:m.kind,choice:m.choice,n:m.n});
 }
 
@@ -1184,6 +1323,7 @@ function handleNodeTap(t){
   case 'budget':dispatch({act:'budget'});break;
   case 'push':dispatch({act:'push'});break;
   case 'scrub':dispatch({act:'scrub'});break;
+  case 'jog':dispatch({act:'jog'});break;
   case 'spy':dispatch({act:'spy'});break;
   case 'dossier':dispatch({act:'dossier'});break;
   case 'sweep':dispatch({act:'sweep'});break;
@@ -1318,7 +1458,7 @@ function onGuestData(d){
    break;
   case 'lobby':$('lobbyList').innerHTML=d.players.map((n,i)=>'<div class="lrow"><span class="ld" style="background:'+PCOLORS[i%PCOLORS.length]+'"></span><span class="ln">'+(i+1)+'. '+esc(n)+'</span><span class="lh">'+(i===d.idx?'YOU':'CONNECTED')+'</span></div>').join('')
    +'<div class="lrow" style="background:transparent;border:1px dashed #b0453a;color:#8a7a5f;font-size:12px"><span class="ln">'+d.players.length+' of 8 seats filled</span></div>';break;
-  case 'begin':S=d.s;Net.begun=true;enterGame();break;
+  case 'begin':S=d.s;if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
   case 'state':S=d.s;render();break;
   case 'prompt':modal({title:d.title,html:d.html,body:d.body,options:d.options}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'answer',pid:d.pid,v})});break;
   case 'event':modal({title:d.title,html:d.html,options:[{label:'Continue',v:1}]}).then(()=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'ack',eid:d.eid})});break;
@@ -1329,6 +1469,7 @@ function onGuestData(d){
 }
 function enterGame(){
  $('setup').style.display='none';$('app').style.display='flex';
+ const motd=$('motd');if(motd)motd.style.display='none';
  VB={x:0,y:0,w:2400,h:1560};applyVB();
  render();
 }
@@ -1368,6 +1509,12 @@ function showLobby(asHost){
 };
 document.querySelector('.setuplinks button[data-srules]').onclick=()=>showRules();
 if(typeof Peer==='undefined'){setNetStatus('⚠ Networking library failed to load — you need an internet connection the first time you connect.',true)}
+(function(){
+ const lines=['quite frankly, the dice were rigged from the start','jt portal 🔥🔥🔥','ECONOMICS BY MISTAKE','Air Con: The Game','Powered by Graphic Design','TRUMP: “Quite frankly, JTPortal is great, one of the greatest portals…”','the cash rate is whatever you say it is','MADE remains unexplained. Again.','shout out to the research department','no dice. they were rigged from the start'];
+ const spacer='&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;';
+ const el=document.querySelector('#motd span');
+ if(el){const t=shuffle(lines).join(spacer);el.innerHTML=t+spacer+t}
+})();
 </script>
 </body>
 </html>
