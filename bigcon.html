@@ -9,13 +9,11 @@
 <style>
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
-body{font-family:'Times New Roman',Times,serif;color:#f2f2f2;background:#1d201f}
+body{font-family:system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#f2f2f2;background:#1d201f}
+.serif,.bigtitle,.brand .t1,.winname,.turnname,.codeline .cc,.mtitle,.etitle{font-family:'Times New Roman',Times,serif}
 #toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-70px);background:#168388;color:#fff;font-weight:800;padding:10px 24px;border-radius:0;border:2px solid #000;box-shadow:0 10px 30px rgba(0,0,0,.6);opacity:0;transition:all .35s;z-index:90;pointer-events:none;font-size:14px;letter-spacing:1px;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
 #toast.show{opacity:1;transform:translate(-50%,0)}
-#motd{width:100%;background:#000;color:#fff;overflow:hidden;white-space:nowrap;position:relative;font-family:Times New Roman,Times,serif;font-size:22px;padding:8px 0;border-bottom:2px solid #168388}
-#motd span{display:inline-block;white-space:nowrap;animation:ticker 180s linear infinite}
-@keyframes ticker{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-#setup{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:0 24px 24px}
+#setup{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:24px}
 .setupcard{background:#111413;color:#f2f2f2;max-width:720px;width:100%;border-radius:0;border:2px solid #168388;padding:28px 32px;box-shadow:0 24px 80px rgba(0,0,0,.75);margin-top:28px}
 .bigtitle{font-size:44px;font-weight:900;letter-spacing:4px;background:#168388;color:#fff;display:inline-block;padding:10px 18px;margin:0 0 8px}
 .tag{font-size:17px;font-style:italic;color:burlywood;margin:12px 0 4px}
@@ -140,11 +138,19 @@ button.mini:hover{background:#168388}
 .etext{font-style:italic;color:burlywood;font-size:13px}
 .winname{font-size:30px;font-weight:900;text-align:center;margin:8px 0 2px}
 .winlist{font-size:12.5px;text-align:center;background:#000;border:1px solid #168388;border-radius:0;padding:9px;line-height:1.6;margin:8px 0}
+.chargrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0 6px}
+.charpick{background:#000;border:2px solid #333;cursor:pointer;padding:6px;text-align:center;color:#fff}
+.charpick img{width:100%;aspect-ratio:1;object-fit:cover;object-position:center top;display:block;background:#111}
+.charpick .cn{font-size:11px;margin-top:5px;line-height:1.2}
+.charpick.on{border-color:#168388;box-shadow:0 0 0 1px #168388}
+.charpick.taken{opacity:.38;cursor:not-allowed}
+.charpick:hover:not(.taken){border-color:#168388}
+.pface{width:28px;height:28px;border-radius:50%;object-fit:cover;border:2px solid var(--pc,#168388);flex:0 0 28px;background:#000}
+#board text{font-family:system-ui,Segoe UI,Helvetica,Arial,sans-serif}
 </style>
 </head>
 <body>
 <div id="toast"></div>
-<div id="motd"><span>THE BIG CON &nbsp;&nbsp;&nbsp; quite frankly, the dice were rigged from the start &nbsp;&nbsp;&nbsp; ECONOMICS BY MISTAKE &nbsp;&nbsp;&nbsp; jt portal 🔥🔥🔥 &nbsp;&nbsp;&nbsp; </span></div>
 
 <div id="setup">
  <div class="setupcard">
@@ -168,6 +174,8 @@ button.mini:hover{background:#168388}
   </div>
   <div id="lobbyView">
    <div class="codeline"><div class="cl">ROOM CODE — SHARE WITH YOUR CO-CONSPIRATORS</div><div class="cc" id="roomCodeBig">·····</div><button class="copybtn" id="btnCopy">📋 copy code</button></div>
+   <div class="sublabel" style="margin-top:14px">PICK A FACE — one player per character</div>
+   <div class="chargrid" id="charGrid"></div>
    <div class="lobbylist" id="lobbyList"></div>
    <button class="gobtn" id="btnStart" style="margin-top:12px" disabled>⚡ START THE CON (need 2+ players)</button>
   </div>
@@ -371,6 +379,19 @@ function applyQuikSlot(slot){
 const TYPE_COLORS={BANK:'#a87511',COMMODITY:'#c05621',MEDIA:'#b5308c',CORPORATE:'#1f6f8b',REGULATOR:'#5c6b73',CHART:'#2e8b57',WILD:'#6b4fa0'};
 const PCOLORS=['#f5c542','#55c1ff','#e19bff','#7fe08d','#ff5e9c','#ffffff','#00e5c0','#ffa94d'];
 const MAXPLAYERS=8;
+const CHARURL='https://raw.githubusercontent.com/waxmotson/bigcon/main/characters/';
+const CHARS=[
+ {id:'markwatson',name:'Mark Watson',file:'markwatson.png'},
+ {id:'tomkins',name:'Tomkins',file:'tomkins.png'},
+ {id:'jimchalmers',name:'Jim Chalmers',file:'jimchalmers.png'},
+ {id:'bessock',name:'Bessock',file:'bessock.png'},
+ {id:'calvinathanasius',name:'Calvin Athanasius',file:'calvinathanasius.png'},
+ {id:'denialswan',name:'Denial Swan',file:'denialswan.png'},
+ {id:'japsnchen',name:'Japsn Chen',file:'japsnchen.png'},
+ {id:'thousandyardwax',name:'Thousand Yard Wax',file:'thousandyardwax.png'}
+];
+function charMeta(id){return CHARS.find(c=>c.id===id)||null}
+function charSrc(id){const c=charMeta(id);return c?CHARURL+c.file:''}
 /* ================= THE MARKET MOOD — set by every event, felt by everyone ================= */
 const MOODS={
  CALM:{label:'MARKET: CALM',color:'#8fbf7f',tint:'rgba(70,130,70,0.045)',rate:2,desc:'no modifiers · 1 🛈 = $2'},
@@ -547,7 +568,7 @@ function initGame(defs){
   Net.conns=order.map(i=>Net.conns[i]||null);
   Net.myIdx=order.indexOf(hostWas);
  }
- S={players:seated.map((d,i)=>({name:d.name,color:PCOLORS[i%PCOLORS.length],money:15,intel:2,heat:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,owner:{},bugs:{},deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:[],quikSlot};
+ S={players:seated.map((d,i)=>({name:d.name,color:PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,heat:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,owner:{},bugs:{},deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:[],quikSlot};
  applyLayoutFromState();
  Net.started=true;
  const slot=QUIK_SLOTS[quikSlot];
@@ -556,7 +577,6 @@ function initGame(defs){
  log('⛽ Quikstop opened '+slot.label+' this game. Everyone starts there with $15 and 2 Intel.');
  log('🏆 MAIN WIN: 8 connected nodes incl. BANK + COMMODITY + MEDIA + 2 CHARTS. SCHOOL: MPC + ST ANDREW’S + IB + 4 CHARTS. BANK RUN: own any 5 BANKS.');
  $('setup').style.display='none';$('app').style.display='flex';
- const motd=$('motd');if(motd)motd.style.display='none';
  const pub=pubState();
  for(let i=0;i<Net.conns.length;i++){
   const c=Net.conns[i];
@@ -1018,14 +1038,19 @@ function nodeSVG(n,cls){
 function tokenLayer(){
  const byPos={};S.players.forEach((p,i)=>{(byPos[p.pos]=byPos[p.pos]||[]).push(i)});
  const SLOTS=[[-62,-58],[62,-58],[-90,-6],[90,-6],[-62,58],[62,58],[0,-70],[0,70]];
- let s='<g pointer-events="none">';
+ let s='<g pointer-events="none"><defs>';
+ S.players.forEach((p,i)=>{s+='<clipPath id="faceclip'+i+'"><circle r="14"/></clipPath>'});
+ s+='</defs>';
  Object.keys(byPos).forEach(nid=>{
   const n=NMAP[nid];const idxs=byPos[nid];
   idxs.forEach((pi,k)=>{
    const p=S.players[pi];const off=SLOTS[k%SLOTS.length];
-   s+='<g transform="translate('+(n.x+off[0])+','+(n.y+off[1])+')"><circle r="13.5" fill="'+p.color+'" stroke="#141009" stroke-width="2"/>'
-    +(pi===S.cur?'<circle class="ringp" r="18" fill="none" stroke="'+p.color+'" stroke-width="2.5" stroke-dasharray="4 5"/>':'')
-    +'<text text-anchor="middle" y="4.5" font-size="11" font-weight="800" fill="#141009">'+(pi+1)+'</text></g>';
+   const src=charSrc(p.char);
+   s+='<g transform="translate('+(n.x+off[0])+','+(n.y+off[1])+')">'
+    +(pi===S.cur?'<circle class="ringp" r="19" fill="none" stroke="'+p.color+'" stroke-width="2.5" stroke-dasharray="4 5"/>':'')
+    +'<circle r="15.5" fill="#000" stroke="'+p.color+'" stroke-width="2.5"/>'
+    +(src?'<image href="'+src+'" x="-14" y="-14" width="28" height="28" preserveAspectRatio="xMidYMid slice" clip-path="url(#faceclip'+pi+')"/>':'<text text-anchor="middle" y="4.5" font-size="11" font-weight="800" fill="#fff">'+(pi+1)+'</text>')
+    +'</g>';
   });
  });
  return s+'</g>';
@@ -1057,8 +1082,8 @@ function renderBoard(){
  const md=MOODS[S.mood]||MOODS.CALM;
  const curpos=S?S.players[S.cur].pos:null;
  let s='';
- s+='<defs><radialGradient id="bgg" cx="38%" cy="18%" r="95%"><stop offset="0%" stop-color="#2a3332"/><stop offset="65%" stop-color="#1d201f"/><stop offset="100%" stop-color="#111413"/></radialGradient><pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="rgba(22,131,136,0.18)"/></pattern></defs>';
- s+='<rect width="2400" height="1560" fill="url(#bgg)"/><rect width="2400" height="1560" fill="url(#dots)"/>';
+ s+='<defs><pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="rgba(22,131,136,0.18)"/></pattern></defs>';
+ s+='<rect width="2400" height="1560" fill="#1d201f"/><rect width="2400" height="1560" fill="url(#dots)"/>';
  s+='<rect width="2400" height="1560" fill="'+md.tint+'" pointer-events="none"/>';
  s+='<rect x="7" y="7" width="2386" height="1546" rx="0" fill="none" stroke="#168388" stroke-width="3" opacity=".7"/>';
  EDGES.forEach((e,i)=>{
@@ -1077,7 +1102,7 @@ function renderBoard(){
  s+=scribble(1830,860,100,64,4)+scribble(1150,540,95,72,-3)+scribble(1000,1380,92,62,5)+scribble(1630,930,96,62,-4)+scribble(1500,470,98,62,3)+scribble(2020,185,92,66,-5)+scribble(390,1200,102,68,3);
  s+=redArrow(2090,330,1140,310)+redArrow(1965,235,1580,440)+redArrow(1080,585,480,1140)+redArrow(1130,1170,420,640);
  s+=scribText(1930,392,-4,'CASH RATE ↑')+scribText(1150,390,3,'“BOND…”')+scribText(1715,448,-6,'WTI +12%')+scribText(455,295,2,'TOO BIG TO FAIL')+scribText(1930,745,-3,'GOLD ↑')+scribText(1050,1150,4,'RATES ON HOLD')+scribText(640,810,-5,'INSIDER TRADING?');
- s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="470" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff">jt portal  —  THE BIG CON  —  econ by mistake</text></g>';
+ s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="220" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON</text></g>';
  /* the market wire — the mood, live */
  s+='<g transform="translate(1230,30)"><rect x="-700" y="-13" width="1400" height="26" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-682" cy="0" r="5" fill="'+md.color+'"/><text x="-668" y="4" font-size="11" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="-20" y="4" text-anchor="middle" font-size="10.5" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,88))+'</text><text x="688" y="4" text-anchor="end" font-size="10" font-weight="800" fill="#9ad">1🛈=$'+md.rate+'</text></g>';
  let lx=560;
@@ -1202,8 +1227,10 @@ function renderSide(){
  const prows=S.players.map((pl,i)=>{
   const nodes=NODES.filter(nn=>S.owner[nn.id]===i).length;
   const targetable=isTurn&&S.phase==='action'&&(S.mode==='leak'||S.mode==='audit'||S.mode==='tweet'||S.mode==='roast')&&i!==me;
+  const face=charSrc(pl.char);
   return '<div class="prow'+(i===me?' me':'')+(targetable?' targetable':'')+(pl.heat>=6?' hot':'')+'" data-rival="'+i+'" style="--pc:'+pl.color+'">'
-   +'<span class="pnum">'+(i+1)+'</span><span class="pdot"></span><span class="pname">'+esc(pl.name)+(i===me?' <i style="color:#a08c6a">(you)</i>':'')+(pl.dc?' 💤':'')+'</span>'
+   +(face?'<img class="pface" src="'+face+'" alt="">':'<span class="pnum">'+(i+1)+'</span><span class="pdot"></span>')
+   +'<span class="pname">'+esc(pl.name)+(i===me?' <i style="color:#9ad">(you)</i>':'')+(pl.dc?' 💤':'')+'</span>'
    +'<span class="pstats">$'+pl.money+' · 🛈'+pl.intel+' · 🔥'+pl.heat+'</span>'
    +'<span class="pnodes">'+nodes+' node'+(nodes!==1?'s':'')+'</span></div>';
  }).join('');
@@ -1349,7 +1376,7 @@ function showFatal(msg){
 /* ---- HOST ---- */
 function hostCreate(name){
  setNetStatus('Contacting the matchmaker…');
- Net.role='host';Net.myName=name;Net.myIdx=0;Net.roster=[{name,conn:null}];Net.conns=[null];
+ Net.role='host';Net.myName=name;Net.myIdx=0;Net.roster=[{name,conn:null,char:null}];Net.conns=[null];
  const code=genCode();
  const p=new Peer(PFX+code,{debug:0});
  Net.peer=p;
@@ -1367,12 +1394,35 @@ function hostCreate(name){
 function onHostData(c,d){
  if(!d||!d.t)return;
  if(d.t==='hello'){handleHello(c,cleanName(d.name)||'Player');return}
+ if(d.t==='pick'){const pi=Net.conns.indexOf(c);if(pi>=0)applyChar(pi,d.char);return}
  const pi=Net.conns.indexOf(c);
  if(pi<0)return;
  if(d.t==='intent'){applyIntent(pi,d)}
  else if(d.t==='answer'){const pr=Net.pendingPrompts.get(d.pid);if(pr&&pr.pi===pi){Net.pendingPrompts.delete(d.pid);pr.res(d.v)}}
  else if(d.t==='ack'){if(Net.acks&&Net.acks.eid===d.eid){Net.acks.set.delete(pi);if(!Net.acks.set.size){clearTimeout(Net.acks.timer);const r=Net.acks.res;Net.acks=null;r()}}}
  else if(d.t==='chat'){if(S)addChat(pi,String(d.text||'').slice(0,140))}
+}
+function lobbyPlayers(){return (Net.role==='host'?Net.roster:(Net.lobbyPlayers||[])).map(e=>({name:e.name,char:e.char||null}))}
+function applyChar(idx,id){
+ if(!charMeta(id))return false;
+ if((Net.roster||[]).some((e,i)=>i!==idx&&e.char===id))return false;
+ if(!Net.roster[idx])return false;
+ Net.roster[idx].char=id;
+ broadcastLobby();
+ return true;
+}
+function renderCharGrid(){
+ const grid=$('charGrid');if(!grid)return;
+ const rows=Net.role==='host'?Net.roster:(Net.lobbyPlayers||[]);
+ const myIdx=Net.role==='host'?0:Net.myIdx;
+ const mine=rows[myIdx]&&rows[myIdx].char;
+ const taken=new Set(rows.filter((e,i)=>e.char&&i!==myIdx).map(e=>e.char));
+ grid.innerHTML=CHARS.map(c=>{
+  const on=mine===c.id,busy=taken.has(c.id);
+  return '<button type="button" class="charpick'+(on?' on':'')+(busy?' taken':'')+'" data-char="'+c.id+'" '+(busy?'disabled':'')+'>'
+   +'<img src="'+CHARURL+c.file+'" alt="">'
+   +'<div class="cn">'+esc(c.name)+(on?' · you':'')+(busy?' · taken':'')+'</div></button>';
+ }).join('');
 }
 function handleHello(c,name){
  if(Net.started&&S){
@@ -1389,9 +1439,9 @@ function handleHello(c,name){
  }
  if(Net.roster.length>=MAXPLAYERS){c.send({t:'kick',reason:'Room is full (8 players).'});setTimeout(()=>{try{c.close()}catch(e){}},800);return}
  if(Net.roster.some(e=>e.name.toLowerCase()===name.toLowerCase()))name=name+' ★';
- Net.roster.push({name,conn:c});
+ Net.roster.push({name,conn:c,char:null});
  Net.conns=Net.roster.map(e=>e.conn);
- c.send({t:'welcome',idx:Net.roster.length-1,lobby:Net.roster.map(e=>e.name)});
+ c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers()});
  broadcastLobby();
 }
 function onHostClose(c){
@@ -1417,18 +1467,26 @@ function onHostClose(c){
  }
 }
 function broadcastLobby(){
- sendAll({t:'lobby',players:Net.roster.map(e=>e.name)});
+ sendAll({t:'lobby',players:lobbyPlayers()});
  renderLobbyList();
  const n=Net.roster.length;
- $('btnStart').disabled=n<2;
- $('btnStart').textContent=n<2?'⚡ START THE CON (need 2+ players)':
-  (n>=MAXPLAYERS?'⚡ START THE CON — FULL TABLE (8/8)':
-  '⚡ START THE CON — '+n+' PLAYERS · '+(MAXPLAYERS-n)+' SEATS OPEN');
+ const ready=n>=2&&Net.roster.every(e=>e.char);
+ $('btnStart').disabled=!ready;
+ $('btnStart').textContent=!ready?(n<2?'START THE CON (need 2+ players)':'START THE CON (everyone pick a face)'):
+  (n>=MAXPLAYERS?'START THE CON — FULL TABLE (8/8)':
+  'START THE CON — '+n+' PLAYERS · '+(MAXPLAYERS-n)+' SEATS OPEN');
 }
 function renderLobbyList(){
- const c=$('lobbyList');
- c.innerHTML=Net.roster.map((e,i)=>'<div class="lrow"><span class="ld" style="background:'+PCOLORS[i%PCOLORS.length]+'"></span><span class="ln">'+(i+1)+'. '+esc(e.name)+'</span><span class="lh">'+(i===0?'HOST · YOU':'CONNECTED')+'</span></div>').join('')
-  +'<div class="lrow" style="background:transparent;border:1px dashed #b0453a;color:#8a7a5f;font-size:12px"><span class="ln">'+Net.roster.length+' of 8 seats filled</span></div>';
+ const c=$('lobbyList');if(!c)return;
+ const rows=Net.role==='host'?Net.roster:(Net.lobbyPlayers||[]);
+ c.innerHTML=rows.map((e,i)=>{
+  const face=charSrc(e.char);
+  const who=Net.role==='host'?(i===0?'HOST · YOU':'CONNECTED'):(i===Net.myIdx?'YOU':'CONNECTED');
+  return '<div class="lrow">'+(face?'<img class="pface" src="'+face+'" alt="">':'<span class="ld" style="background:'+PCOLORS[i%PCOLORS.length]+'"></span>')
+   +'<span class="ln">'+(i+1)+'. '+esc(e.name)+(e.char?' · '+esc((charMeta(e.char)||{}).name||''):' · pick a face')+'</span><span class="lh">'+who+'</span></div>';
+ }).join('')
+  +'<div class="lrow" style="background:transparent;border:1px dashed #168388;color:#9ad;font-size:12px"><span class="ln">'+rows.length+' of 8 seats filled</span></div>';
+ renderCharGrid();
 }
 /* ---- GUEST ---- */
 function guestJoin(name,code){
@@ -1453,11 +1511,14 @@ function onGuestData(d){
  switch(d.t){
   case 'welcome':
    Net.myIdx=d.idx;
+   if(d.lobby)Net.lobbyPlayers=d.lobby;
    if(d.s){S=d.s;Net.begun=true;enterGame()}
    else showLobby(false);
    break;
-  case 'lobby':$('lobbyList').innerHTML=d.players.map((n,i)=>'<div class="lrow"><span class="ld" style="background:'+PCOLORS[i%PCOLORS.length]+'"></span><span class="ln">'+(i+1)+'. '+esc(n)+'</span><span class="lh">'+(i===d.idx?'YOU':'CONNECTED')+'</span></div>').join('')
-   +'<div class="lrow" style="background:transparent;border:1px dashed #b0453a;color:#8a7a5f;font-size:12px"><span class="ln">'+d.players.length+' of 8 seats filled</span></div>';break;
+  case 'lobby':
+   Net.lobbyPlayers=d.players||[];
+   renderLobbyList();
+   break;
   case 'begin':S=d.s;if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
   case 'state':S=d.s;render();break;
   case 'prompt':modal({title:d.title,html:d.html,body:d.body,options:d.options}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'answer',pid:d.pid,v})});break;
@@ -1469,7 +1530,6 @@ function onGuestData(d){
 }
 function enterGame(){
  $('setup').style.display='none';$('app').style.display='flex';
- const motd=$('motd');if(motd)motd.style.display='none';
  VB={x:0,y:0,w:2400,h:1560};applyVB();
  render();
 }
@@ -1481,8 +1541,8 @@ function showLobby(asHost){
  $('roomCodeBig').textContent=Net.roomCode||'·····';
  $('btnStart').style.display=asHost?'block':'none';
  $('btnCopy').style.display=asHost?'inline-block':'none';
- if(!asHost){$('lobbyList').innerHTML='<div class="lrow"><span class="ln">Waiting for the host to start…</span></div>';setNetStatus('In the lobby. The host starts the game when everyone is in.')}
- else renderLobbyList();
+ if(!asHost)setNetStatus('In the lobby. Pick a face — the host starts when everyone is in.');
+ renderLobbyList();
 }
  $('btnHost').onclick=()=>{$('hostForm').classList.add('show');$('joinForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
  $('btnJoin').onclick=()=>{$('joinForm').classList.add('show');$('hostForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
@@ -1499,22 +1559,23 @@ function showLobby(asHost){
  $('btnJoinGo').disabled=true;guestJoin(nm,code);
 };
  $('btnStart').onclick=()=>{
- if(Net.roster.length<2)return;
+ if(Net.roster.length<2||Net.roster.some(e=>!e.char)){toast('Everyone needs their own face first.');return}
  $('btnStart').disabled=true;
- initGame(Net.roster.map(e=>({name:e.name})));
+ initGame(Net.roster.map(e=>({name:e.name,char:e.char})));
 };
+ document.addEventListener('click',e=>{
+  const b=e.target.closest('#charGrid .charpick');
+  if(!b||b.disabled)return;
+  const id=b.dataset.char;
+  if(Net.role==='host')applyChar(0,id);
+  else if(Net.conn&&Net.conn.open)Net.conn.send({t:'pick',char:id});
+ });
  $('btnCopy').onclick=()=>{
  const code=Net.roomCode||'';
  try{navigator.clipboard.writeText(code).then(()=>toast('Room code copied: '+code))}catch(e){toast('Code: '+code)}
 };
 document.querySelector('.setuplinks button[data-srules]').onclick=()=>showRules();
 if(typeof Peer==='undefined'){setNetStatus('⚠ Networking library failed to load — you need an internet connection the first time you connect.',true)}
-(function(){
- const lines=['quite frankly, the dice were rigged from the start','jt portal 🔥🔥🔥','ECONOMICS BY MISTAKE','Air Con: The Game','Powered by Graphic Design','TRUMP: “Quite frankly, JTPortal is great, one of the greatest portals…”','the cash rate is whatever you say it is','MADE remains unexplained. Again.','shout out to the research department','no dice. they were rigged from the start'];
- const spacer='&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;';
- const el=document.querySelector('#motd span');
- if(el){const t=shuffle(lines).join(spacer);el.innerHTML=t+spacer+t}
-})();
 </script>
 </body>
 </html>
