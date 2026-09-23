@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>THE BIG CON — jtportal edition</title>
+<link rel="icon" href="https://raw.githubusercontent.com/mwatson-27/jtportal/main/static/jtportal.ico">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font-family:'Times New Roman',Times,serif;color:#f2f2f2;background:#1d201f}
+#toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-70px);background:#168388;color:#fff;font-weight:800;padding:10px 24px;border-radius:0;border:2px solid #000;box-shadow:0 10px 30px rgba(0,0,0,.6);opacity:0;transition:all .35s;z-index:90;pointer-events:none;font-size:14px;letter-spacing:1px;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+#motd{width:100%;background:#000;color:#fff;overflow:hidden;white-space:nowrap;position:relative;font-family:Times New Roman,Times,serif;font-size:22px;padding:8px 0;border-bottom:2px solid #168388}
+#motd span{display:inline-block;white-space:nowrap;animation:ticker 180s linear infinite}
+@keyframes ticker{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+#setup{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:0 24px 24px}
+.setupcard{background:#111413;color:#f2f2f2;max-width:720px;width:100%;border-radius:0;border:2px solid #168388;padding:28px 32px;box-shadow:0 24px 80px rgba(0,0,0,.75);margin-top:28px}
+.bigtitle{font-size:44px;font-weight:900;letter-spacing:4px;background:#168388;color:#fff;display:inline-block;padding:10px 18px;margin:0 0 8px}
+.tag{font-size:17px;font-style:italic;color:burlywood;margin:12px 0 4px}
+.intro{font-size:13px;line-height:1.55;color:#d8d8d8}
+.chooserow{display:flex;gap:10px;margin:18px 0}
+.modebtn{flex:1;font-family:inherit;font-size:16px;font-weight:900;letter-spacing:1px;padding:16px 10px;border-radius:0;border:2px solid #168388;background:#000;cursor:pointer;color:#fff}
+.modebtn:hover{background:#168388;color:#fff}
+.netform{display:none;flex-direction:column;gap:10px;margin:14px 0}
+.netform.show{display:flex}
+.namelab{display:flex;align-items:center;gap:10px}
+.namelab input{flex:1;font-family:inherit;font-size:15px;padding:9px 12px;border-radius:0;border:2px solid #168388;background:#000;color:#fff;min-width:0}
+.namelab input.code{text-transform:uppercase;letter-spacing:4px;font-weight:800;text-align:center;flex:0 0 170px}
+.gobtn{font-family:inherit;font-size:16px;font-weight:900;letter-spacing:1px;padding:12px;border-radius:0;border:2px solid #000;background:#168388;color:#fff;cursor:pointer}
+.gobtn:hover{background:#0e5c60}
+.gobtn:disabled{opacity:.4;cursor:not-allowed}
+#netStatus{font-size:12.5px;color:aqua;min-height:18px;margin-top:8px;font-style:italic}
+#netStatus.err{color:#ff6b5e;font-weight:700}
+#lobbyView{display:none;margin:14px 0}
+.codeline{background:#000;color:aqua;border-radius:0;padding:12px;text-align:center;border:1px solid #168388}
+.codeline .cl{font-size:10px;letter-spacing:3px;color:#9ad}
+.codeline .cc{font-size:34px;font-weight:900;letter-spacing:10px}
+.copybtn{margin-top:6px;font-family:inherit;font-size:11px;background:none;border:1px solid #168388;color:#9ad;border-radius:0;padding:4px 12px;cursor:pointer}
+.lobbylist{margin-top:12px}
+.lrow{display:flex;align-items:center;gap:9px;background:#000;border:1px solid #333;border-radius:0;padding:8px 12px;font-size:14px;margin-top:6px}
+.lrow .ld{width:12px;height:12px;border-radius:50%}
+.lrow .ln{font-weight:800}
+.lrow .lh{margin-left:auto;font-size:10.5px;letter-spacing:1px;color:#8a7a5f}
+.setuplinks{margin-top:12px;text-align:center}
+.setuplinks button{background:none;border:none;color:aqua;font-family:inherit;font-size:13px;cursor:pointer;text-decoration:underline;padding:4px}
+#app{display:none;flex-wrap:wrap;gap:14px;padding:14px;align-items:flex-start}
+#boardWrap{flex:1 1 640px;min-width:300px;position:relative}
+#board{display:block;width:100%;height:auto;border-radius:12px;box-shadow:0 14px 50px rgba(0,0,0,.65);cursor:grab;touch-action:none}
+#board.panning{cursor:grabbing}
+.zoombar{position:absolute;top:10px;right:12px;display:flex;gap:6px;z-index:5}
+.zoombar button{width:34px;height:34px;border-radius:0;border:1px solid #168388;background:#000;color:#fff;font-family:inherit;font-size:16px;font-weight:800;cursor:pointer}
+.zoombar button:hover{background:#168388}
+.panhint{position:absolute;left:12px;bottom:10px;font-size:11px;letter-spacing:1px;color:#9ad;background:#000;padding:4px 10px;border-radius:0;border:1px solid #168388;z-index:5;pointer-events:none}
+#side{flex:0 1 384px;max-width:100%;display:flex;flex-direction:column;gap:10px}
+@media(max-width:1080px){#app{flex-direction:column}#side{flex:1 1 auto;width:100%}}
+.netstrip{background:#000;border:1px solid #168388;border-radius:0;padding:6px 11px;font-size:11px;letter-spacing:1px;color:#cde;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.netstrip b{color:aqua;letter-spacing:3px}
+.moodstrip{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#000;border:1px solid #168388;border-radius:0;padding:6px 11px;font-size:11px;letter-spacing:.5px;color:#cde}
+.moodstrip .mdot{width:9px;height:9px;border-radius:50%;flex:0 0 9px;animation:blink 1.4s infinite}
+.moodstrip .mwire{font-style:italic;color:burlywood;flex-basis:100%;font-size:10.5px;line-height:1.3}
+.brand .t1{font-size:26px;font-weight:900;letter-spacing:4px;color:#fff;background:#168388;display:inline-block;padding:6px 10px}
+.brand .t2{font-size:10px;letter-spacing:1px;color:#9ad;margin-top:5px}
+.turncard{background:#111413;border:2px solid #168388;border-radius:0;padding:10px 14px}
+.turnlab{font-size:10px;letter-spacing:3px;color:#9ad}
+.turnname{font-size:23px;font-weight:800;line-height:1.15}
+.resline{font-size:15px;margin-top:3px;font-variant-numeric:tabular-nums}
+.holds{font-size:15px;margin-top:3px;letter-spacing:2px;min-height:18px;line-height:1.3}
+.danger{color:#ff6b5e;animation:blink 1s infinite;font-size:11px;letter-spacing:1px}
+@keyframes blink{50%{opacity:.35}}
+.phasecard{background:#111413;border:1px solid #168388;border-radius:0;padding:12px 14px;min-height:120px}
+.phlabel{font-size:10px;letter-spacing:3px;color:aqua;font-weight:800;margin-bottom:6px}
+.phasecard p{font-size:12.5px;margin:6px 0;line-height:1.45}
+.phasecard i{color:burlywood}
+.pow{background:#000;border:1px dashed #168388;border-radius:0;padding:7px 9px;font-size:11.5px;color:#d8d8d8;line-height:1.4;margin-bottom:7px}
+.btns{display:flex;flex-direction:column;gap:6px}
+.sublabel{font-size:9.5px;letter-spacing:2px;color:#9ad;margin:7px 0 1px;font-weight:800}
+button.act{font-family:inherit;font-size:13px;padding:8px 11px;border-radius:0;border:1px solid #168388;background:#000;color:#fff;font-weight:700;cursor:pointer;text-align:left}
+button.act:hover:not(:disabled){background:#168388}
+button.act:disabled{opacity:.42;cursor:not-allowed}
+button.act.primary{background:#168388;color:#fff;border-color:#000}
+button.act.primary:hover:not(:disabled){background:#0e5c60}
+.ownnote{font-size:12.5px;color:burlywood;font-style:italic}
+.dots{font-size:17px;color:aqua;letter-spacing:4px;margin:7px 0}
+.dots span{font-size:11px;color:#9ad;letter-spacing:1px}
+.paneltitle{font-size:10px;letter-spacing:3px;color:#9ad;margin-top:8px}
+.prow{display:flex;align-items:center;gap:9px;background:#000;border:1px solid #333;border-radius:0;padding:7px 11px;font-size:13px;margin-top:5px}
+.prow.me{border-color:var(--pc);background:#111413}
+.prow.targetable{cursor:pointer;border-color:#55c1ff;animation:blink 1.1s infinite}
+.prow .pdot{width:12px;height:12px;border-radius:50%;background:var(--pc,#999);flex:0 0 12px}
+.prow .pnum{font-weight:900;width:14px;text-align:center;color:var(--pc)}
+.pname{font-weight:700;max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pstats{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pnodes{font-size:10px;color:#9ad;white-space:nowrap}
+.prow.hot .pstats{color:#ff8a7a}
+.log{background:#000;border:1px solid #333;border-radius:0;padding:9px 11px;height:190px;overflow-y:auto;font-size:11.5px;line-height:1.5;color:#cde}
+.log div{margin-bottom:2px}
+.chatbox{background:#000;border:1px solid #333;border-radius:0;padding:8px 10px}
+.chatlist{height:96px;overflow-y:auto;font-size:11.5px;line-height:1.5;color:#d8d8d8;margin-bottom:6px}
+.chatlist b{color:aqua}
+.chatrow{display:flex;gap:6px}
+.chatrow input{flex:1;font-family:inherit;font-size:12px;padding:6px 9px;border-radius:0;border:1px solid #168388;background:#111413;color:#fff;min-width:0}
+.chatrow button{font-family:inherit;font-size:11px;font-weight:800;border-radius:0;border:1px solid #168388;background:#000;color:#fff;padding:6px 10px;cursor:pointer}
+.footbtns{display:flex;gap:8px}
+button.mini{flex:1;font-family:inherit;background:#000;border:1px solid #168388;color:#fff;border-radius:0;padding:7px;cursor:pointer;font-size:12px;letter-spacing:1px}
+button.mini:hover{background:#168388}
+.node{cursor:default}
+.node.click{cursor:pointer}
+.node .card{filter:drop-shadow(3px 5px 3px rgba(0,0,0,.55))}
+.node.click:hover .card{filter:drop-shadow(0 0 6px rgba(255,246,220,.75)) drop-shadow(3px 5px 3px rgba(0,0,0,.55))}
+.halo{pointer-events:none;animation:halo 1.15s ease-in-out infinite}
+@keyframes halo{0%,100%{opacity:.2}50%{opacity:1}}
+.moodhalo{pointer-events:none;animation:moodpulse 2.2s ease-in-out infinite}
+@keyframes moodpulse{0%,100%{opacity:.22}50%{opacity:.65}}
+.tkdot{animation:blink 1.4s infinite}
+#board text{user-select:none;-webkit-user-select:none}
+.ringp{pointer-events:none;animation:spinring 7s linear infinite;transform-box:fill-box;transform-origin:center}
+@keyframes spinring{to{transform:rotate(360deg)}}
+#fxg{pointer-events:none}
+.fxt{pointer-events:none;animation:fxrise 2.7s ease-out forwards}
+.fxb{pointer-events:none;animation:fxbig 3.4s ease-out forwards}
+@keyframes fxrise{0%{opacity:0;transform:translateY(16px)}12%{opacity:1;transform:translateY(0)}70%{opacity:1}100%{opacity:0;transform:translateY(-44px)}}
+@keyframes fxbig{0%{opacity:0;transform:translateY(30px) scale(.75)}15%{opacity:1;transform:translateY(0) scale(1)}75%{opacity:1}100%{opacity:0;transform:translateY(-56px) scale(1)}}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;z-index:60;padding:18px}
+.mcard{background:#111413;color:#f2f2f2;border-radius:0;max-width:620px;width:100%;border:2px solid #168388;box-shadow:0 24px 70px rgba(0,0,0,.8);max-height:88vh;overflow-y:auto}
+.mtitle{background:#168388;color:#fff;font-weight:800;letter-spacing:2px;padding:11px 18px;font-size:15px}
+.mbody{padding:15px 20px;font-size:14px;line-height:1.55}
+.mbody p{margin:8px 0}
+.mbody h4{margin:13px 0 3px;color:aqua;letter-spacing:1.5px;font-size:11.5px;text-transform:uppercase}
+.mbody ul{margin:6px 0;padding-left:20px}
+.mbody li{margin:4px 0}
+.fine{font-size:11.5px;color:#9ad;font-style:italic}
+.mopts{display:flex;flex-wrap:wrap;gap:8px;padding:2px 18px 18px}
+.mopts button{font-family:inherit;background:#000;color:#fff;border:2px solid #168388;border-radius:0;padding:10px 15px;font-size:14px;font-weight:700;cursor:pointer}
+.mopts button:hover{background:#168388}
+.eventcard{text-align:center;padding:4px 2px 2px}
+.eicon{font-size:46px}
+.etitle{font-size:19px;font-weight:900;letter-spacing:.5px;margin:6px 0 2px;color:aqua}
+.etext{font-style:italic;color:burlywood;font-size:13px}
+.winname{font-size:30px;font-weight:900;text-align:center;margin:8px 0 2px}
+.winlist{font-size:12.5px;text-align:center;background:#000;border:1px solid #168388;border-radius:0;padding:9px;line-height:1.6;margin:8px 0}
+</style>
+</head>
+<body>
+<div id="toast"></div>
+<div id="motd"><span>THE BIG CON &nbsp;&nbsp;&nbsp; quite frankly, the dice were rigged from the start &nbsp;&nbsp;&nbsp; ECONOMICS BY MISTAKE &nbsp;&nbsp;&nbsp; jt portal 🔥🔥🔥 &nbsp;&nbsp;&nbsp; </span></div>
+
+<div id="setup">
+ <div class="setupcard">
+  <div class="bigtitle">THE BIG CON</div>
+  <p class="tag">The complete evidence board — charts unstacked, Quikstop on the move. Seats 2–8.</p>
+  <p class="intro">Open this page, host or join with the room code. Everyone must use the same files from this repo.</p>
+  <div class="chooserow">
+   <button class="modebtn" id="btnHost">HOST A GAME</button>
+   <button class="modebtn" id="btnJoin">JOIN A GAME</button>
+  </div>
+  <div class="netform" id="hostForm">
+   <label class="namelab"><input id="hostName" maxlength="16" placeholder="Your name — e.g. JTPortal"></label>
+   <button class="gobtn" id="btnCreate">CREATE ROOM</button>
+  </div>
+  <div class="netform" id="joinForm">
+   <label class="namelab"><input id="joinName" maxlength="16" placeholder="Your name"><input id="joinCode" class="code" maxlength="5" placeholder="CODE"></label>
+   <button class="gobtn" id="btnJoinGo">JOIN GAME</button>
+  </div>
+  <div id="lobbyView">
+   <div class="codeline"><div class="cl">ROOM CODE — SHARE WITH YOUR CO-CONSPIRATORS</div><div class="cc" id="roomCodeBig">·····</div><button class="copybtn" id="btnCopy">copy code</button></div>
+   <div class="lobbylist" id="lobbyList"></div>
+   <button class="gobtn" id="btnStart" style="margin-top:12px" disabled>START THE CON (need 2+ players)</button>
+  </div>
+  <div id="netStatus"></div>
+  <div class="setuplinks"><button data-srules>How to play</button></div>
+ </div>
+</div>
+
+<div id="app">
+ <div id="boardWrap">
+  <div class="zoombar"><button id="zin">+</button><button id="zout">−</button><button id="zreset">⌂</button></div>
+  <div class="panhint">drag to pan · scroll to zoom</div>
+  <svg id="board" viewBox="0 0 2400 1560" preserveAspectRatio="xMidYMid meet"></svg>
+ </div>
+ <aside id="side"></aside>
+</div>
+
+<script src="game-data.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
