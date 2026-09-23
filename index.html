@@ -478,7 +478,7 @@ const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);
 
 /* ================= STATE, NET & HELPERS ================= */
 let S=null;
-const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',roomCode:null,started:false,begun:false,lock:false,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null};
+const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null};
 let fxSeq=0;
 const shownFx=new Set();
 function pname(i){return S.players[i].name}
@@ -653,7 +653,7 @@ function income(i){
 async function applyIntent(pi,m){
  if(!S||S.over||!m||!m.act)return;
  if(S.cur!==pi){sysTo(pi,'Not your turn.');return}
- if(Net.lock)return;Net.lock=true;
+ if(Net.lock){sysTo(pi,'⏳ Your previous action is still resolving — please wait a moment.');return} Net.lock=true;clearTimeout(Net.lockTimer);Net.lockTimer=setTimeout(()=>{if(Net.lock){console.error('[BIGCON] stale action lock released');Net.lock=false;Net.lockTimer=null;sync()}},30000);
  try{
   const act=m.act,p=S.players[pi];
   if(act==='move'&&S.phase==='move'){
@@ -734,7 +734,7 @@ async function applyIntent(pi,m){
   else if(act==='laylow'&&S.phase==='action'&&!S.mode){
    if(m.choice==='cash')gain(pi,1,'kept it quiet');else addHeat(pi,-1,'kept it quiet');
    await endOfTurn()}
- } finally {Net.lock=false}
+ } finally {clearTimeout(Net.lockTimer);Net.lockTimer=null;Net.lock=false}
 }
 async function doMove(pi,id){
  const owner=S.owner[id];
@@ -1265,6 +1265,7 @@ function sendChat(t){
  if(Net.role==='host'){addChat(Net.myIdx,t)}
  else if(Net.conn&&Net.conn.open){Net.conn.send({t:'chat',text:t})}
 }
+function getPlayerId(){const key='bigcon-player-id';let id=sessionStorage.getItem(key);if(!id){id=crypto.randomUUID();sessionStorage.setItem(key,id)}return id;}
 function dispatch(m){
  if(!S||S.over)return;
  if(Net.role==='host')applyIntent(Net.myIdx,m);
@@ -1381,7 +1382,7 @@ function showFatal(msg){
 /* ---- HOST ---- */
 function hostCreate(name){
  setNetStatus('Contacting the matchmaker…');
- Net.role='host';Net.myName=name;Net.myIdx=0;Net.roster=[{name,conn:null,char:null}];Net.conns=[null];
+ Net.role='host';Net.myName=name;Net.playerId=getPlayerId();Net.myIdx=0;Net.roster=[{name,playerId:Net.playerId,conn:null,char:null}];Net.conns=[null];
  const code=genCode();
  const p=new Peer(PFX+code,{debug:0});
  Net.peer=p;
@@ -1398,7 +1399,7 @@ function hostCreate(name){
 }
 function onHostData(c,d){
  if(!d||!d.t)return;
- if(d.t==='hello'){handleHello(c,cleanName(d.name)||'Player');return}
+ if(d.t==='hello'){handleHello(c,cleanName(d.name)||'Player',String(d.playerId||''));return}
  if(d.t==='pick'){const pi=Net.conns.indexOf(c);if(pi>=0)applyChar(pi,d.char);return}
  const pi=Net.conns.indexOf(c);
  if(pi<0)return;
@@ -1429,7 +1430,16 @@ function renderCharGrid(){
    +'<div class="cn">'+esc(c.name)+(on?' · you':'')+(busy?' · taken':'')+'</div></button>';
  }).join('');
 }
-function handleHello(c,name){
+function handleHello(c,name,playerId){
+ const existing=playerId?Net.roster.findIndex(e=>e.playerId===playerId):-1;
+ if(existing>=0){
+  const old=Net.conns[existing];
+  if(old===c)return;
+  if(old&&old.open){c.send({t:'kick',reason:'This player is already connected in this room. Close the other tab before joining again.'});setTimeout(()=>{try{c.close()}catch(e){}},800);return;}
+  Net.roster[existing].conn=c;Net.conns[existing]=c;
+  if(Net.started&&S){S.players[existing].dc=false;log('🔔 '+name+' reconnected to their existing seat.');c.send({t:'welcome',idx:existing,s:pubState()});sync();return;}
+  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers()});broadcastLobby();return;
+ }
  if(Net.started&&S){
   const idx=S.players.findIndex(pl=>pl.dc&&pl.name.toLowerCase()===name.toLowerCase());
   if(idx>0){
@@ -1444,12 +1454,14 @@ function handleHello(c,name){
  }
  if(Net.roster.length>=MAXPLAYERS){c.send({t:'kick',reason:'Room is full (8 players).'});setTimeout(()=>{try{c.close()}catch(e){}},800);return}
  if(Net.roster.some(e=>e.name.toLowerCase()===name.toLowerCase()))name=name+' ★';
- Net.roster.push({name,conn:c,char:null});
+ Net.roster.push({name,playerId:playerId||crypto.randomUUID(),conn:c,char:null});
  Net.conns=Net.roster.map(e=>e.conn);
  c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers()});
  broadcastLobby();
 }
 function onHostClose(c){
+ if(c.__bigconClosed)return;
+ c.__bigconClosed=true;
  const pi=Net.conns.indexOf(c);
  if(pi<0)return;
  if(!Net.started){
@@ -1496,14 +1508,14 @@ function renderLobbyList(){
 /* ---- GUEST ---- */
 function guestJoin(name,code){
  setNetStatus('Contacting the matchmaker…');
- Net.role='guest';Net.myName=name;Net.roomCode=code;
+ Net.role='guest';Net.myName=name;Net.playerId=getPlayerId();Net.roomCode=code;
  const p=new Peer({debug:0});
  Net.peer=p;
  p.on('open',()=>{
   setNetStatus('Connecting to host…');
   const c=p.connect(PFX+code,{reliable:true});
   Net.conn=c;
-  c.on('open',()=>{c.send({t:'hello',name});setNetStatus('Joining “'+code+'”…')});
+  c.on('open',()=>{c.send({t:'hello',name,playerId:Net.playerId});setNetStatus('Joining “'+code+'”…')});
   c.on('data',d=>{try{onGuestData(d)}catch(err){console.error(err)}});
   c.on('close',()=>{if(!Net.begun)setNetStatus('Connection closed by host.',true);else showFatal('The host has left the table. The con is over — for now.')});
  });
