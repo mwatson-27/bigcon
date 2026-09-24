@@ -1379,24 +1379,12 @@ function showFatal(msg){
  card.innerHTML='<div class="mtitle">CONNECTION LOST</div><div class="mbody"><p>'+esc(msg)+'</p></div><div class="mopts"><button onclick="location.reload()">Reload</button></div>';
  ov.appendChild(card);document.body.appendChild(ov);
 }
-/* ---- WEBRTC / ICE CONFIG ---- */
-/* Keep game traffic peer-to-peer. STUN discovers routes; TURN is used only
-   when the browsers cannot establish a direct route. */
-const BIGCON_ICE_CONFIG={
- iceServers:[
-  {urls:'stun:stun.l.google.com:19302'},
-  {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478'],username:'peerjs',credential:'peerjsp'}
- ],
- sdpSemantics:'unified-plan'
-};
-const BIGCON_PEER_OPTIONS={config:BIGCON_ICE_CONFIG,debug:3};
-
 /* ---- HOST ---- */
 function hostCreate(name){
  setNetStatus('Contacting the matchmaker…');
  Net.role='host';Net.myName=name;Net.playerId=getPlayerId();Net.myIdx=0;Net.roster=[{name,playerId:Net.playerId,conn:null,char:null}];Net.conns=[null];
  const code=genCode();
- const p=new Peer(PFX+code,BIGCON_PEER_OPTIONS);
+ const p=new Peer(PFX+code,{debug:0});
  Net.peer=p;
  let opened=false;
  p.on('open',()=>{opened=true;Net.roomCode=code;showLobby(true);setNetStatus('Room created — seats up to 8. Waiting for co-conspirators…')});
@@ -1518,102 +1506,23 @@ function renderLobbyList(){
  renderCharGrid();
 }
 /* ---- GUEST ---- */
-let guestReconnectTimer=null;
-let guestReconnectAttempt=0;
-let guestTransportToken=0;
-let guestReconnectStopped=false;
-
-function clearGuestReconnect(){
- if(guestReconnectTimer){clearTimeout(guestReconnectTimer);guestReconnectTimer=null}
-}
-
-function guestReconnectDelay(){
- return Math.min(8000,1000*Math.pow(2,Math.max(0,guestReconnectAttempt-1)));
-}
-
-function guestConnectionLost(token){
- if(token!==guestTransportToken||guestReconnectStopped)return;
- if(!Net.begun){
-  setNetStatus('Connection closed by host.',true);
-  return;
- }
- clearGuestReconnect();
- guestReconnectAttempt++;
- const attempt=guestReconnectAttempt;
- const delay=guestReconnectDelay();
- setNetStatus('Connection lost — reconnecting ('+attempt+')…',true);
- guestReconnectTimer=setTimeout(()=>{
-  guestReconnectTimer=null;
-  if(token!==guestTransportToken||guestReconnectStopped)return;
-  connectGuestTransport(true);
- },delay);
-}
-
-function connectGuestTransport(isRetry){
- const token=++guestTransportToken;
- const name=Net.myName;
- const code=Net.roomCode;
- const oldPeer=Net.peer;
- if(oldPeer&&!oldPeer.destroyed){
-  try{oldPeer.destroy()}catch(_){}
- }
- const p=new Peer(BIGCON_PEER_OPTIONS);
- Net.peer=p;
- p.on('open',()=>{
-  if(token!==guestTransportToken||guestReconnectStopped)return;
-  const c=p.connect(PFX+code,{reliable:true,serialization:'json'});
-  Net.conn=c;
-  let connectionOpened=false;
-  const connectionTimeout=setTimeout(()=>{
-   if(!connectionOpened&&token===guestTransportToken&&!guestReconnectStopped){
-    console.warn('[BigCon] Data connection timed out; retrying', {code, token});
-    try{c.close()}catch(_){}
-    guestConnectionLost(token);
-   }
-  },15000);
-  c.on('open',()=>{
-   connectionOpened=true;
-   clearTimeout(connectionTimeout);
-   if(token!==guestTransportToken||guestReconnectStopped)return;
-   guestReconnectAttempt=0;
-   c.__bigconClosed=false;
-   c.send({t:'hello',name,playerId:Net.playerId});
-   setNetStatus('Connected — '+(isRetry?'rejoining':'joining')+' “'+code+'”…');
-  });
-  c.on('data',d=>{
-   if(token!==guestTransportToken||guestReconnectStopped)return;
-   try{onGuestData(d)}catch(err){console.error(err)}
-  });
-  c.on('close',()=>guestConnectionLost(token));
-  c.on('error',()=>guestConnectionLost(token));
- });
- p.on('disconnected',()=>{
-  if(token!==guestTransportToken||guestReconnectStopped)return;
-  try{p.reconnect()}catch(_){guestConnectionLost(token)}
- });
- p.on('error',e=>{
-  if(token!==guestTransportToken||guestReconnectStopped)return;
-  const ty=e&&e.type;
-  if(ty==='peer-unavailable'){
-   if(Net.begun)guestConnectionLost(token);
-   else setNetStatus('Room “'+code+'” not found — check the code (and that the host still has the page open).',true);
-  }else if(ty==='network'||ty==='socket-error'||ty==='socket-closed'){
-   guestConnectionLost(token);
-  }else{
-   setNetStatus('Network error: '+(ty||'unknown')+'.',true);
-  }
- });
-}
-
 function guestJoin(name,code){
- clearGuestReconnect();
- guestReconnectStopped=false;
- guestReconnectAttempt=0;
  setNetStatus('Contacting the matchmaker…');
  Net.role='guest';Net.myName=name;Net.playerId=getPlayerId();Net.roomCode=code;
- connectGuestTransport(false);
+ const p=new Peer({debug:0});
+ Net.peer=p;
+ p.on('open',()=>{
+  setNetStatus('Connecting to host…');
+  const c=p.connect(PFX+code,{reliable:true});
+  Net.conn=c;
+  c.on('open',()=>{c.send({t:'hello',name,playerId:Net.playerId});setNetStatus('Joining “'+code+'”…')});
+  c.on('data',d=>{try{onGuestData(d)}catch(err){console.error(err)}});
+  c.on('close',()=>{if(!Net.begun)setNetStatus('Connection closed by host.',true);else showFatal('The host has left the table. The con is over — for now.')});
+ });
+ p.on('error',e=>{const ty=e&&e.type;
+  if(ty==='peer-unavailable')setNetStatus('Room “'+code+'” not found — check the code (and that the host still has the page open).',true);
+  else setNetStatus('Network error: '+(ty||'unknown')+'.',true)});
 }
-
 function onGuestData(d){
  if(!d||!d.t)return;
  switch(d.t){

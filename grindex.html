@@ -10,7 +10,7 @@
 <meta property="og:image:height" content="1200" />
 <title>THE BIG CON</title>
 <link rel="icon" href="favicon.ico">
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/mqtt@4.3.8/dist/mqtt.min.js"></script>
 <style>
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -164,7 +164,7 @@ button.mini:hover{background:#168388}
   <p class="intro">All 82 exhibits are on the board: JTPortal, St Andrew's Cathedral School, the ACCC, the RBA, Citi, CommBank, NAB, ANZ, Westpac, ASIC, the coat of arms, PETRONAS, BHP, MarketPlace Leichhardt, Quikstop, MADE, the World Economic Forum, Fox Business, Herald Sun / The Jim Reaper, the charts now pinned all over the collage (10-year master in the middle; US by Trump; Japan by the tankers; Germany by Davos; UK by the papers; Australia by the coat of arms; Canada by the vault), the commodities (WTI pit, blue barrels, tanker fleet, gold coins, banknotes, coal train, coal terminal, forklift, BHP), the headlines (“Quite frankly, JTPortal…”, “Bond Markets Revolt”, “Big Bessent”, “The Jim…”, INSIDER TRADING, CEO COAL, BRAD PITT, The Big Short) and the polaroids — Watson, Bessent, Chalmers, Albanese, Trump, Bullock, James Bond of Citibank, The Rock, the Whistleblower, Toktimer — plus the IB Diploma, the Sisyphus Boulder, the circled ASICS shoe, the bullet train and the Australian Monetary Policy Competition.<br><br>
   <b>Each game Quikstop opens in a different neighbourhood</b> — the inner west, the docks, across from the RBA, down by MarketPlace, or next to MADE — so the opening map is never the same.<br><br>
   Every market event now <b>shifts the mood of the whole board</b> — watch the ticker, the tint and the glowing nodes — and money, Heat and Intel <b>pop up on the board as they happen</b>. Intel is a currency with teeth: <b>burn favors, spy on the event deck, open the Dossier, sweep for bugs, or sell rumors at the exchange</b> (rates rise when the market panics).<br><br>
-  <b>Online play (2–8 players):</b> one player hosts and gets a room code; everyone else joins with it. Each screen sees only its own secret prompts. Everyone must run <b>this same file</b>.</p>
+  <b>Online play (2–8 players):</b> one player hosts and gets a room code; everyone else joins with it. Players meet through a public matchmaking relay (no PeerJS). Each screen sees only its own secret prompts. Everyone must run <b>this same file</b> and keep the tab open.</p>
   <div class="chooserow">
    <button class="modebtn" id="btnHost">HOST</button>
    <button class="modebtn" id="btnJoin">JOIN</button>
@@ -478,7 +478,7 @@ const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);
 
 /* ================= STATE, NET & HELPERS ================= */
 let S=null;
-const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null};
+const Net={role:null,mqtt:null,brokerUrl:null,hostId:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,seen:Object.create(null),lastSeen:Object.create(null),watchT:null,hbT:null};
 let fxSeq=0;
 const shownFx=new Set();
 function pname(i){return S.players[i].name}
@@ -533,8 +533,12 @@ function madePay(){const m=S.owner.made;if(m!=null)gain(m,3,'MADE pays out — n
 
 /* ============ NET: state sync & prompts (host-authoritative) ============ */
 function pubState(){const c=JSON.parse(JSON.stringify(S));c.deckCount=c.deck.length;delete c.deck;return c}
-function sendAll(msg){for(let i=1;i<Net.conns.length;i++){const c=Net.conns[i];if(c&&c.open){try{c.send(msg)}catch(e){}}}}
-function sendTo(pi,msg){if(pi===Net.myIdx)return;const c=Net.conns[pi];if(c&&c.open){try{c.send(msg)}catch(e){}}}
+function sendAll(msg){busSend(Object.assign({},msg,{to:'*'}))}
+function sendTo(pi,msg){
+ if(pi===Net.myIdx)return;
+ const row=Net.roster[pi];
+ if(row&&row.playerId)busSend(Object.assign({},msg,{to:row.playerId}));
+}
 function sendState(){sendAll({t:'state',s:pubState()})}
 function sync(){if(Net.role==='host'){render();sendState()}else render()}
 function sysTo(pi,msg){if(Net.role!=='host')return;if(pi===Net.myIdx){toast(msg);return}sendTo(pi,{t:'sys',msg})}
@@ -542,8 +546,7 @@ function askPlayer(pi,opt){return new Promise(res=>{
  if(Net.role!=='host'){modal(opt).then(res);return}
  const def=opt.def!==undefined?opt.def:(opt.options&&opt.options[0]?opt.options[0].v:undefined);
  if(pi===Net.myIdx){modal(opt).then(res);return}
- const c=Net.conns[pi];
- if(!c||!c.open){res(def);return}
+ if(!Net.roster[pi]||!Net.roster[pi].playerId){res(def);return}
  const pid=++Net.promptSeq;
  Net.pendingPrompts.set(pid,{res,def,pi});
  sendTo(pi,{t:'prompt',pid,title:opt.title,html:opt.html,body:opt.body,options:opt.options});
@@ -552,7 +555,10 @@ function askPlayer(pi,opt){return new Promise(res=>{
 async function revealAll(title,html){
  if(Net.role!=='host'){await modal({title,html,options:[{label:'Continue',v:1}]});return}
  const eid=++Net.evSeq;const need=new Set();
- for(let i=1;i<S.players.length;i++){const c=Net.conns[i];if(c&&c.open){sendTo(i,{t:'event',eid,title,html});need.add(i)}}
+ for(let i=0;i<S.players.length;i++){
+  if(i===Net.myIdx)continue;
+  if(Net.roster[i]&&Net.roster[i].playerId){sendTo(i,{t:'event',eid,title,html});need.add(i)}
+ }
  await modal({title,html,options:[{label:'Continue',v:1}]});
  if(need.size){await new Promise(res=>{Net.acks={eid,set:need,res,timer:setTimeout(()=>{if(Net.acks){Net.acks=null;res()}},25000)}})}
 }
@@ -568,12 +574,13 @@ function initGame(defs){
  const order=defs.map((_,i)=>i);
  for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=order[i];order[i]=order[j];order[j]=t}
  const seated=order.map(i=>defs[i]);
- if(Net.conns&&Net.conns.length){
+ if(Net.roster&&Net.roster.length){
   const hostWas=0;
-  Net.conns=order.map(i=>Net.conns[i]||null);
+  Net.roster=order.map(i=>Net.roster[i]);
   Net.myIdx=order.indexOf(hostWas);
+  refreshPipes();
  }
- S={players:seated.map((d,i)=>({name:d.name,color:PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,heat:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,owner:{},bugs:{},deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:[],quikSlot};
+ S={players:seated.map((d,i)=>({name:d.name,color:PCOLORS[i%PCOLORS.length],char:d.char||null,playerId:d.playerId||null,money:15,intel:2,heat:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,owner:{},bugs:{},deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:[],quikSlot};
  applyLayoutFromState();
  Net.started=true;
  const slot=QUIK_SLOTS[quikSlot];
@@ -583,9 +590,9 @@ function initGame(defs){
  log('🏆 MAIN WIN: 8 connected nodes incl. BANK + COMMODITY + MEDIA + 2 CHARTS. SCHOOL: MPC + ST ANDREW’S + IB + 4 CHARTS. BANK RUN: own any 5 BANKS.');
  $('setup').style.display='none';$('app').style.display='flex';
  const pub=pubState();
- for(let i=0;i<Net.conns.length;i++){
-  const c=Net.conns[i];
-  if(c&&c.open){try{c.send({t:'begin',s:pub,idx:i})}catch(e){}}
+ for(let i=0;i<Net.roster.length;i++){
+  if(i===Net.myIdx)continue;
+  sendTo(i,{t:'begin',s:pub,idx:i});
  }
  startTurn();
 }
@@ -903,7 +910,7 @@ function addChat(pi,text){
 }
 function showRules(){
  modal({title:'HOW TO PULL THE BIG CON',html:
- '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code; the others <b>join</b> — the table seats up to <b>eight</b>. Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. Chat in the sidebar.</p>'
+ '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code; the others <b>join</b> — the table seats up to <b>eight</b>. Matchmaking uses public internet relays (not PeerJS / WebRTC), so home routers should not block you. Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. Chat in the sidebar.</p>'
  +'<h4>The market mood — events you can feel</h4><p>Every market event shifts the mood of the whole board — watch the <b>ticker</b> across the top, the <b>tint</b> of the board and the <b>glowing nodes</b>: <b style="color:#f5c542">BOOM</b> (commodities +$1/turn), <b style="color:#ff6b5e">PANIC</b> (banks −$1/turn, intel dearer), <b style="color:#e19bff">MEDIA FRENZY</b> (media +$1/turn), <b style="color:#8fbf7f">CALM</b>. Yields go vertical in a panic; the oil graph spikes in a boom. Money, Heat and Intel changes pop up on the board as they happen.</p>'
  +'<h4>Intel ops (🛈)</h4><ul><li><b>Burn a favor</b> (1 🛈, while moving) — +1 step this turn.</li><li><b>Spy on the deck</b> (2 🛈, free action) — privately see the next event card, anywhere.</li><li><b>The Dossier</b> (3 🛈, free action) — your hostile takeovers this turn cost <b>list price, not double</b>.</li><li><b>Sweep for bugs</b> (2 🛈, your action) — remove every bug on your nodes.</li><li><b>Sell intel</b> (your action) — at the Rumor Exchange: 1 🛈 = <b>$2</b> calm/boom, <b>$3</b> frenzy, <b>$4</b> panic. Bad news is good news.</li></ul>'
  +'<h4>The board is the whole collage</h4><p><b>82 exhibits.</b> Charts are no longer stacked in one corner — US yields sit by Trump, Japan by the tankers, Germany by Davos, UK by the papers, Australia by the coat of arms, Canada by the vault, the 10-year master in the middle. Each game <b>Quikstop opens in a different neighbourhood</b>, so the first moves change. New pins from the collage: <b>Westpac</b>, <b>BHP</b>, <b>Herald Sun / The Jim Reaper</b>, <b>the bullet train</b>, the circled <b>ASICS shoe</b>, and <b>Toktimer</b>. Red threads are the paths — long ones dash. <i>Drag to pan, scroll to zoom.</i></p>'
@@ -1263,13 +1270,13 @@ function renderSide(){
 }
 function sendChat(t){
  if(Net.role==='host'){addChat(Net.myIdx,t)}
- else if(Net.conn&&Net.conn.open){Net.conn.send({t:'chat',text:t})}
+ else busSend({t:'chat',text:t,to:'host'});
 }
 function getPlayerId(){const key='bigcon-player-id';let id=sessionStorage.getItem(key);if(!id){id=crypto.randomUUID();sessionStorage.setItem(key,id)}return id;}
 function dispatch(m){
  if(!S||S.over)return;
  if(Net.role==='host')applyIntent(Net.myIdx,m);
- else if(Net.conn&&Net.conn.open)Net.conn.send({t:'intent',act:m.act,id:m.id,target:m.target,kind:m.kind,choice:m.choice,n:m.n});
+ else busSend({t:'intent',act:m.act,id:m.id,target:m.target,kind:m.kind,choice:m.choice,n:m.n,to:'host'});
 }
 
 /* ================= INPUT — pan, zoom & taps ================= */
@@ -1367,9 +1374,14 @@ function handleNodeTap(t){
  }
 });
 
-/* ================= NETWORKING ================= */
-const PFX='bigcon-oz-';
+/* ================= NETWORKING (MQTT room relay — not PeerJS) ================= */
+const MQTT_BROKERS=[
+ 'wss://broker.hivemq.com:8884/mqtt',
+ 'wss://broker.emqx.io:8084/mqtt',
+ 'wss://test.mosquitto.org:8081/mqtt'
+];
 const CODECH='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const HOST_TYPES={welcome:1,lobby:1,begin:1,state:1,prompt:1,event:1,sys:1,reload:1,kick:1};
 function genCode(){let s='';for(let i=0;i<5;i++)s+=CODECH[Math.floor(Math.random()*CODECH.length)];return s}
 function setNetStatus(msg,err){const el=$('netStatus');el.textContent=msg||'';el.className=err?'err':''}
 function cleanName(s){return String(s||'').replace(/[<>&"'`]/g,'').trim().slice(0,16)}
@@ -1379,51 +1391,161 @@ function showFatal(msg){
  card.innerHTML='<div class="mtitle">CONNECTION LOST</div><div class="mbody"><p>'+esc(msg)+'</p></div><div class="mopts"><button onclick="location.reload()">Reload</button></div>';
  ov.appendChild(card);document.body.appendChild(ov);
 }
-/* ---- WEBRTC / ICE CONFIG ---- */
-/* Keep game traffic peer-to-peer. STUN discovers routes; TURN is used only
-   when the browsers cannot establish a direct route. */
-const BIGCON_ICE_CONFIG={
- iceServers:[
-  {urls:'stun:stun.l.google.com:19302'},
-  {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478'],username:'peerjs',credential:'peerjsp'}
- ],
- sdpSemantics:'unified-plan'
-};
-const BIGCON_PEER_OPTIONS={config:BIGCON_ICE_CONFIG,debug:3};
+function roomTopic(code){return 'bigcon/v3/'+String(code||'').toUpperCase()}
+function brokerLabel(url){
+ if(!url)return 'relay';
+ if(url.indexOf('hivemq')>=0)return 'HiveMQ';
+ if(url.indexOf('emqx')>=0)return 'EMQX';
+ if(url.indexOf('mosquitto')>=0)return 'Mosquitto';
+ return url.replace(/^wss:\/\//,'').split('/')[0];
+}
+function refreshPipes(){
+ Net.conns=(Net.roster||[]).map((e,i)=>{
+  if(!e||!e.playerId)return null;
+  return {open:true,playerId:e.playerId,send:function(msg){busSend(Object.assign({},msg,{to:e.playerId}))}};
+ });
+}
+function liveBrokerCount(){return (Net.mqtts||[]).filter(function(c){return c&&c.connected}).length}
+function busSend(msg){
+ if(!Net.roomCode||!Net.playerId)return;
+ const envelope=Object.assign({
+  v:3,
+  mid:Net.playerId+'-'+(++Net.msgSeq)+'-'+Date.now().toString(36),
+  from:Net.playerId,
+  role:Net.role,
+  ts:Date.now()
+ },msg);
+ const payload=JSON.stringify(envelope);
+ const topic=roomTopic(Net.roomCode);
+ (Net.mqtts||[]).forEach(function(c){
+  if(c&&c.connected){try{c.publish(topic,payload,{qos:0,retain:false})}catch(e){}}
+ });
+}
+function rememberMid(mid){
+ if(!mid)return false;
+ if(Net.seen[mid])return true;
+ Net.seen[mid]=1;
+ Net.seenList.push(mid);
+ if(Net.seenList.length>400){
+  const drop=Net.seenList.splice(0,200);
+  drop.forEach(function(id){delete Net.seen[id]});
+ }
+ return false;
+}
+function onBusMessage(d){
+ if(!d||!d.t)return;
+ if(d.from&&d.from===Net.playerId)return;
+ if(rememberMid(d.mid))return;
+ if(d.to&&d.to!=='*'&&d.to!==Net.playerId){
+  if(!(d.to==='host'&&Net.role==='host'))return;
+ }
+ if(Net.role==='host')onHostBus(d);
+ else onGuestData(d);
+}
+
+function connectRelays(onReady){
+ Net.mqtts=Net.mqtts||[];
+ Net.msgSeq=Net.msgSeq||0;
+ Net.seen=Net.seen||Object.create(null);
+ Net.seenList=Net.seenList||[];
+ if(typeof mqtt==='undefined'){setNetStatus('Could not load the matchmaking library — check your internet and reload.',true);return}
+ let readyFired=false;
+ let fails=0;
+ MQTT_BROKERS.forEach(function(url){
+  let client;
+  try{
+   client=mqtt.connect(url,{
+    clientId:'bc-'+String(Net.playerId||'x').slice(0,8)+'-'+Math.random().toString(36).slice(2,8),
+    clean:true,
+    reconnectPeriod:2500,
+    connectTimeout:10000,
+    keepalive:25,
+    protocolVersion:4
+   });
+  }catch(e){fails++;return}
+  Net.mqtts.push(client);
+  client.on('connect',function(){
+   const topic=roomTopic(Net.roomCode);
+   client.subscribe(topic,{qos:0},function(err){
+    if(err)return;
+    if(!Net.brokerUrl)Net.brokerUrl=url;
+    if(!readyFired){readyFired=true;onReady&&onReady()}
+    else if(Net.role==='host'&&!Net.started)setNetStatus('Room '+Net.roomCode+' live on '+liveBrokerCount()+' relay'+(liveBrokerCount()===1?'':'s')+' — waiting for co-conspirators…');
+   });
+  });
+  client.on('message',function(topic,payload){
+   let d;try{d=JSON.parse(payload.toString())}catch(e){return}
+   try{onBusMessage(d)}catch(err){console.error(err)}
+  });
+  client.on('error',function(){});
+  client.on('close',function(){
+   if(Net.role==='guest'&&Net.begun&&liveBrokerCount()===0){
+    setNetStatus('Relay dropped — reconnecting…',true);
+   }
+  });
+  client.on('reconnect',function(){
+   if(Net.role==='guest'&&Net.begun)setNetStatus('Reconnected to a relay — waiting for the host…');
+  });
+ });
+ setTimeout(function(){
+  if(!readyFired){
+   setNetStatus('No matchmaking relay answered. Check your internet / firewall and try again.',true);
+   if(Net.role==='guest')$('btnJoinGo').disabled=false;
+   if(Net.role==='host')$('btnCreate').disabled=false;
+  }
+ },12000);
+}
+
+function seatByPlayerId(playerId){
+ if(!playerId)return -1;
+ if(S&&S.players){
+  const si=S.players.findIndex(function(pl){return pl.playerId===playerId});
+  if(si>=0)return si;
+ }
+ return (Net.roster||[]).findIndex(function(e){return e&&e.playerId===playerId});
+}
 
 /* ---- HOST ---- */
 function hostCreate(name){
- setNetStatus('Contacting the matchmaker…');
- Net.role='host';Net.myName=name;Net.playerId=getPlayerId();Net.myIdx=0;Net.roster=[{name,playerId:Net.playerId,conn:null,char:null}];Net.conns=[null];
- const code=genCode();
- const p=new Peer(PFX+code,BIGCON_PEER_OPTIONS);
- Net.peer=p;
- let opened=false;
- p.on('open',()=>{opened=true;Net.roomCode=code;showLobby(true);setNetStatus('Room created — seats up to 8. Waiting for co-conspirators…')});
- p.on('error',e=>{const ty=e&&e.type;
-  if(ty==='unavailable-id'&&!opened){try{p.destroy()}catch(x){}hostCreate(name);return}
-  setNetStatus('Network error: '+(ty||'unknown')+' — check your internet and try again.',true)});
- p.on('connection',c=>{
-  c.on('open',()=>{c.on('data',d=>{try{onHostData(c,d)}catch(err){console.error(err)}})});
-  c.on('close',()=>onHostClose(c));
-  c.on('error',()=>onHostClose(c));
+ setNetStatus('Contacting matchmaking relays…');
+ Net.role='host';
+ Net.myName=name;
+ Net.playerId=getPlayerId();
+ Net.hostId=Net.playerId;
+ Net.myIdx=0;
+ Net.roomCode=genCode();
+ Net.roster=[{name:name,playerId:Net.playerId,conn:null,char:null}];
+ refreshPipes();
+ connectRelays(function(){
+  showLobby(true);
+  setNetStatus('Room created on '+brokerLabel(Net.brokerUrl)+' — seats up to 8. Share the code.');
+  broadcastLobby();
+  clearInterval(Net.hbT);
+  Net.hbT=setInterval(function(){
+   if(Net.role!=='host')return;
+   if(!Net.started)broadcastLobby();
+   else busSend({t:'hb',to:'*'});
+   checkGuestTimeouts();
+  },4000);
  });
 }
-function onHostData(c,d){
+function onHostBus(d){
  if(!d||!d.t)return;
- if(d.t==='hello'){handleHello(c,cleanName(d.name)||'Player',String(d.playerId||''));return}
- if(d.t==='pick'){const pi=Net.conns.indexOf(c);if(pi>=0)applyChar(pi,d.char);return}
- const pi=Net.conns.indexOf(c);
+ if(d.from)Net.lastSeen[d.from]=Date.now();
+ if(d.t==='hello'){handleHello(cleanName(d.name)||'Player',String(d.playerId||d.from||''));return}
+ if(d.t==='ping'){const pi=seatByPlayerId(d.from);if(pi>=0&&S&&S.players[pi])S.players[pi].dc=false;return}
+ const pi=seatByPlayerId(d.from);
+ if(d.t==='pick'){if(pi>=0)applyChar(pi,d.char);return}
  if(pi<0)return;
  if(d.t==='intent'){applyIntent(pi,d)}
  else if(d.t==='answer'){const pr=Net.pendingPrompts.get(d.pid);if(pr&&pr.pi===pi){Net.pendingPrompts.delete(d.pid);pr.res(d.v)}}
  else if(d.t==='ack'){if(Net.acks&&Net.acks.eid===d.eid){Net.acks.set.delete(pi);if(!Net.acks.set.size){clearTimeout(Net.acks.timer);const r=Net.acks.res;Net.acks=null;r()}}}
  else if(d.t==='chat'){if(S)addChat(pi,String(d.text||'').slice(0,140))}
 }
-function lobbyPlayers(){return (Net.role==='host'?Net.roster:(Net.lobbyPlayers||[])).map(e=>({name:e.name,char:e.char||null}))}
+function lobbyPlayers(){return (Net.role==='host'?Net.roster:(Net.lobbyPlayers||[])).map(function(e){return {name:e.name,char:e.char||null}})}
 function applyChar(idx,id){
  if(!charMeta(id))return false;
- if((Net.roster||[]).some((e,i)=>i!==idx&&e.char===id))return false;
+ if((Net.roster||[]).some(function(e,i){return i!==idx&&e.char===id}))return false;
  if(!Net.roster[idx])return false;
  Net.roster[idx].char=id;
  broadcastLobby();
@@ -1432,74 +1554,104 @@ function applyChar(idx,id){
 function renderCharGrid(){
  const grid=$('charGrid');if(!grid)return;
  const rows=Net.role==='host'?Net.roster:(Net.lobbyPlayers||[]);
- const myIdx=Net.role==='host'?0:Net.myIdx;
+ const myIdx=Net.role==='host'?Net.myIdx:Net.myIdx;
  const mine=rows[myIdx]&&rows[myIdx].char;
- const taken=new Set(rows.filter((e,i)=>e.char&&i!==myIdx).map(e=>e.char));
- grid.innerHTML=CHARS.map(c=>{
+ const taken=new Set(rows.filter(function(e,i){return e.char&&i!==myIdx}).map(function(e){return e.char}));
+ grid.innerHTML=CHARS.map(function(c){
   const on=mine===c.id,busy=taken.has(c.id);
   return '<button type="button" class="charpick'+(on?' on':'')+(busy?' taken':'')+'" data-char="'+c.id+'" '+(busy?'disabled':'')+'>'
    +'<img src="'+CHARURL+c.file+'" alt="">'
    +'<div class="cn">'+esc(c.name)+(on?' · you':'')+(busy?' · taken':'')+'</div></button>';
  }).join('');
 }
-function handleHello(c,name,playerId){
- const existing=playerId?Net.roster.findIndex(e=>e.playerId===playerId):-1;
+function handleHello(name,playerId){
+ if(!playerId)playerId=crypto.randomUUID();
+ const existing=seatByPlayerId(playerId);
  if(existing>=0){
-  const old=Net.conns[existing];
-  if(old===c)return;
-  if(old&&old.open){c.send({t:'kick',reason:'This player is already connected in this room. Close the other tab before joining again.'});setTimeout(()=>{try{c.close()}catch(e){}},800);return;}
-  Net.roster[existing].conn=c;Net.conns[existing]=c;
-  if(Net.started&&S){S.players[existing].dc=false;log('🔔 '+name+' reconnected to their existing seat.');c.send({t:'welcome',idx:existing,s:pubState()});sync();return;}
-  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers()});broadcastLobby();return;
- }
- if(Net.started&&S){
-  const idx=S.players.findIndex(pl=>pl.dc&&pl.name.toLowerCase()===name.toLowerCase());
-  if(idx>0){
-   Net.conns[idx]=c;S.players[idx].dc=false;
-   log('🔔 '+name+' is back at the table.');
-   clearTimeout(Net.autoT);
-   c.send({t:'welcome',idx:idx,s:pubState()});
-   sync();return;
+  if(Net.roster[existing])Net.roster[existing].playerId=playerId;
+  refreshPipes();
+  if(Net.started&&S){
+   S.players[existing].dc=false;
+   if(S.players[existing].name)name=S.players[existing].name;
+   log('🔔 '+name+' reconnected to their existing seat.');
+   busSend({t:'welcome',to:playerId,idx:existing,hostId:Net.playerId,s:pubState()});
+   sync();
+   return;
   }
-  c.send({t:'kick',reason:'Game already in progress — no empty seat named “'+name+'”.'});
-  setTimeout(()=>{try{c.close()}catch(e){}},800);return;
- }
- if(Net.roster.length>=MAXPLAYERS){c.send({t:'kick',reason:'Room is full (8 players).'});setTimeout(()=>{try{c.close()}catch(e){}},800);return}
- if(Net.roster.some(e=>e.name.toLowerCase()===name.toLowerCase()))name=name+' ★';
- Net.roster.push({name,playerId:playerId||crypto.randomUUID(),conn:c,char:null});
- Net.conns=Net.roster.map(e=>e.conn);
- c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers()});
- broadcastLobby();
-}
-function onHostClose(c){
- if(c.__bigconClosed)return;
- c.__bigconClosed=true;
- const pi=Net.conns.indexOf(c);
- if(pi<0)return;
- if(!Net.started){
-  const nm=Net.roster[pi]?Net.roster[pi].name:'A player';
-  Net.roster.splice(pi,1);Net.conns=Net.roster.map(e=>e.conn);
-  broadcastLobby();setNetStatus(nm+' left the lobby.');
+  busSend({t:'welcome',to:playerId,idx:existing,hostId:Net.playerId,lobby:lobbyPlayers()});
+  broadcastLobby();
   return;
  }
- if(S&&!S.over&&S.players[pi]){
+ if(Net.started&&S){
+  const idx=S.players.findIndex(function(pl){return pl.dc&&pl.name.toLowerCase()===name.toLowerCase()});
+  if(idx>0){
+   if(Net.roster[idx])Net.roster[idx].playerId=playerId;
+   S.players[idx].playerId=playerId;
+   S.players[idx].dc=false;
+   refreshPipes();
+   log('🔔 '+name+' is back at the table.');
+   clearTimeout(Net.autoT);
+   busSend({t:'welcome',to:playerId,idx:idx,hostId:Net.playerId,s:pubState()});
+   sync();
+   return;
+  }
+  busSend({t:'kick',to:playerId,reason:'Game already in progress — no empty seat named “'+name+'”.'});
+  return;
+ }
+ if(Net.roster.length>=MAXPLAYERS){busSend({t:'kick',to:playerId,reason:'Room is full (8 players).'});return}
+ if(Net.roster.some(function(e){return e.name.toLowerCase()===name.toLowerCase()}))name=name+' ★';
+ Net.roster.push({name:name,playerId:playerId,conn:null,char:null});
+ refreshPipes();
+ busSend({t:'welcome',to:playerId,idx:Net.roster.length-1,hostId:Net.playerId,lobby:lobbyPlayers()});
+ broadcastLobby();
+}
+function markSeatAway(pi){
+ if(pi<=0)return;
+ if(!Net.started){
+  const nm=Net.roster[pi]?Net.roster[pi].name:'A player';
+  Net.roster.splice(pi,1);
+  refreshPipes();
+  broadcastLobby();
+  setNetStatus(nm+' left the lobby.');
+  return;
+ }
+ if(S&&!S.over&&S.players[pi]&&!S.players[pi].dc){
   S.players[pi].dc=true;
   log('🔕 '+pname(pi)+' lost connection — seat is being held.');
-  Net.pendingPrompts.forEach((p,pid)=>{if(p.pi===pi){Net.pendingPrompts.delete(pid);p.res(p.def)}});
+  Net.pendingPrompts.forEach(function(p,pid){if(p.pi===pi){Net.pendingPrompts.delete(pid);p.res(p.def)}});
   if(S.cur===pi&&(S.phase==='move'||S.phase==='action')){
    clearTimeout(Net.autoT);
-   Net.autoT=setTimeout(()=>{
+   Net.autoT=setTimeout(function(){
     if(S&&!S.over&&S.cur===pi&&S.players[pi].dc){log('💤 '+pname(pi)+' is away — plays it quiet.');gain(pi,1,'away');endOfTurn()}
    },20000);
   }
   sync();
  }
 }
+function checkGuestTimeouts(){
+ const now=Date.now();
+ if(!Net.started){
+  for(let i=Net.roster.length-1;i>=1;i--){
+   const id=Net.roster[i].playerId;
+   const last=Net.lastSeen[id]||0;
+   if(last&&now-last>25000)markSeatAway(i);
+  }
+  return;
+ }
+ if(!S)return;
+ for(let i=0;i<S.players.length;i++){
+  if(i===Net.myIdx)continue;
+  const id=(S.players[i].playerId)||(Net.roster[i]&&Net.roster[i].playerId);
+  if(!id)continue;
+  const last=Net.lastSeen[id]||0;
+  if(last&&now-last>25000)markSeatAway(i);
+ }
+}
 function broadcastLobby(){
- sendAll({t:'lobby',players:lobbyPlayers()});
+ sendAll({t:'lobby',players:lobbyPlayers(),hostId:Net.playerId});
  renderLobbyList();
  const n=Net.roster.length;
- const ready=n>=2&&Net.roster.every(e=>e.char);
+ const ready=n>=2&&Net.roster.every(function(e){return e.char});
  $('btnStart').disabled=!ready;
  $('btnStart').textContent=!ready?(n<2?'START THE CON (need 2+ players)':'START THE CON (everyone pick a face)'):
   (n>=MAXPLAYERS?'START THE CON — FULL TABLE (8/8)':
@@ -1508,132 +1660,82 @@ function broadcastLobby(){
 function renderLobbyList(){
  const c=$('lobbyList');if(!c)return;
  const rows=Net.role==='host'?Net.roster:(Net.lobbyPlayers||[]);
- c.innerHTML=rows.map((e,i)=>{
+ c.innerHTML=rows.map(function(e,i){
   const face=charSrc(e.char);
-  const who=Net.role==='host'?(i===0?'HOST · YOU':'CONNECTED'):(i===Net.myIdx?'YOU':'CONNECTED');
+  const who=Net.role==='host'?(i===Net.myIdx?'HOST · YOU':'CONNECTED'):(i===Net.myIdx?'YOU':'CONNECTED');
   return '<div class="lrow">'+(face?'<img class="pface" src="'+face+'" alt="">':'<span class="ld" style="background:'+PCOLORS[i%PCOLORS.length]+'"></span>')
    +'<span class="ln">'+(i+1)+'. '+esc(e.name)+(e.char?' · '+esc((charMeta(e.char)||{}).name||''):' · pick a face')+'</span><span class="lh">'+who+'</span></div>';
  }).join('')
   +'<div class="lrow" style="background:transparent;border:1px dashed #168388;color:#9ad;font-size:12px"><span class="ln">'+rows.length+' of 8 seats filled</span></div>';
  renderCharGrid();
 }
+
 /* ---- GUEST ---- */
-let guestReconnectTimer=null;
-let guestReconnectAttempt=0;
-let guestTransportToken=0;
-let guestReconnectStopped=false;
-
-function clearGuestReconnect(){
- if(guestReconnectTimer){clearTimeout(guestReconnectTimer);guestReconnectTimer=null}
-}
-
-function guestReconnectDelay(){
- return Math.min(8000,1000*Math.pow(2,Math.max(0,guestReconnectAttempt-1)));
-}
-
-function guestConnectionLost(token){
- if(token!==guestTransportToken||guestReconnectStopped)return;
- if(!Net.begun){
-  setNetStatus('Connection closed by host.',true);
-  return;
- }
- clearGuestReconnect();
- guestReconnectAttempt++;
- const attempt=guestReconnectAttempt;
- const delay=guestReconnectDelay();
- setNetStatus('Connection lost — reconnecting ('+attempt+')…',true);
- guestReconnectTimer=setTimeout(()=>{
-  guestReconnectTimer=null;
-  if(token!==guestTransportToken||guestReconnectStopped)return;
-  connectGuestTransport(true);
- },delay);
-}
-
-function connectGuestTransport(isRetry){
- const token=++guestTransportToken;
- const name=Net.myName;
- const code=Net.roomCode;
- const oldPeer=Net.peer;
- if(oldPeer&&!oldPeer.destroyed){
-  try{oldPeer.destroy()}catch(_){}
- }
- const p=new Peer(BIGCON_PEER_OPTIONS);
- Net.peer=p;
- p.on('open',()=>{
-  if(token!==guestTransportToken||guestReconnectStopped)return;
-  const c=p.connect(PFX+code,{reliable:true,serialization:'json'});
-  Net.conn=c;
-  let connectionOpened=false;
-  const connectionTimeout=setTimeout(()=>{
-   if(!connectionOpened&&token===guestTransportToken&&!guestReconnectStopped){
-    console.warn('[BigCon] Data connection timed out; retrying', {code, token});
-    try{c.close()}catch(_){}
-    guestConnectionLost(token);
-   }
-  },15000);
-  c.on('open',()=>{
-   connectionOpened=true;
-   clearTimeout(connectionTimeout);
-   if(token!==guestTransportToken||guestReconnectStopped)return;
-   guestReconnectAttempt=0;
-   c.__bigconClosed=false;
-   c.send({t:'hello',name,playerId:Net.playerId});
-   setNetStatus('Connected — '+(isRetry?'rejoining':'joining')+' “'+code+'”…');
-  });
-  c.on('data',d=>{
-   if(token!==guestTransportToken||guestReconnectStopped)return;
-   try{onGuestData(d)}catch(err){console.error(err)}
-  });
-  c.on('close',()=>guestConnectionLost(token));
-  c.on('error',()=>guestConnectionLost(token));
- });
- p.on('disconnected',()=>{
-  if(token!==guestTransportToken||guestReconnectStopped)return;
-  try{p.reconnect()}catch(_){guestConnectionLost(token)}
- });
- p.on('error',e=>{
-  if(token!==guestTransportToken||guestReconnectStopped)return;
-  const ty=e&&e.type;
-  if(ty==='peer-unavailable'){
-   if(Net.begun)guestConnectionLost(token);
-   else setNetStatus('Room “'+code+'” not found — check the code (and that the host still has the page open).',true);
-  }else if(ty==='network'||ty==='socket-error'||ty==='socket-closed'){
-   guestConnectionLost(token);
-  }else{
-   setNetStatus('Network error: '+(ty||'unknown')+'.',true);
-  }
- });
-}
-
 function guestJoin(name,code){
- clearGuestReconnect();
- guestReconnectStopped=false;
- guestReconnectAttempt=0;
- setNetStatus('Contacting the matchmaker…');
- Net.role='guest';Net.myName=name;Net.playerId=getPlayerId();Net.roomCode=code;
- connectGuestTransport(false);
+ setNetStatus('Contacting matchmaking relays…');
+ Net.role='guest';
+ Net.myName=name;
+ Net.playerId=getPlayerId();
+ Net.roomCode=code;
+ Net.myIdx=-1;
+ Net.lobbyPlayers=null;
+ connectRelays(function(){
+  busSend({t:'hello',name:name,playerId:Net.playerId,to:'host'});
+  setNetStatus('Looking for host of “'+code+'”…');
+  clearTimeout(Net.joinTimer);
+  Net.joinTimer=setTimeout(function(){
+   if(!Net.begun && $('lobbyView').style.display!=='block'){
+    setNetStatus('No host answered for “'+code+'”. Check the code and that the host still has this page open.',true);
+    $('btnJoinGo').disabled=false;
+   }
+  },14000);
+  clearInterval(Net.hbT);
+  Net.hbT=setInterval(function(){
+   if(Net.role!=='guest')return;
+   if(!liveBrokerCount())return;
+   if(!Net.begun)busSend({t:'hello',name:Net.myName,playerId:Net.playerId,to:'host'});
+   else busSend({t:'ping',to:'host'});
+  },4000);
+ });
 }
 
 function onGuestData(d){
  if(!d||!d.t)return;
+ if(HOST_TYPES[d.t]){
+  if(d.hostId)Net.hostId=d.hostId;
+  if(d.from&&!Net.hostId&&d.role==='host')Net.hostId=d.from;
+  if(Net.hostId&&d.from&&d.from!==Net.hostId)return;
+ }
  switch(d.t){
   case 'welcome':
+   clearTimeout(Net.joinTimer);
    Net.myIdx=d.idx;
+   if(d.hostId)Net.hostId=d.hostId;
    if(d.lobby)Net.lobbyPlayers=d.lobby;
    if(d.s){S=d.s;Net.begun=true;enterGame()}
-   else showLobby(false);
+   else{showLobby(false);setNetStatus('In the lobby. Pick a face — the host starts when everyone is in.')}
    break;
   case 'lobby':
+   if(d.hostId)Net.hostId=d.hostId;
    Net.lobbyPlayers=d.players||[];
-   renderLobbyList();
+   if($('lobbyView').style.display==='block'||!Net.begun){
+    if($('setup').style.display!=='none'&&$('lobbyView').style.display!=='block'&&!d.s)showLobby(false);
+    renderLobbyList();
+   }
    break;
-  case 'begin':S=d.s;if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
+  case 'begin':
+   S=d.s;if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
   case 'state':S=d.s;render();break;
-  case 'prompt':modal({title:d.title,html:d.html,body:d.body,options:d.options}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'answer',pid:d.pid,v})});break;
-  case 'event':modal({title:d.title,html:d.html,options:[{label:'Continue',v:1}]}).then(()=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'ack',eid:d.eid})});break;
+  case 'prompt':
+   modal({title:d.title,html:d.html,body:d.body,options:d.options}).then(function(v){busSend({t:'answer',pid:d.pid,v:v,to:'host'})});
+   break;
+  case 'event':
+   modal({title:d.title,html:d.html,options:[{label:'Continue',v:1}]}).then(function(){busSend({t:'ack',eid:d.eid,to:'host'})});
+   break;
   case 'sys':toast(d.msg);break;
   case 'reload':location.reload();break;
   case 'kick':showFatal(d.reason||'Kicked from room.');break;
+  case 'hb':break;
  }
 }
 function enterGame(){
@@ -1652,38 +1754,38 @@ function showLobby(asHost){
  if(!asHost)setNetStatus('In the lobby. Pick a face — the host starts when everyone is in.');
  renderLobbyList();
 }
- $('btnHost').onclick=()=>{$('hostForm').classList.add('show');$('joinForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
- $('btnJoin').onclick=()=>{$('joinForm').classList.add('show');$('hostForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
- $('btnCreate').onclick=()=>{
- if(typeof Peer==='undefined'){setNetStatus('Could not load the networking library — check your internet connection and reload.',true);return}
+$('btnHost').onclick=function(){$('hostForm').classList.add('show');$('joinForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
+$('btnJoin').onclick=function(){$('joinForm').classList.add('show');$('hostForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
+$('btnCreate').onclick=function(){
+ if(typeof mqtt==='undefined'){setNetStatus('Could not load the matchmaking library — check your internet connection and reload.',true);return}
  const nm=cleanName($('hostName').value);if(!nm){setNetStatus('Enter your name first.',true);return}
  $('btnCreate').disabled=true;hostCreate(nm);
 };
- $('btnJoinGo').onclick=()=>{
- if(typeof Peer==='undefined'){setNetStatus('Could not load the networking library — check your internet connection and reload.',true);return}
+$('btnJoinGo').onclick=function(){
+ if(typeof mqtt==='undefined'){setNetStatus('Could not load the matchmaking library — check your internet connection and reload.',true);return}
  const nm=cleanName($('joinName').value);const code=($('joinCode').value||'').toUpperCase().replace(/[^A-Z2-9]/g,'');
  if(!nm){setNetStatus('Enter your name first.',true);return}
  if(code.length!==5){setNetStatus('Enter the 5-letter room code from the host.',true);return}
  $('btnJoinGo').disabled=true;guestJoin(nm,code);
 };
- $('btnStart').onclick=()=>{
- if(Net.roster.length<2||Net.roster.some(e=>!e.char)){toast('Everyone needs their own face first.');return}
+$('btnStart').onclick=function(){
+ if(Net.roster.length<2||Net.roster.some(function(e){return !e.char})){toast('Everyone needs their own face first.');return}
  $('btnStart').disabled=true;
- initGame(Net.roster.map(e=>({name:e.name,char:e.char})));
+ initGame(Net.roster.map(function(e){return {name:e.name,char:e.char,playerId:e.playerId}}));
 };
- document.addEventListener('click',e=>{
-  const b=e.target.closest('#charGrid .charpick');
-  if(!b||b.disabled)return;
-  const id=b.dataset.char;
-  if(Net.role==='host')applyChar(0,id);
-  else if(Net.conn&&Net.conn.open)Net.conn.send({t:'pick',char:id});
- });
- $('btnCopy').onclick=()=>{
+document.addEventListener('click',function(e){
+ const b=e.target.closest('#charGrid .charpick');
+ if(!b||b.disabled)return;
+ const id=b.dataset.char;
+ if(Net.role==='host')applyChar(Net.myIdx,id);
+ else busSend({t:'pick',char:id,to:'host'});
+});
+$('btnCopy').onclick=function(){
  const code=Net.roomCode||'';
- try{navigator.clipboard.writeText(code).then(()=>toast('Room code copied: '+code))}catch(e){toast('Code: '+code)}
+ try{navigator.clipboard.writeText(code).then(function(){toast('Room code copied: '+code)})}catch(e){toast('Code: '+code)}
 };
-document.querySelector('.setuplinks button[data-srules]').onclick=()=>showRules();
-if(typeof Peer==='undefined'){setNetStatus('⚠ Networking library failed to load — you need an internet connection the first time you connect.',true)}
+document.querySelector('.setuplinks button[data-srules]').onclick=function(){showRules()};
+if(typeof mqtt==='undefined'){setNetStatus('⚠ Matchmaking library failed to load — you need an internet connection.',true)}
 </script>
 </body>
 </html>

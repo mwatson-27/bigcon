@@ -1379,24 +1379,12 @@ function showFatal(msg){
  card.innerHTML='<div class="mtitle">CONNECTION LOST</div><div class="mbody"><p>'+esc(msg)+'</p></div><div class="mopts"><button onclick="location.reload()">Reload</button></div>';
  ov.appendChild(card);document.body.appendChild(ov);
 }
-/* ---- WEBRTC / ICE CONFIG ---- */
-/* Keep game traffic peer-to-peer. STUN discovers routes; TURN is used only
-   when the browsers cannot establish a direct route. */
-const BIGCON_ICE_CONFIG={
- iceServers:[
-  {urls:'stun:stun.l.google.com:19302'},
-  {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478'],username:'peerjs',credential:'peerjsp'}
- ],
- sdpSemantics:'unified-plan'
-};
-const BIGCON_PEER_OPTIONS={config:BIGCON_ICE_CONFIG,debug:3};
-
 /* ---- HOST ---- */
 function hostCreate(name){
  setNetStatus('Contacting the matchmaker…');
  Net.role='host';Net.myName=name;Net.playerId=getPlayerId();Net.myIdx=0;Net.roster=[{name,playerId:Net.playerId,conn:null,char:null}];Net.conns=[null];
  const code=genCode();
- const p=new Peer(PFX+code,BIGCON_PEER_OPTIONS);
+ const p=new Peer(PFX+code,{debug:0});
  Net.peer=p;
  let opened=false;
  p.on('open',()=>{opened=true;Net.roomCode=code;showLobby(true);setNetStatus('Room created — seats up to 8. Waiting for co-conspirators…')});
@@ -1557,23 +1545,13 @@ function connectGuestTransport(isRetry){
  if(oldPeer&&!oldPeer.destroyed){
   try{oldPeer.destroy()}catch(_){}
  }
- const p=new Peer(BIGCON_PEER_OPTIONS);
+ const p=new Peer({debug:0});
  Net.peer=p;
  p.on('open',()=>{
   if(token!==guestTransportToken||guestReconnectStopped)return;
-  const c=p.connect(PFX+code,{reliable:true,serialization:'json'});
+  const c=p.connect(PFX+code,{reliable:true});
   Net.conn=c;
-  let connectionOpened=false;
-  const connectionTimeout=setTimeout(()=>{
-   if(!connectionOpened&&token===guestTransportToken&&!guestReconnectStopped){
-    console.warn('[BigCon] Data connection timed out; retrying', {code, token});
-    try{c.close()}catch(_){}
-    guestConnectionLost(token);
-   }
-  },15000);
   c.on('open',()=>{
-   connectionOpened=true;
-   clearTimeout(connectionTimeout);
    if(token!==guestTransportToken||guestReconnectStopped)return;
    guestReconnectAttempt=0;
    c.__bigconClosed=false;
