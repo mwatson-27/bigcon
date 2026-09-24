@@ -37,6 +37,12 @@ body{font-family:system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif;col
 #netStatus{font-size:12.5px;color:aqua;min-height:18px;margin-top:8px;font-style:italic}
 #netStatus.err{color:#ff6b5e;font-weight:700}
 #lobbyView{display:none;margin:14px 0}
+.goalrow{margin:14px 0;padding:10px 12px;border:1px solid #168388;background:#04100f}
+.goalctl{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
+.goalctl .gd{font-size:22px;font-weight:900;color:#f5c542}
+.goalctl input{width:120px;background:#000;border:1px solid #168388;color:#f5c542;font:900 20px/1.2 inherit;padding:6px 8px}
+.goalctl input:disabled{opacity:.75}
+.goalctl .gn{font-size:11px;color:#9ad}
 .codeline{background:#000;color:aqua;border-radius:0;padding:12px;text-align:center;border:1px solid #168388}
 .codeline .cl{font-size:10px;letter-spacing:3px;color:#9ad}
 .codeline .cc{font-size:34px;font-weight:900;letter-spacing:10px}
@@ -179,6 +185,10 @@ button.mini:hover{background:#168388}
   </div>
   <div id="lobbyView">
    <div class="codeline"><div class="cl">ROOM CODE — SHARE WITH YOUR CO-CONSPIRATORS</div><div class="cc" id="roomCodeBig">·····</div><button class="copybtn" id="btnCopy">📋 copy code</button></div>
+   <div class="goalrow">
+    <div class="cl">WIN TARGET — FIRST TO THIS MUCH MONEY TAKES THE CON</div>
+    <div class="goalctl"><span class="gd">$</span><input id="goalInput" type="number" min="20" max="999" step="5" value="100"><span class="gn" id="goalNote">the host sets the target</span></div>
+   </div>
    <div class="sublabel" style="margin-top:14px">PICK A FACE — one player per character</div>
    <div class="chargrid" id="charGrid"></div>
    <div class="lobbylist" id="lobbyList"></div>
@@ -478,13 +488,15 @@ const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);
 
 /* ================= STATE, NET & HELPERS ================= */
 let S=null;
-const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null};
+const GOAL_MIN=20,GOAL_MAX=999,GOAL_DEF=100;
+const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,hbTimer:null,lastSeen:0};
+function clampGoal(v){const n=Math.round(Number(v)||0);if(!n)return GOAL_DEF;return Math.max(GOAL_MIN,Math.min(GOAL_MAX,n))}
 let fxSeq=0;
 const shownFx=new Set();
 function pname(i){return S.players[i].name}
 function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function shuffle(a){const r=a.slice();for(let i=r.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=r[i];r[i]=r[j];r[j]=t}return r}
-function log(t){S.log.push(t);if(S.log.length>250)S.log.shift()}
+function log(t){S.log.push(t);S.logN=(S.logN|0)+1;if(S.log.length>250)S.log.shift()}
 let toastTimer=null;
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2400)}
 function modal(o){return new Promise(res=>{
@@ -532,11 +544,58 @@ function raid(i){
 function madePay(){const m=S.owner.made;if(m!=null)gain(m,3,'MADE pays out — nobody knows why');['unid1','unid2'].forEach(u=>{const o=S.owner[u];if(o!=null)gain(o,3,'the kindred mystery pays too')})}
 
 /* ============ NET: state sync & prompts (host-authoritative) ============ */
-function pubState(){const c=JSON.parse(JSON.stringify(S));c.deckCount=c.deck.length;delete c.deck;return c}
-function sendAll(msg){for(let i=1;i<Net.conns.length;i++){const c=Net.conns[i];if(c&&c.open){try{c.send(msg)}catch(e){}}}}
+const LOG_TAIL=40,CHAT_TAIL=25,STATE_MIN_GAP=40;
+/* The wire carries only what changed: the deck stays home and the record/chat
+   travel as tails the guests splice onto what they already hold. */
+function pubState(full){
+ const c={};
+ for(const k in S){if(k==='deck'||k==='log'||k==='chat')continue;c[k]=S[k]}
+ const out=JSON.parse(JSON.stringify(c));
+ out.deckCount=S.deck.length;
+ const lt=full?S.log.slice():S.log.slice(-LOG_TAIL);
+ const ct=full?S.chat.slice():S.chat.slice(-CHAT_TAIL);
+ out.log=lt;out.chat=ct;out.logN=S.logN|0;out.chatN=S.chatN|0;
+ return out;
+}
+function mergeTail(prev,prevN,tail,totalN){
+ if(!prev||prevN==null)return tail.slice();
+ const start=totalN-tail.length;
+ const keep=prev.length-(prevN-start);
+ if(!(keep>=0&&keep<=prev.length))return tail.slice();
+ return prev.slice(0,keep).concat(tail);
+}
+function adoptState(ns){
+ if(S){
+  ns.log=mergeTail(S.log,S.logN|0,ns.log||[],ns.logN|0);
+  ns.chat=mergeTail(S.chat,S.chatN|0,ns.chat||[],ns.chatN|0);
+ }
+ if(ns.log.length>250)ns.log=ns.log.slice(-250);
+ if(ns.chat.length>60)ns.chat=ns.chat.slice(-60);
+ S=ns;
+}
+function sendAll(msg){for(let i=0;i<Net.conns.length;i++){if(i===Net.myIdx)continue;const c=Net.conns[i];if(c&&c.open){try{c.send(msg)}catch(e){}}}}
 function sendTo(pi,msg){if(pi===Net.myIdx)return;const c=Net.conns[pi];if(c&&c.open){try{c.send(msg)}catch(e){}}}
-function sendState(){sendAll({t:'state',s:pubState()})}
-function sync(){if(Net.role==='host'){render();sendState()}else render()}
+/* State goes out coalesced: a single turn touches the state dozens of times and
+   guests only need the result, not every intermediate frame. */
+let stateTimer=null,stateLastSend=0;
+function flushState(){
+ if(stateTimer){clearTimeout(stateTimer);stateTimer=null}
+ if(!S||Net.role!=='host')return;
+ stateLastSend=Date.now();
+ sendAll({t:'state',s:pubState(false)});
+}
+function sendState(now){
+ if(Net.role!=='host'||!S)return;
+ if(now){flushState();return}
+ if(stateTimer)return;
+ stateTimer=setTimeout(flushState,Math.max(0,STATE_MIN_GAP-(Date.now()-stateLastSend)));
+}
+let renderRaf=0;
+function scheduleRender(){
+ if(renderRaf)return;
+ renderRaf=requestAnimationFrame(()=>{renderRaf=0;render()});
+}
+function sync(now){if(Net.role==='host'){scheduleRender();sendState(now)}else scheduleRender()}
 function sysTo(pi,msg){if(Net.role!=='host')return;if(pi===Net.myIdx){toast(msg);return}sendTo(pi,{t:'sys',msg})}
 function askPlayer(pi,opt){return new Promise(res=>{
  if(Net.role!=='host'){modal(opt).then(res);return}
@@ -546,15 +605,18 @@ function askPlayer(pi,opt){return new Promise(res=>{
  if(!c||!c.open){res(def);return}
  const pid=++Net.promptSeq;
  Net.pendingPrompts.set(pid,{res,def,pi});
+ flushState();
  sendTo(pi,{t:'prompt',pid,title:opt.title,html:opt.html,body:opt.body,options:opt.options});
- setTimeout(()=>{const p=Net.pendingPrompts.get(pid);if(p){Net.pendingPrompts.delete(pid);res(p.def)}},120000);
+ setTimeout(()=>{const p=Net.pendingPrompts.get(pid);if(p){Net.pendingPrompts.delete(pid);res(p.def)}},opt.timeout||45000);
 })}
 async function revealAll(title,html){
  if(Net.role!=='host'){await modal({title,html,options:[{label:'Continue',v:1}]});return}
  const eid=++Net.evSeq;const need=new Set();
- for(let i=1;i<S.players.length;i++){const c=Net.conns[i];if(c&&c.open){sendTo(i,{t:'event',eid,title,html});need.add(i)}}
+ flushState();
+ for(let i=0;i<S.players.length;i++){if(i===Net.myIdx)continue;const c=Net.conns[i];if(c&&c.open){sendTo(i,{t:'event',eid,title,html});need.add(i)}}
  await modal({title,html,options:[{label:'Continue',v:1}]});
- if(need.size){await new Promise(res=>{Net.acks={eid,set:need,res,timer:setTimeout(()=>{if(Net.acks){Net.acks=null;res()}},25000)}})}
+ /* the table has already seen the card — a short grace, then play moves on */
+ if(need.size){await new Promise(res=>{Net.acks={eid,set:need,res,timer:setTimeout(()=>{if(Net.acks){Net.acks=null;res()}},5000)}})}
 }
 
 /* ================= GAME FLOW (host) ================= */
@@ -571,25 +633,27 @@ function initGame(defs){
  if(Net.conns&&Net.conns.length){
   const hostWas=0;
   Net.conns=order.map(i=>Net.conns[i]||null);
+  Net.roster=order.map(i=>Net.roster[i]).filter(Boolean);
   Net.myIdx=order.indexOf(hostWas);
  }
- S={players:seated.map((d,i)=>({name:d.name,color:PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,heat:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,owner:{},bugs:{},deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:[],quikSlot};
+ const goal=clampGoal(Net.goal);
+ S={players:seated.map((d,i)=>({name:d.name,color:PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,heat:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:[],logN:0,chatN:0,quikSlot};
  applyLayoutFromState();
  Net.started=true;
  const slot=QUIK_SLOTS[quikSlot];
  log('🌅 The board is pinned up — '+NODES.length+' exhibits, '+EDGES.length+' threads, '+S.players.length+' at the table.');
  log('🎲 Seating was shuffled. First to move: '+S.players[0].name+'.');
  log('⛽ Quikstop opened '+slot.label+' this game. Everyone starts there with $15 and 2 Intel.');
- log('🏆 MAIN WIN: 8 connected nodes incl. BANK + COMMODITY + MEDIA + 2 CHARTS. SCHOOL: MPC + ST ANDREW’S + IB + 4 CHARTS. BANK RUN: own any 5 BANKS.');
+ log('🏆 WIN CONDITION: the first player holding $'+goal+' takes the con. The host set the target.');
  $('setup').style.display='none';$('app').style.display='flex';
- const pub=pubState();
+ const pub=pubState(true);
  for(let i=0;i<Net.conns.length;i++){
   const c=Net.conns[i];
   if(c&&c.open){try{c.send({t:'begin',s:pub,idx:i})}catch(e){}}
  }
  startTurn();
 }
-function startTurn(){
+async function startTurn(){
  if(!S||S.over)return;
  log('—— TURN '+S.turn+' · '+pname(S.cur)+' ——');
  S.phase='move';S.mode=null;S.spun=false;S.audited=false;S.cooked=false;S.budgeted=false;S.extraStep=false;S.dossier=false;
@@ -611,7 +675,8 @@ function startTurn(){
  const rail=(S.owner.train===S.cur||S.owner.bullet===S.cur)?1:0;
  S.steps=3+(S.owner.coal===S.cur?1:0)+rail+(S.owner.asics===S.cur?1:0);
  sysTo(S.cur,'👁️ YOUR TURN, '+p.name.toUpperCase());
- sync();
+ sync(true);
+ if(await winCheck())return;
  if(p.dc){log('💤 '+pname(S.cur)+' is away — plays it quiet.');gain(S.cur,1,'away');endOfTurn()}
 }
 function income(i){
@@ -844,10 +909,10 @@ function drawCard(){
 }
 async function endOfTurn(){
  if(!S||S.over||S.phase==='event')return;
- S.mode=null;S.phase='event';sync();
+ S.mode=null;S.phase='event';sync(true);
  const jtO=S.owner.jt;
- if(jtO!=null&&!S.jtUsed){
-  const v=await askPlayer(jtO,{title:'JTPORTAL INTERVENES?',body:'You hold JTPORTAL — once per game, an event can be made to have never happened. Use it on this one?',options:[{label:'Let it play out',v:0},{label:'“Quite frankly…” — cancel it',v:1}],def:0});
+ if(jtO!=null&&!S.jtUsed&&!(S.players[jtO]&&S.players[jtO].dc)){
+  const v=await askPlayer(jtO,{title:'JTPORTAL INTERVENES?',body:'You hold JTPORTAL — once per game, an event can be made to have never happened. Use it on this one?',options:[{label:'Let it play out',v:0},{label:'“Quite frankly…” — cancel it',v:1}],def:0,timeout:15000});
   if(v){S.jtUsed=true;log('🌐 JTPortal: “Quite frankly, that never happened.” The event vanishes.');fx(1200,720,'“NEVER HAPPENED.”','#55c1ff',true);nextTurn();return}
  }
  const card=drawCard();
@@ -855,49 +920,27 @@ async function endOfTurn(){
  const tk=S.owner.toktimer;if(tk!=null)giveIntel(tk,1,'Toktimer clocked the event');
  await card.run();
  sync();
+ if(await winCheck())return;
  nextTurn();
 }
-function nextTurn(){if(!S||S.over)return;S.cur=(S.cur+1)%S.players.length;if(S.cur===0)S.turn++;startTurn()}
+function nextTurn(){if(!S||S.over)return;S.cur=(S.cur+1)%S.players.length;if(S.cur===0)S.turn++;Promise.resolve(startTurn()).catch(e=>console.error(e))}
+function goalAmount(){return clampGoal(S&&S.goal?S.goal:Net.goal)}
 async function winCheck(){
- const adj={};EDGES.forEach(e=>{(adj[e[0]]=adj[e[0]]||[]).push(e[1]);(adj[e[1]]=adj[e[1]]||[]).push(e[0])});
- for(let p=0;p<S.players.length;p++){
-  const charts=NODES.filter(n=>n.type==='CHART'&&S.owner[n.id]===p);
-  const banks=NODES.filter(n=>n.type==='BANK'&&S.owner[n.id]===p);
-  if(banks.length>=5){
-   S.over=true;S.phase='over';sync();
-   log('🏦 '+pname(p)+' pulls THE BANK RUN — five desks, one syndicate.');
-   await revealAll('🏦 THE BANK RUN','<div class="winname" style="color:'+S.players[p].color+'">'+esc(S.players[p].name)+'</div><p>owns <b>'+banks.length+' banks</b>. The desks now answer to one table.</p><div class="winlist">'+banks.map(n=>n.name.join(' ')).join(' · ')+'</div>');
-   sendAll({t:'reload'});setTimeout(()=>location.reload(),400);return true;
-  }
-  if(S.owner.mpc===p&&S.owner.school===p&&S.owner.ib===p&&charts.length>=4){
-   S.over=true;S.phase='over';sync();
-   log('🏆 '+pname(p)+' WINS THE AUSTRALIAN MONETARY POLICY COMPETITION.');
-   await revealAll('🏆 THE COMPETITION IS WON','<div class="winname" style="color:'+S.players[p].color+'">'+esc(S.players[p].name)+'</div><p>holds <b>THE AUSTRALIAN MONETARY POLICY COMPETITION</b>, <b>ST ANDREW’S CATHEDRAL SCHOOL</b>, <b>THE IB DIPLOMA PROGRAMME</b> and <b>'+charts.length+' charts</b>. The judges are speechless. The RBA applauds. The trophy goes home.</p><div class="winlist">'+charts.slice(0,8).map(n=>n.name.join(' ')).join(' · ')+'</div>');
-   sendAll({t:'reload'});setTimeout(()=>location.reload(),400);return true;
-  }
-  const seen=new Set();
-  for(const n of NODES){
-   if(S.owner[n.id]!==p||seen.has(n.id))continue;
-   const comp=[];const st=[n.id];seen.add(n.id);
-   while(st.length){const c=st.pop();comp.push(c);for(const m of adj[c]){if(S.owner[m]===p&&!seen.has(m)){seen.add(m);st.push(m)}}}
-   if(comp.length>=8){
-    const types=new Set(comp.map(id=>NMAP[id].type));
-    const ncharts=comp.filter(id=>NMAP[id].type==='CHART').length;
-    if(types.has('BANK')&&types.has('COMMODITY')&&types.has('MEDIA')&&ncharts>=2){
-     S.over=true;S.phase='over';sync();
-     const list=comp.map(id=>NMAP[id].name.join(' ')).join(' · ');
-     log('🏆 '+pname(p)+' completes THE BIG CON.');
-     await revealAll('🏆 THE BIG CON IS COMPLETE','<div class="winname" style="color:'+S.players[p].color+'">'+esc(S.players[p].name)+'</div><p>controls eight connected exhibits — the money, the assets, the story and the data:</p><div class="winlist">'+list+'</div><p>The market was rigged. It was rigged by <b>them</b>.</p>');
-     sendAll({t:'reload'});setTimeout(()=>location.reload(),400);return true;
-    }
-   }
-  }
- }
- return false;
+ if(!S||S.over||Net.role!=='host')return false;
+ const goal=goalAmount();
+ let win=-1;
+ S.players.forEach((pl,i)=>{if(pl.money>=goal&&(win<0||pl.money>S.players[win].money))win=i});
+ if(win<0)return false;
+ S.over=true;S.phase='over';sync(true);
+ const w=S.players[win];
+ log('🏆 '+pname(win)+' banks $'+w.money+' — the target was $'+goal+'. The con is complete.');
+ const board=S.players.map((pl,i)=>esc(pl.name)+' — $'+pl.money).join(' · ');
+ await revealAll('🏆 THE BIG CON PAYS OUT','<div class="winname" style="color:'+w.color+'">'+esc(w.name)+'</div><p>walks away with <b>$'+w.money+'</b>, past the table’s target of <b>$'+goal+'</b>. The market was rigged. It was rigged by <b>them</b>.</p><div class="winlist">'+board+'</div>');
+ sendAll({t:'reload'});setTimeout(()=>location.reload(),400);return true;
 }
 function addChat(pi,text){
  if(!S)return;
- S.chat.push({n:pname(pi),c:S.players[pi].color,t:text});
+ S.chat.push({n:pname(pi),c:S.players[pi].color,t:text});S.chatN=(S.chatN|0)+1;
  if(S.chat.length>60)S.chat.shift();
  sync();
 }
@@ -907,7 +950,7 @@ function showRules(){
  +'<h4>The market mood — events you can feel</h4><p>Every market event shifts the mood of the whole board — watch the <b>ticker</b> across the top, the <b>tint</b> of the board and the <b>glowing nodes</b>: <b style="color:#f5c542">BOOM</b> (commodities +$1/turn), <b style="color:#ff6b5e">PANIC</b> (banks −$1/turn, intel dearer), <b style="color:#e19bff">MEDIA FRENZY</b> (media +$1/turn), <b style="color:#8fbf7f">CALM</b>. Yields go vertical in a panic; the oil graph spikes in a boom. Money, Heat and Intel changes pop up on the board as they happen.</p>'
  +'<h4>Intel ops (🛈)</h4><ul><li><b>Burn a favor</b> (1 🛈, while moving) — +1 step this turn.</li><li><b>Spy on the deck</b> (2 🛈, free action) — privately see the next event card, anywhere.</li><li><b>The Dossier</b> (3 🛈, free action) — your hostile takeovers this turn cost <b>list price, not double</b>.</li><li><b>Sweep for bugs</b> (2 🛈, your action) — remove every bug on your nodes.</li><li><b>Sell intel</b> (your action) — at the Rumor Exchange: 1 🛈 = <b>$2</b> calm/boom, <b>$3</b> frenzy, <b>$4</b> panic. Bad news is good news.</li></ul>'
  +'<h4>The board is the whole collage</h4><p><b>82 exhibits.</b> Charts are no longer stacked in one corner — US yields sit by Trump, Japan by the tankers, Germany by Davos, UK by the papers, Australia by the coat of arms, Canada by the vault, the 10-year master in the middle. Each game <b>Quikstop opens in a different neighbourhood</b>, so the first moves change. New pins from the collage: <b>Westpac</b>, <b>BHP</b>, <b>Herald Sun / The Jim Reaper</b>, <b>the bullet train</b>, the circled <b>ASICS shoe</b>, and <b>Toktimer</b>. Red threads are the paths — long ones dash. <i>Drag to pan, scroll to zoom.</i></p>'
- +'<h4>Winning</h4><p><b>MAIN WIN:</b> 8 connected nodes incl. one <b>BANK</b>, one <b>COMMODITY</b>, one <b>MEDIA</b> and <b>two CHARTS</b>. <b>SCHOOL WIN:</b> the Monetary Policy Competition + St Andrew’s + the IB + any four charts. <b>BANK RUN:</b> own any five BANK nodes (they do not need to be connected).</p>'
+ +'<h4>Winning</h4><p><b>The money is the win.</b> The host sets a cash target in the lobby (anything from $'+GOAL_MIN+' to $'+GOAL_MAX+'); the first player whose pile reaches it takes the con. Nodes, synergies, bugs and the mood are all just ways of getting there faster — the board banner and the sidebar show the target and who is closest.</p>'
  +'<h4>Your turn</h4><p><b>1 · Income</b> — $3 salary (+$1 CPI-indexed with Inflation Compensation) + holdings &amp; powers &amp; mood. <b>2 · Move</b> — 3 steps (+1 with COAL CORP HQ, +1 with the Coal Train <i>or</i> the Bullet Train, +1 with the ASICS shoe, +1 by burning a favor). Tolls: $1 entering a rival’s node — $2 if they hold Albanese, free if you hold James Bond. <b>3 · One action</b> (plus free intel ops). <b>4 · Market event</b> for the whole table — and the mood moves.</p>'
  +'<h4>Actions</h4><ul><li><b>Seize</b> the node you stand on (+1 🔥). Hostile takeover: double cost (list price with the Dossier), old owner pockets list price, +2 🔥, +$2 ACCC fee if they own the ACCC.</li><li><b>Plant a bug</b> (1 🛈; free with INSIDER TRADING) — skim $1/turn ($2 with the WEF).</li><li><b>Leak dirt</b> (2 🛈) · <b>Audit</b> ($4, ASIC) · <b>The Tweet</b> ($2, Trump) — rivals gain Heat.</li><li><b>Spin</b> ($3 Press Room) / <b>Fox Spin</b> ($2 Fox Business) · <b>Cook the books</b> ($3, The Rock) · <b>Budget night</b> ($3, the Government).</li><li><b>Push the boulder</b> (+$3, +1 🔥, forever) · <b>Scrub</b> (Real Yield) · <b>Fly the F1 jet</b> ($3, teleport) · <b>Lay low</b>.</li></ul>'
  +'<h4>Heat &amp; raids</h4><p>At 🔥8 the regulators raid you: lose your highest-income node, Heat resets to 3. The Hedge Fund pays $3 on every raid.</p>'
@@ -1117,8 +1160,10 @@ function renderBoard(){
   lx+=14+k.length*6.2+16;
  });
  s+='</g>';
- s+='<g transform="translate(1200,1490)"><rect x="-580" y="-14" width="1160" height="25" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10.5" font-weight="700" letter-spacing="1" fill="#fff">MAIN WIN: 8 CONNECTED — BANK · COMMODITY · MEDIA · TWO CHARTS &nbsp;·&nbsp; BANK RUN: ANY 5 BANKS</text></g>';
- s+='<g transform="translate(1200,1526)"><rect x="-580" y="-12" width="1160" height="23" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10" font-weight="700" letter-spacing="1" fill="aqua">SCHOOL WIN: MONETARY POLICY COMPETITION + ST ANDREW’S + THE IB + ANY 4 CHARTS — TAKE THE TROPHY</text></g>';
+ const goalNow=goalAmount();
+ const leader=S.players.reduce((a,b)=>b.money>a.money?b:a,S.players[0]);
+ s+='<g transform="translate(1200,1490)"><rect x="-580" y="-14" width="1160" height="25" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10.5" font-weight="700" letter-spacing="1" fill="#fff">WIN CONDITION: FIRST TO $'+goalNow+' TAKES THE CON</text></g>';
+ s+='<g transform="translate(1200,1526)"><rect x="-580" y="-12" width="1160" height="23" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10" font-weight="700" letter-spacing="1" fill="aqua">FRONT RUNNER: '+esc(String(leader.name).toUpperCase())+' — $'+leader.money+' · $'+Math.max(0,goalNow-leader.money)+' TO GO</text></g>';
  NODES.forEach(n=>{
   let cls='';
   if(S&&!S.over){
@@ -1241,7 +1286,7 @@ function renderSide(){
  }).join('');
  const chatHtml=(S.chat||[]).map(c=>'<div><b style="color:'+c.c+'">'+esc(c.n)+':</b> '+esc(c.t)+'</div>').join('')||'<div style="opacity:.4;font-style:italic">— the wire is quiet —</div>';
  const chatVal=(window.__chatDraft)||'';
- side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':'SEAT '+(Net.myIdx+1))+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
+ side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':'SEAT '+(Net.myIdx+1))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
   +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
   +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">82 exhibits · charts unstacked · Quikstop wanders · online, 2–8 · no dice (they’re rigged)</div></div>'
   +'<div class="turncard" style="border-color:'+p.color+'"><div class="turnlab">TURN '+S.turn+'</div><div class="turnname" style="color:'+p.color+'">'+esc(p.name)+(isTurn?' — that’s you':'')+'</div>'
@@ -1380,37 +1425,89 @@ function showFatal(msg){
  ov.appendChild(card);document.body.appendChild(ov);
 }
 /* ---- WEBRTC / ICE CONFIG ---- */
-/* Keep game traffic peer-to-peer. STUN discovers routes; TURN is used only
-   when the browsers cannot establish a direct route. */
+/* Keep game traffic peer-to-peer. STUN discovers routes; TURN relays only when
+   a direct route is impossible. Several relays over UDP, TCP and TLS/443:
+   office firewalls and mobile carriers block different ones. */
 const BIGCON_ICE_CONFIG={
  iceServers:[
-  {urls:'stun:stun.l.google.com:19302'},
-  {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478'],username:'peerjs',credential:'peerjsp'}
+  {urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302','stun:global.stun.twilio.com:3478']},
+  {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478','turn:eu-0.turn.peerjs.com:3478?transport=tcp','turn:us-0.turn.peerjs.com:3478?transport=tcp'],username:'peerjs',credential:'peerjsp'},
+  {urls:['turns:eu-0.turn.peerjs.com:5349','turns:us-0.turn.peerjs.com:5349'],username:'peerjs',credential:'peerjsp'}
  ],
- sdpSemantics:'unified-plan'
+ sdpSemantics:'unified-plan',
+ iceCandidatePoolSize:4
 };
-const BIGCON_PEER_OPTIONS={config:BIGCON_ICE_CONFIG,debug:3};
+const BIGCON_PEER_OPTIONS={config:BIGCON_ICE_CONFIG,debug:1,pingInterval:5000};
+const HEARTBEAT_MS=4000,CONN_TIMEOUT_MS=16000;
 
 /* ---- HOST ---- */
 function hostCreate(name){
  setNetStatus('Contacting the matchmaker…');
  Net.role='host';Net.myName=name;Net.playerId=getPlayerId();Net.myIdx=0;Net.roster=[{name,playerId:Net.playerId,conn:null,char:null}];Net.conns=[null];
- const code=genCode();
+ Net.roomCode=genCode();
+ hostOpenPeer();
+ startHostHeartbeat();
+}
+function hostOpenPeer(){
+ const code=Net.roomCode;
+ const old=Net.peer;
+ if(old&&!old.destroyed){try{old.destroy()}catch(_){}}
  const p=new Peer(PFX+code,BIGCON_PEER_OPTIONS);
  Net.peer=p;
  let opened=false;
- p.on('open',()=>{opened=true;Net.roomCode=code;showLobby(true);setNetStatus('Room created — seats up to 8. Waiting for co-conspirators…')});
- p.on('error',e=>{const ty=e&&e.type;
-  if(ty==='unavailable-id'&&!opened){try{p.destroy()}catch(x){}hostCreate(name);return}
-  setNetStatus('Network error: '+(ty||'unknown')+' — check your internet and try again.',true)});
+ p.on('open',()=>{
+  opened=true;
+  if(Net.peer!==p)return;
+  showLobby(true);
+  if(!Net.started)setNetStatus('Room created — seats up to 8. Waiting for co-conspirators…');
+ });
+ p.on('disconnected',()=>{
+  if(Net.peer!==p||p.destroyed)return;
+  try{p.reconnect()}catch(_){setTimeout(()=>{if(Net.peer===p)hostOpenPeer()},1500)}
+ });
+ p.on('error',e=>{
+  const ty=e&&e.type;
+  if(Net.peer!==p)return;
+  if(ty==='unavailable-id'&&!opened&&!Net.started){try{p.destroy()}catch(x){}Net.roomCode=genCode();hostOpenPeer();return}
+  if(ty==='unavailable-id'){/* our own stale registration on the matchmaker */ setTimeout(()=>{if(Net.peer===p)hostOpenPeer()},2000);return}
+  if(ty==='network'||ty==='socket-error'||ty==='socket-closed'||ty==='server-error'){
+   /* live games keep running peer-to-peer; we only need the matchmaker for new joins */
+   setNetStatus('Matchmaker hiccup — reopening the room…',true);
+   setTimeout(()=>{if(Net.peer===p)hostOpenPeer()},2000);
+   return;
+  }
+  if(ty==='peer-unavailable')return;
+  setNetStatus('Network error: '+(ty||'unknown')+' — check your internet and try again.',true);
+ });
  p.on('connection',c=>{
-  c.on('open',()=>{c.on('data',d=>{try{onHostData(c,d)}catch(err){console.error(err)}})});
+  c.on('open',()=>{
+   c.__lastSeen=Date.now();
+   c.on('data',d=>{try{onHostData(c,d)}catch(err){console.error(err)}});
+  });
   c.on('close',()=>onHostClose(c));
   c.on('error',()=>onHostClose(c));
  });
 }
+/* A quiet data channel is indistinguishable from a dead one, so the host keeps
+   pinging and drops seats that stop answering instead of stalling the table. */
+function startHostHeartbeat(){
+ clearInterval(Net.hbTimer);
+ Net.hbTimer=setInterval(()=>{
+  const now=Date.now();
+  for(let i=0;i<Net.conns.length;i++){
+   const c=Net.conns[i];
+   if(!c)continue;
+   if(!c.open){onHostClose(c);continue}
+   if(now-(c.__lastSeen||now)>CONN_TIMEOUT_MS){try{c.close()}catch(_){}onHostClose(c);continue}
+   try{c.send({t:'ping'})}catch(_){}
+  }
+ },HEARTBEAT_MS);
+}
 function onHostData(c,d){
  if(!d||!d.t)return;
+ c.__lastSeen=Date.now();
+ if(d.t==='ping'){try{c.send({t:'pong'})}catch(_){}return}
+ if(d.t==='pong')return;
  if(d.t==='hello'){handleHello(c,cleanName(d.name)||'Player',String(d.playerId||''));return}
  if(d.t==='pick'){const pi=Net.conns.indexOf(c);if(pi>=0)applyChar(pi,d.char);return}
  const pi=Net.conns.indexOf(c);
@@ -1448,18 +1545,19 @@ function handleHello(c,name,playerId){
   const old=Net.conns[existing];
   if(old===c)return;
   if(old&&old.open){c.send({t:'kick',reason:'This player is already connected in this room. Close the other tab before joining again.'});setTimeout(()=>{try{c.close()}catch(e){}},800);return;}
-  Net.roster[existing].conn=c;Net.conns[existing]=c;
-  if(Net.started&&S){S.players[existing].dc=false;log('🔔 '+name+' reconnected to their existing seat.');c.send({t:'welcome',idx:existing,s:pubState()});sync();return;}
-  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers()});broadcastLobby();return;
+  Net.roster[existing].conn=c;Net.conns[existing]=c;c.__bigconClosed=false;c.__lastSeen=Date.now();
+  if(Net.started&&S){S.players[existing].dc=false;clearTimeout(Net.autoT);log('🔔 '+name+' reconnected to their existing seat.');c.send({t:'welcome',idx:existing,s:pubState(true)});sync(true);return;}
+  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers(),goal:clampGoal(Net.goal)});broadcastLobby();return;
  }
  if(Net.started&&S){
   const idx=S.players.findIndex(pl=>pl.dc&&pl.name.toLowerCase()===name.toLowerCase());
-  if(idx>0){
-   Net.conns[idx]=c;S.players[idx].dc=false;
+  if(idx>=0&&idx!==Net.myIdx){
+   Net.conns[idx]=c;S.players[idx].dc=false;c.__bigconClosed=false;c.__lastSeen=Date.now();
+   if(Net.roster[idx]){Net.roster[idx].conn=c;Net.roster[idx].playerId=playerId||Net.roster[idx].playerId}
    log('🔔 '+name+' is back at the table.');
    clearTimeout(Net.autoT);
-   c.send({t:'welcome',idx:idx,s:pubState()});
-   sync();return;
+   c.send({t:'welcome',idx:idx,s:pubState(true)});
+   sync(true);return;
   }
   c.send({t:'kick',reason:'Game already in progress — no empty seat named “'+name+'”.'});
   setTimeout(()=>{try{c.close()}catch(e){}},800);return;
@@ -1468,7 +1566,8 @@ function handleHello(c,name,playerId){
  if(Net.roster.some(e=>e.name.toLowerCase()===name.toLowerCase()))name=name+' ★';
  Net.roster.push({name,playerId:playerId||crypto.randomUUID(),conn:c,char:null});
  Net.conns=Net.roster.map(e=>e.conn);
- c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers()});
+ c.__lastSeen=Date.now();
+ c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers(),goal:clampGoal(Net.goal)});
  broadcastLobby();
 }
 function onHostClose(c){
@@ -1482,21 +1581,27 @@ function onHostClose(c){
   broadcastLobby();setNetStatus(nm+' left the lobby.');
   return;
  }
+ if(Net.conns[pi]===c)Net.conns[pi]=null;
+ if(Net.roster[pi]&&Net.roster[pi].conn===c)Net.roster[pi].conn=null;
  if(S&&!S.over&&S.players[pi]){
   S.players[pi].dc=true;
   log('🔕 '+pname(pi)+' lost connection — seat is being held.');
   Net.pendingPrompts.forEach((p,pid)=>{if(p.pi===pi){Net.pendingPrompts.delete(pid);p.res(p.def)}});
+  if(Net.acks&&Net.acks.set.has(pi)){
+   Net.acks.set.delete(pi);
+   if(!Net.acks.set.size){clearTimeout(Net.acks.timer);const r=Net.acks.res;Net.acks=null;r()}
+  }
   if(S.cur===pi&&(S.phase==='move'||S.phase==='action')){
    clearTimeout(Net.autoT);
    Net.autoT=setTimeout(()=>{
     if(S&&!S.over&&S.cur===pi&&S.players[pi].dc){log('💤 '+pname(pi)+' is away — plays it quiet.');gain(pi,1,'away');endOfTurn()}
    },20000);
   }
-  sync();
+  sync(true);
  }
 }
 function broadcastLobby(){
- sendAll({t:'lobby',players:lobbyPlayers()});
+ sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal)});
  renderLobbyList();
  const n=Net.roster.length;
  const ready=n>=2&&Net.roster.every(e=>e.char);
@@ -1533,15 +1638,12 @@ function guestReconnectDelay(){
 
 function guestConnectionLost(token){
  if(token!==guestTransportToken||guestReconnectStopped)return;
- if(!Net.begun){
-  setNetStatus('Connection closed by host.',true);
-  return;
- }
  clearGuestReconnect();
  guestReconnectAttempt++;
  const attempt=guestReconnectAttempt;
  const delay=guestReconnectDelay();
- setNetStatus('Connection lost — reconnecting ('+attempt+')…',true);
+ stopGuestHeartbeat();
+ setNetStatus((Net.begun?'Connection lost':'Lost the lobby connection')+' — reconnecting ('+attempt+')…',true);
  guestReconnectTimer=setTimeout(()=>{
   guestReconnectTimer=null;
   if(token!==guestTransportToken||guestReconnectStopped)return;
@@ -1579,9 +1681,11 @@ function connectGuestTransport(isRetry){
    c.__bigconClosed=false;
    c.send({t:'hello',name,playerId:Net.playerId});
    setNetStatus('Connected — '+(isRetry?'rejoining':'joining')+' “'+code+'”…');
+   startGuestHeartbeat(token);
   });
   c.on('data',d=>{
    if(token!==guestTransportToken||guestReconnectStopped)return;
+   Net.lastSeen=Date.now();
    try{onGuestData(d)}catch(err){console.error(err)}
   });
   c.on('close',()=>guestConnectionLost(token));
@@ -1595,14 +1699,30 @@ function connectGuestTransport(isRetry){
   if(token!==guestTransportToken||guestReconnectStopped)return;
   const ty=e&&e.type;
   if(ty==='peer-unavailable'){
-   if(Net.begun)guestConnectionLost(token);
+   /* the host may just be re-registering with the matchmaker — keep trying a while */
+   if(Net.begun||guestReconnectAttempt<5)guestConnectionLost(token);
    else setNetStatus('Room “'+code+'” not found — check the code (and that the host still has the page open).',true);
-  }else if(ty==='network'||ty==='socket-error'||ty==='socket-closed'){
+  }else if(ty==='network'||ty==='socket-error'||ty==='socket-closed'||ty==='server-error'||ty==='unavailable-id'){
    guestConnectionLost(token);
   }else{
    setNetStatus('Network error: '+(ty||'unknown')+'.',true);
   }
  });
+}
+
+/* The guest watches the wire too: silence for CONN_TIMEOUT_MS means the link is
+   gone even when the browser never fires 'close'. */
+function stopGuestHeartbeat(){clearInterval(Net.hbTimer);Net.hbTimer=null}
+function startGuestHeartbeat(token){
+ stopGuestHeartbeat();
+ Net.lastSeen=Date.now();
+ Net.hbTimer=setInterval(()=>{
+  if(token!==guestTransportToken||guestReconnectStopped){stopGuestHeartbeat();return}
+  const c=Net.conn;
+  if(!c||!c.open){guestConnectionLost(token);return}
+  if(Date.now()-Net.lastSeen>CONN_TIMEOUT_MS){try{c.close()}catch(_){}guestConnectionLost(token);return}
+  try{c.send({t:'ping'})}catch(_){guestConnectionLost(token)}
+ },HEARTBEAT_MS);
 }
 
 function guestJoin(name,code){
@@ -1617,23 +1737,27 @@ function guestJoin(name,code){
 function onGuestData(d){
  if(!d||!d.t)return;
  switch(d.t){
+  case 'ping':if(Net.conn&&Net.conn.open){try{Net.conn.send({t:'pong'})}catch(_){}}break;
+  case 'pong':break;
   case 'welcome':
    Net.myIdx=d.idx;
    if(d.lobby)Net.lobbyPlayers=d.lobby;
-   if(d.s){S=d.s;Net.begun=true;enterGame()}
+   if(d.goal)setGoalUI(d.goal);
+   if(d.s){S=null;adoptState(d.s);Net.begun=true;enterGame()}
    else showLobby(false);
    break;
   case 'lobby':
    Net.lobbyPlayers=d.players||[];
+   if(d.goal)setGoalUI(d.goal);
    renderLobbyList();
    break;
-  case 'begin':S=d.s;if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
-  case 'state':S=d.s;render();break;
+  case 'begin':S=null;adoptState(d.s);if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
+  case 'state':adoptState(d.s);scheduleRender();break;
   case 'prompt':modal({title:d.title,html:d.html,body:d.body,options:d.options}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'answer',pid:d.pid,v})});break;
   case 'event':modal({title:d.title,html:d.html,options:[{label:'Continue',v:1}]}).then(()=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'ack',eid:d.eid})});break;
   case 'sys':toast(d.msg);break;
   case 'reload':location.reload();break;
-  case 'kick':showFatal(d.reason||'Kicked from room.');break;
+  case 'kick':guestReconnectStopped=true;clearGuestReconnect();stopGuestHeartbeat();showFatal(d.reason||'Kicked from room.');break;
  }
 }
 function enterGame(){
@@ -1643,12 +1767,23 @@ function enterGame(){
 }
 
 /* ================= SETUP SCREEN ================= */
+/* Only the host may move the target; guests mirror whatever comes off the wire. */
+function setGoalUI(v){
+ Net.goal=clampGoal(v);
+ const inp=$('goalInput');
+ if(inp&&document.activeElement!==inp)inp.value=Net.goal;
+ const note=$('goalNote');
+ if(note)note.textContent=Net.role==='host'?'first player to $'+Net.goal+' wins the con':'the host set the target at $'+Net.goal;
+}
 function showLobby(asHost){
  $('hostForm').classList.remove('show');$('joinForm').classList.remove('show');
  $('lobbyView').style.display='block';
  $('roomCodeBig').textContent=Net.roomCode||'·····';
  $('btnStart').style.display=asHost?'block':'none';
  $('btnCopy').style.display=asHost?'inline-block':'none';
+ const gi=$('goalInput');
+ if(gi)gi.disabled=!asHost;
+ setGoalUI(Net.goal);
  if(!asHost)setNetStatus('In the lobby. Pick a face — the host starts when everyone is in.');
  renderLobbyList();
 }
@@ -1678,6 +1813,13 @@ function showLobby(asHost){
   if(Net.role==='host')applyChar(0,id);
   else if(Net.conn&&Net.conn.open)Net.conn.send({t:'pick',char:id});
  });
+ (function(){
+ const gi=$('goalInput');
+ if(!gi)return;
+ const push=()=>{if(Net.role!=='host')return;setGoalUI(gi.value);broadcastLobby()};
+ gi.oninput=()=>{if(Net.role!=='host')return;const n=Number(gi.value);if(n>=GOAL_MIN&&n<=GOAL_MAX)push()};
+ gi.onchange=()=>{if(Net.role!=='host')return;gi.value=clampGoal(gi.value);push()};
+})();
  $('btnCopy').onclick=()=>{
  const code=Net.roomCode||'';
  try{navigator.clipboard.writeText(code).then(()=>toast('Room code copied: '+code))}catch(e){toast('Code: '+code)}
