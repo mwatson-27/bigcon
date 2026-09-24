@@ -1493,7 +1493,7 @@ function handleNodeTap(t){
 const PFX='bigcon-oz-';
 /* Room codes are jt portal buzzwords — every one of these has its own line in
    the jt portal news ticker, so the code is always something you can say out loud. */
-const BUZZWORDS=['WORLD ECONOMIC FORUM','NESA','HORNSBY HEIGHTS','JAKE TOMKINS','ELIJAH SON','LUCIAN SON','SETH WEGRZYN','AIDAN NEWLING','ANDREW BUTLER','ALEXANDER LANE','BUDDHISM LAU','LILY ISENEGGER','DANIEL SWAIN','ZACHARY SIDHU','ASHER CROSWELLER','CHARLIE BURROWS','JOHN CITIZEN','TOKTIMER','ZSCALER','REVISIONDOJO','NEW LAKEMBA','ST IVES','MCMETRO CONSORTIUM','SUN TZU','INKDIN','STRAIT OF HORMUZ','PYONGYANG UNIVERSITY','PRO BUS PROPAGANDA'];
+const BUZZWORDS=['WORLD ECONOMIC FORUM','NESA','JAKE TOMKINS','ELIJAH SON','SETH WEGRZYN','AIDAN NEWLING','DANIEL SWAIN','TOKTIMER','RBA','BIG BESSENT','NEW LAKEMBA','JTPORTAL','MCMETRO','CEO OF COAL','INKDIN','HORMUZ','PYONGYANG UNIVERSITY','LOW CORTISOL'];
 function codeSlug(s){return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
 function codeLabel(slug){const hit=BUZZWORDS.find(b=>codeSlug(b)===slug);return hit||slug}
 /* Typed codes are forgiving: case, spaces and punctuation are all ignored, and a
