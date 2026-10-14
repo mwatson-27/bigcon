@@ -593,12 +593,13 @@ function payTo(i,amt,to,why){const p=S.players[i];const real=Math.min(p.money,am
 function payFee(i,amt,why){const p=S.players[i];const real=Math.min(p.money,amt);p.money-=real;log('💸 '+pname(i)+' pays $'+real+' — '+why+'.');fxAt(i,'−$'+real,'#ff6b5e')}
 function addCortisol(i,n,why,ev){
  if(!n)return;
+ if(n>0&&NODES.filter(node=>S.owner[node.id]===i).length<=1)return;
  if(ev&&n>0&&(S.owner.bess===i||S.owner.jim===i)){n-=1;if(n<=0){log('📺 Big Bessent / The Jim buries the story — '+pname(i)+' takes no Cortisol at all.');return}log('📺 Breaking news softens the story — '+pname(i)+' takes only +'+n+' Cortisol.')}
  if(ev&&n>0){const h=S.owner.herald;if(h!=null&&h!==i)giveIntel(h,1,'THE JIM REAPER files the cortisol')}
- const p=S.players[i];p.cortisol=Math.max(0,Math.min(10,p.cortisol+n));
+ const p=S.players[i];p.cortisol=Math.max(0,Math.min(9,p.cortisol+n));
  log('🔥 '+pname(i)+(n>0?' +'+n:' '+n)+' Cortisol (now '+p.cortisol+')'+(why?' — '+why:'')+'.');
  fxAt(i,(n>0?'🔥+'+n:'🔥'+n),'#ffa94d');
- if(p.cortisol>=8)raid(i);
+ if(p.cortisol>=9)raid(i);
 }
 /* The raid is the one thing on this board that can end a run: two assets seized,
    the books fined, the intel network burned and a wasted turn under caution. */
@@ -669,8 +670,10 @@ function madePay(){
  giveIntel(m,1,'the purple graphic tells you something');
  S.players.forEach((pl,j)=>{
   if(j===m)return;
-  payVoid(j,3,'the purple graphic takes its cut');
-  addCortisol(j,1,'nobody can explain where the money went');
+  const nodes=NODES.filter(n=>S.owner[n.id]===j).length;
+  if(nodes<=2||pl.money<50)return;
+  const cut=Math.floor(pl.money*0.15);
+  if(cut>0)payVoid(j,cut,'MADE takes 15% from eligible players');
  });
 }
 
@@ -967,7 +970,7 @@ async function applyIntent(pi,m){
    await endOfTurn();
   }
   else if(act==='laylow'&&S.phase==='action'&&!S.mode){
-   if(m.choice==='cash')gain(pi,1,'kept it quiet');else addCortisol(pi,-1,'kept it quiet');
+   if(m.choice==='cash')gain(pi,1,'kept it quiet');else addCortisol(pi,-2,'kept it quiet');
    await endOfTurn()}
  } finally {clearTimeout(Net.lockTimer);Net.lockTimer=null;Net.lock=false}
 }
@@ -1148,7 +1151,7 @@ function showRules(){
  +'<h4>Winning</h4><p><b>Money <i>and</i> a finished portfolio.</b> The host sets a cash target in the lobby (anything from $'+GOAL_MIN+' to $'+GOAL_MAX+'); to take the con you must reach it <b>while holding at least one '+WIN_TYPES.join(', one ')+' node</b> — the seven-type set is tracked in your sidebar, including MEDIA. There are only four REGULATORS on the whole board, so the set is a race of its own. Nodes, synergies, bugs and the mood are all just ways of getting there faster — the board banner and the sidebar show the target and who is closest.</p>'
  +'<h4>Your turn</h4><p><b>1 · Income</b> — $3 salary (+$1 CPI-indexed with Inflation Compensation) + holdings &amp; powers &amp; mood. <b>2 · Move</b> — 3 steps (+1 with COAL CORP HQ, +1 with the Coal Train <i>or</i> the Bullet Train, +1 with the ASICS shoe, +1 by burning a favor). Tolls: $1 entering a rival’s node — $2 if they hold Albanese, free if you hold James Bond. <b>3 · One action</b> (plus free intel ops). <b>4 · Market event</b> for the whole table — and the mood moves.</p>'
  +'<h4>Actions</h4><ul><li><b>Seize</b> the node you stand on (+1 🔥). Hostile takeover: double cost (list price with the Dossier; MADE, Qantas and the RBA never inflate), old owner pockets list price, +2 🔥, +$2 ACCC fee if they own the ACCC.</li><li><b>Plant a bug</b> (1 🛈; free with INSIDER TRADING) — skim $1/turn ($2 with the WEF).</li><li><b>Leak dirt</b> (2 🛈) · <b>Audit</b> ($4, ASIC) · <b>The Tweet</b> ($2, Trump) — rivals gain Cortisol.</li><li><b>Spin</b> ($3 Press Room) / <b>Fox Spin</b> ($2 Fox Business) · <b>Cook the books</b> ($3, The Rock) · <b>Budget night</b> ($3, the Government) · <b>Lean on the table</b> (Backroom Deals: every rival +1 🔥).</li><li><b>Push the boulder</b> (+$3, +1 🔥, forever) · <b>Scrub</b> (Real Yield) · <b>Fly the Qantas jet</b> ($3, teleport — Qantas itself cannot be reached on turn 1) · <b>Slipstream</b> ($2, Formula 1: +2 steps and $2 off the next seizure) · <b>Lay low</b>.</li></ul>'
- +'<h4>Cortisol &amp; raids</h4><p>At 🔥8 the regulators raid you, and a raid hurts: your <b>two</b> highest-income nodes are seized, every bug you planted is pulled, you pay a fine of $5 or 30% of your cash (whichever is larger), your Intel is burned down to 1, Cortisol resets to 0 and your <b>next turn brings no income and a single step</b>. <b>The whole table sees the raid</b> — it pops up on every screen. The Hedge Fund pays $3 on every raid; the Group Photograph pays 1 🛈 Intel.</p>'
+ +'<h4>Cortisol &amp; raids</h4><p>At 🔥9 the regulators raid you, and a raid hurts: your <b>two</b> highest-income nodes are seized, every bug you planted is pulled, you pay a fine of $5 or 30% of your cash (whichever is larger), your Intel is burned down to 1, Cortisol resets to 0 and your <b>next turn brings no income and a single step</b>. <b>The whole table sees the raid</b> — it pops up on every screen. The Hedge Fund pays $3 on every raid; the Group Photograph pays 1 🛈 Intel.</p>'
  +'<h4>ACCC concentration</h4><p>Charts are exempt. Everywhere else, if you hold <b>more than two</b> properties in the same industry — banking, regulators, corporates, commodities, media, oil, coal, JTPortal, Jim Chalmers, Big Bessent, or monetary policy — then at the start of <b>your turn</b> there is a <b>33% chance</b> the ACCC investigates and you <b>lose that whole industry</b>. Nodes go back on the market.</p>'
  +'<h4>MADE (???)</h4><p>Nobody knows what the purple graphic is, but it moves money: at the <b>start of every player\'s turn</b> there is a <b>33% chance</b> MADE pays out — <b>+$10 and +1 Intel</b> to its owner, while <b>everyone else pays $3 and gains 🔥+1</b>. Seizing MADE always costs list price — it never inflates after a takeover.</p>'
  +'<p class="fine">No dice. The dice were rigged from the start.</p>',
