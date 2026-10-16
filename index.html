@@ -779,7 +779,6 @@ function applyLayoutFromState(){
   S.boardLayout.forEach(p=>{const n=NMAP[p.id];if(n){n.x=p.x;n.y=p.y;n.rot=p.rot}});
   EDGES=(S.boardEdges||CLEAN_EDGES).map(e=>e.slice());
   rebuildAdj();
-  separateNodes();
  }else applyQuikSlot(slot);
 }
 const HIGH_VALUE_NODE_IDS=new Set([
