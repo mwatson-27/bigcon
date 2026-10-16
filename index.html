@@ -981,12 +981,12 @@ async function applyIntent(pi,m){
    target.intel-=intelLoss;
    if(intelLoss>0)fxAt(m.target,'🛈−'+intelLoss,'#55c1ff');
    log('🦅 '+pname(pi)+' tweets. '+pname(m.target)+' loses '+intelLoss+' Intel (the greater of 3 or 50%).');
-   S.mode=null;await endOfTurn()}
+   S.mode=null;await finishNodeAbility(pi)}
   else if(act==='spin'&&abilityPhase(pi)&&!S.mode){await doSpin(pi,m.kind==='fox'?'fox':'press')}
   else if(act==='roast'&&abilityPhase(pi)&&S.mode==='roast'&&m.target!==pi){
    const cost=S.spinKind==='fox'?2:3;
    if(p.money<cost){S.mode=null;sync();return}
-   p.money-=cost;fxAt(pi,'−$'+cost,'#ff6b5e');S.spun=true;log('🗞️ '+pname(pi)+' roasts '+pname(m.target)+' in the press.');S.mode=null;addCortisol(m.target,1,'unflattering coverage');await endOfTurn()}
+   p.money-=cost;fxAt(pi,'−$'+cost,'#ff6b5e');S.spun=true;log('🗞️ '+pname(pi)+' roasts '+pname(m.target)+' in the press.');S.mode=null;addCortisol(m.target,1,'unflattering coverage');await finishNodeAbility(pi)}
   else if(act==='cook'&&abilityPhase(pi)&&!S.mode&&S.owner.rock===pi&&p.money>=3&&!S.cooked){
    p.money-=3;fxAt(pi,'−$3','#ff6b5e');S.cooked=true;log('💪 '+pname(pi)+' cooks the books. What numbers?');addCortisol(pi,-3,'a very warm kitchen');await finishNodeAbility(pi)}
   else if(act==='pressure'&&abilityPhase(pi)&&!S.mode&&S.owner.back===pi&&!S.pressured){
