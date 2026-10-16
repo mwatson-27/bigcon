@@ -8,8 +8,14 @@
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
 *{box-sizing:border-box}
-html,body{margin:0;padding:0}
+html,body{margin:0;padding:0;width:100%;height:100%}
 body{font-family:system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#f2f2f2;background:#1d201f}
+body.game-open{overflow:hidden}
+#app{display:none;flex-wrap:nowrap;gap:0;padding:0;align-items:stretch;width:100vw;height:100dvh;overflow:hidden}
+#boardWrap{flex:1 1 auto;min-width:0;height:100%;position:relative;overflow:hidden;background:#1d201f}
+#board{display:block;width:100%;height:100%;border-radius:0;box-shadow:none;cursor:grab;touch-action:none}
+#side{flex:0 0 390px;width:390px;max-width:42vw;height:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px;display:flex;flex-direction:column;gap:10px}
+@media(max-width:900px){body.game-open{overflow:auto}#app{display:none;flex-direction:column;width:100%;height:auto;min-height:100dvh;overflow:visible}#boardWrap{flex:none;width:100%;height:62dvh;min-height:320px}#side{flex:1 1 auto;width:100%;max-width:none;height:auto;overflow:visible;padding:10px}}
 .serif,.bigtitle,.brand .t1,.winname,.turnname,.codeline .cc,.mtitle,.etitle{font-family:'Times New Roman',Times,serif}
 #toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-70px);background:#168388;color:#fff;font-weight:800;padding:10px 24px;border-radius:0;border:2px solid #000;box-shadow:0 10px 30px rgba(0,0,0,.6);opacity:0;transition:all .35s;z-index:90;pointer-events:none;font-size:14px;letter-spacing:1px;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
 #toast.show{opacity:1;transform:translate(-50%,0)}
@@ -833,7 +839,7 @@ function initGame(defs){
   Net.myIdx=order.indexOf(hostWas);
  }
  const goal=clampGoal(Net.goal);
- S={players:seated.map((d,i)=>({name:d.name,color:PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null};
+ S={backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null};
  const slot=QUIK_SLOTS[quikSlot];
  const generated=generateRandomBoard(slot);S.boardLayout=generated.positions;S.boardEdges=generated.edges;
  applyLayoutFromState();
@@ -843,7 +849,7 @@ function initGame(defs){
  log('🎲 Seating was shuffled. First to move: '+S.players[0].name+'.');
  log('⛽ Quikstop opened '+slot.label+' this game. Everyone starts there with $15 and 2 Intel.');
  log('🏆 WIN CONDITION: $'+goal+' in the bank AND one of every node type ('+WIN_TYPES.join(', ')+'). The host set the target.');
- $('setup').style.display='none';$('app').style.display='flex';
+ $('setup').style.display='none';$('app').style.display='flex';document.body.classList.add('game-open');
  const pub=pubState(true);
  for(let i=0;i<Net.conns.length;i++){
   const c=Net.conns[i];
@@ -852,6 +858,7 @@ function initGame(defs){
  startTurn();
 }
 async function startTurn(){
+ if(S)S.backroomAbilityUsed=false;
  if(!S||S.over)return;
  log('—— TURN '+S.turn+' · '+pname(S.cur)+' ——');
  S.phase='move';S.mode=null;S.spun=false;S.audited=false;S.cooked=false;S.budgeted=false;S.pressured=false;S.extraStep=false;S.slipped=false;S.dossier=false;
@@ -1395,7 +1402,7 @@ function renderSide(){
  const side=$('side');
  const me=Net.myIdx;const p=S.players[S.cur];const isTurn=S.cur===me;
  const md=MOODS[S.mood]||MOODS.CALM;
- const ownedIcons=NODES.filter(n=>S.owner[n.id]===me).map(n=>'<span title="'+n.name.join(' ')+'">'+n.icon+'</span>').join('')||'<span style="opacity:.4">—</span>';
+ const ownedIcons=NODES.filter(n=>S.owner[n.id]===me).map(n=>'<span title="'+n.name.join(' ')+'">'+(n.icon||({BANK:'🏦',COMMODITY:'🛢️',MEDIA:'🗞️',CORPORATE:'🏢',REGULATOR:'⚖️',CHART:'📈',WILD:'🎭'}[n.type]||'◆'))+'</span>').join('')||'<span style="opacity:.4">—</span>';
  const curN=NMAP[p.pos];
  let phaseHtml='';
  if(!isTurn){
@@ -1413,6 +1420,21 @@ function renderSide(){
     +((!S.extraStep&&p.intel>=1)?'<button class="act" data-act="favor">🛈 Burn a favor — 1 🛈 (+1 step this turn)</button>':'')
     +((S.owner.qantas===me)?'<button class="act" data-act="flymode"'+(p.money>=3?'':' disabled')+'>✈️ Fly the Qantas jet — $3 (anywhere)</button>':'')
     +((S.owner.f1===me&&!S.slipped)?'<button class="act" data-act="slip"'+(p.money>=2?'':' disabled')+'>🏎️ Slipstream — $2 (+2 steps, $2 off next seizure)</button>':'');
+    if(S.owner.back===me&&!S.backroomAbilityUsed){
+     phaseHtml+='<div class="sublabel">BACKROOM DEALS · ONE NODE ABILITY THIS MOVEMENT PHASE</div><div class="btns">';
+     if(S.owner.trump===me)phaseHtml+='<button class="act" data-act="tweetmode"'+(p.money>=2?'':' disabled')+'>🦅 The Tweet — $2</button>';
+     phaseHtml+='<button class="act" data-act="pressure">🤝 Lean on the table</button>';
+     if(S.owner.gov===me)phaseHtml+='<button class="act" data-act="budget"'+(p.money>=3?'':' disabled')+'>🦘 Budget night — $3</button>';
+     if(S.owner.rock===me)phaseHtml+='<button class="act" data-act="cook"'+(p.money>=3?'':' disabled')+'>💪 Cook the books — $3</button>';
+     if(S.owner.asic===me)phaseHtml+='<button class="act" data-act="auditmode"'+((p.money>=4&&!S.audited)?'':' disabled')+'>⚖️ Audit — $4</button>';
+     if(S.owner.press===me)phaseHtml+='<button class="act" data-act="spin" data-kind="press"'+((p.money>=3&&!S.spun)?'':' disabled')+'>🗞️ Spin the press — $3</button>';
+     if(S.owner.fox===me)phaseHtml+='<button class="act" data-act="spin" data-kind="fox"'+((p.money>=2&&!S.spun)?'':' disabled')+'>🦊 Fox spin — $2</button>';
+     if(S.owner.sisy===me&&p.pos==='sisy')phaseHtml+='<button class="act" data-act="push">🪨 Push the boulder — +$'+(S.sisyPayout||10)+'</button>';
+     if(S.owner.real===me&&p.pos==='real')phaseHtml+='<button class="act" data-act="scrub">📉 Read the real yields — −1 🔥</button>';
+     if(S.owner.asics===me&&p.pos==='asics')phaseHtml+='<button class="act" data-act="jog">👟 Jog a lap — −1 🔥</button>';
+     phaseHtml+='</div>';
+    }
+
   }
  } else if(S.phase==='action'){
   const nid=p.pos,n=curN,prev=S.owner[nid];
@@ -1470,7 +1492,7 @@ function renderSide(){
  }
  const prows=S.players.map((pl,i)=>{
   const nodes=NODES.filter(nn=>S.owner[nn.id]===i).length;
-  const targetable=isTurn&&S.phase==='action'&&(S.mode==='leak'||S.mode==='audit'||S.mode==='tweet'||S.mode==='roast')&&i!==me;
+  const targetable=isTurn&&(S.phase==='action'||(S.phase==='move'&&S.owner.back===me&&!S.backroomAbilityUsed))&&(S.mode==='leak'||S.mode==='audit'||S.mode==='tweet'||S.mode==='roast')&&i!==me;
   const face=charSrc(pl.char);
   return '<div class="prow'+(i===me?' me':'')+(targetable?' targetable':'')+(pl.cortisol>=6?' hot':'')+'" data-rival="'+i+'" style="--pc:'+pl.color+'">'
    +(face?'<img class="pface" src="'+face+'" alt="">':'<span class="pnum">'+(i+1)+'</span><span class="pdot"></span>')
@@ -1571,7 +1593,7 @@ function handleNodeTap(t){
  $('side').addEventListener('click',async e=>{
  if(!S)return;
  const row=e.target.closest('.prow[data-rival]');
- if(row&&S.phase==='action'&&S.cur===Net.myIdx){
+ if(row&&(S.phase==='action'||(S.phase==='move'&&S.owner.back===Net.myIdx&&!S.backroomAbilityUsed))&&S.cur===Net.myIdx){
   const ri=+row.dataset.rival;if(ri===Net.myIdx)return;
   if(S.mode&&['leak','audit','tweet','roast'].includes(S.mode)){dispatch({act:S.mode,target:ri});return}
  }
@@ -1595,6 +1617,7 @@ function handleNodeTap(t){
   case 'leakmode':dispatch({act:'leakmode'});break;
   case 'auditmode':dispatch({act:'auditmode'});break;
   case 'tweetmode':dispatch({act:'tweetmode'});break;
+   case 'pressure':dispatch({act:'pressure'});break;
   case 'spin':dispatch({act:'spin',kind:b.dataset.kind});break;
   case 'cook':dispatch({act:'cook'});break;
   case 'budget':dispatch({act:'budget'});break;
