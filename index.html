@@ -163,6 +163,21 @@ button.mini:hover{background:#168388}
 .charpick:hover:not(.taken){border-color:#168388}
 .pface{width:28px;height:28px;border-radius:50%;object-fit:cover;border:2px solid var(--pc,#168388);flex:0 0 28px;background:#000}
 #board text{font-family:system-ui,Segoe UI,Helvetica,Arial,sans-serif}
+
+/* v1.8 UI: the map is a fixed, full-height left viewport; only the sidebar scrolls. */
+body.game-open{overflow:hidden}
+#app{display:none;flex-wrap:nowrap;gap:0;padding:0;align-items:stretch;width:100vw;height:100vh;height:100dvh;overflow:hidden}
+#boardWrap{flex:1 1 auto;min-width:0;height:100%;position:relative;overflow:hidden;background:#1d201f}
+#board{display:block;width:100%;height:100%;border-radius:0;box-shadow:none;cursor:grab;touch-action:none}
+#side{flex:0 0 390px;width:390px;max-width:42vw;height:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px;display:flex;flex-direction:column;gap:10px}
+@media(max-width:900px){
+ body.game-open{overflow:auto}
+ #app{flex-direction:column;width:100%;height:auto;min-height:100vh;min-height:100dvh;overflow:visible}
+ #boardWrap{flex:none;width:100%;height:62vh;height:62dvh;min-height:320px}
+ #board{height:100%}
+ #side{flex:1 1 auto;width:100%;max-width:none;height:auto;overflow:visible;padding:10px}
+}
+
 </style>
 </head>
 <body>
