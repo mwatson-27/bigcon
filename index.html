@@ -968,11 +968,11 @@ async function applyIntent(pi,m){
   else if(act==='leakmode'&&abilityPhase(pi)&&!S.mode&&p.intel>=2){S.mode='leak';sync()}
   else if(act==='leak'&&abilityPhase(pi)&&S.mode==='leak'&&m.target!==pi){
    if(p.intel<2){sysTo(pi,'Not enough Intel.');S.mode=null;sync();return}
-   p.intel-=2;fxAt(pi,'🛈−2','#55c1ff');log('🗣️ '+pname(pi)+' leaks dirt on '+pname(m.target)+'.');S.mode=null;addCortisol(m.target,2,'dirt in the morning paper');await endOfTurn()}
+   p.intel-=2;fxAt(pi,'🛈−2','#55c1ff');log('🗣️ '+pname(pi)+' leaks dirt on '+pname(m.target)+'.');S.mode=null;addCortisol(m.target,2,'dirt in the morning paper');await finishNodeAbility(pi)}
   else if(act==='auditmode'&&abilityPhase(pi)&&!S.mode&&S.owner.asic===pi&&p.money>=4&&!S.audited){S.mode='audit';sync()}
   else if(act==='audit'&&abilityPhase(pi)&&S.mode==='audit'&&m.target!==pi){
    if(p.money<4||S.audited){S.mode=null;sync();return}
-   p.money-=4;fxAt(pi,'−$4','#ff6b5e');S.audited=true;log('⚖️ '+pname(pi)+' sends the regulator after '+pname(m.target)+'.');S.mode=null;addCortisol(m.target,1,'a very thorough audit');await endOfTurn()}
+   p.money-=4;fxAt(pi,'−$4','#ff6b5e');S.audited=true;log('⚖️ '+pname(pi)+' sends the regulator after '+pname(m.target)+'.');S.mode=null;addCortisol(m.target,1,'a very thorough audit');await finishNodeAbility(pi)}
   else if(act==='tweetmode'&&abilityPhase(pi)&&!S.mode&&S.owner.trump===pi&&p.money>=2){S.mode='tweet';sync()}
   else if(act==='tweet'&&abilityPhase(pi)&&S.mode==='tweet'&&m.target!==pi){
    if(p.money<2){S.mode=null;sync();return}
@@ -988,7 +988,7 @@ async function applyIntent(pi,m){
    if(p.money<cost){S.mode=null;sync();return}
    p.money-=cost;fxAt(pi,'−$'+cost,'#ff6b5e');S.spun=true;log('🗞️ '+pname(pi)+' roasts '+pname(m.target)+' in the press.');S.mode=null;addCortisol(m.target,1,'unflattering coverage');await endOfTurn()}
   else if(act==='cook'&&abilityPhase(pi)&&!S.mode&&S.owner.rock===pi&&p.money>=3&&!S.cooked){
-   p.money-=3;fxAt(pi,'−$3','#ff6b5e');S.cooked=true;log('💪 '+pname(pi)+' cooks the books. What numbers?');addCortisol(pi,-3,'a very warm kitchen');await endOfTurn()}
+   p.money-=3;fxAt(pi,'−$3','#ff6b5e');S.cooked=true;log('💪 '+pname(pi)+' cooks the books. What numbers?');addCortisol(pi,-3,'a very warm kitchen');await finishNodeAbility(pi)}
   else if(act==='pressure'&&abilityPhase(pi)&&!S.mode&&S.owner.back===pi&&!S.pressured){
    S.pressured=true;log('🤝 '+pname(pi)+' leans on the table — every other player feels it.');
    S.players.forEach((pl,j)=>{if(j!==pi)addCortisol(j,1,'a backroom deal gone loud')});
@@ -997,13 +997,13 @@ async function applyIntent(pi,m){
   else if(act==='budget'&&abilityPhase(pi)&&!S.mode&&S.owner.gov===pi&&p.money>=3&&!S.budgeted){
    p.money-=3;fxAt(pi,'−$3','#ff6b5e');S.budgeted=true;log('🦘 BUDGET NIGHT! '+pname(pi)+' reads the numbers.');
    S.players.forEach((pl,i)=>{if(i!==pi)payTo(i,1,pi,'the Treasurer collects')});
-   giveIntel(pi,1,'you saw the budget first');await endOfTurn()}
+   giveIntel(pi,1,'you saw the budget first');await finishNodeAbility(pi)}
   else if(act==='push'&&abilityPhase(pi)&&!S.mode&&p.pos==='sisy'&&S.owner.sisy===pi){
-   const payout=S.sisyPayout||10;gain(pi,payout,'pushed the boulder uphill');S.sisyPayout=payout*2;log('🪨 The next PUSH will pay $'+S.sisyPayout+'.');await endOfTurn()}
+   const payout=S.sisyPayout||10;gain(pi,payout,'pushed the boulder uphill');S.sisyPayout=payout*2;log('🪨 The next PUSH will pay $'+S.sisyPayout+'.');await finishNodeAbility(pi)}
   else if(act==='scrub'&&abilityPhase(pi)&&!S.mode&&p.pos==='real'&&S.owner.real===pi){
-   log('📉 The real yields calm everyone.');addCortisol(pi,-1,'real numbers, real calm');await endOfTurn()}
+   log('📉 The real yields calm everyone.');addCortisol(pi,-1,'real numbers, real calm');await finishNodeAbility(pi)}
   else if(act==='jog'&&abilityPhase(pi)&&!S.mode&&p.pos==='asics'&&S.owner.asics===pi){
-   log('👟 '+pname(pi)+' jogs a lap in the circled shoe. Why is it on the board? Irrelevant.');addCortisol(pi,-1,'a cooling lap');await endOfTurn()}
+   log('👟 '+pname(pi)+' jogs a lap in the circled shoe. Why is it on the board? Irrelevant.');addCortisol(pi,-1,'a cooling lap');await finishNodeAbility(pi)}
   /* ---- INTEL OPS ---- */
   else if(act==='spy'&&S.phase==='action'&&!S.mode&&p.intel>=2){
    p.intel-=2;fxAt(pi,'🛈−2','#55c1ff');log('🛈 '+pname(pi)+' buys a look at tomorrow.');
@@ -1173,7 +1173,7 @@ async function doSpin(pi,kind){
  if(p.money<cost||S.spun){sysTo(pi,'Spin unavailable.');return}
  const v=await askPlayer(pi,{title:kind==='fox'?'FOX SPIN':'SPIN THE PRESS',body:(kind==='fox'?'Fair. And. Furious. ':'“Quite frankly…” — ')+'for $'+cost+':',options:[{label:'Cool my own Cortisol (−'+cool+' 🔥)',v:'cool'},{label:'Roast a rival (+1 🔥)',v:'cortisol'},{label:'Never mind',v:'no'}],def:'no'});
  if(v==='no')return;
- if(v==='cool'){p.money-=cost;fxAt(pi,'−$'+cost,'#ff6b5e');S.spun=true;log('🗞️ '+pname(pi)+' spins the story smooth.');addCortisol(pi,-cool,'friendly coverage');await endOfTurn();return}
+ if(v==='cool'){p.money-=cost;fxAt(pi,'−$'+cost,'#ff6b5e');S.spun=true;log('🗞️ '+pname(pi)+' spins the story smooth.');addCortisol(pi,-cool,'friendly coverage');await finishNodeAbility(pi);return}
  S.spinKind=kind;S.mode='roast';sync();
 }
 function drawCard(){
