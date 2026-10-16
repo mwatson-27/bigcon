@@ -19,7 +19,9 @@ body.game-open{overflow:hidden}
 .serif,.bigtitle,.brand .t1,.winname,.turnname,.codeline .cc,.mtitle,.etitle{font-family:'Times New Roman',Times,serif}
 #toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-70px);background:#168388;color:#fff;font-weight:800;padding:10px 24px;border-radius:0;border:2px solid #000;box-shadow:0 10px 30px rgba(0,0,0,.6);opacity:0;transition:all .35s;z-index:90;pointer-events:none;font-size:14px;letter-spacing:1px;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
 #toast.show{opacity:1;transform:translate(-50%,0)}
-#setup{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:24px}.splash-logo{width:min(100%,620px);aspect-ratio:1/1;height:auto;display:flex;align-items:center;justify-content:center;margin:0 auto 22px;background:#000;overflow:hidden}.splash-logo img{display:block;width:100%;height:100%;object-fit:fill}
+#setup{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:24px}
+#buildStamp{position:fixed;right:10px;bottom:8px;z-index:100;color:#9ad;background:rgba(0,0,0,.82);border:1px solid #168388;padding:4px 7px;font:10px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.3px;pointer-events:none}
+.splash-logo{width:min(100%,620px);aspect-ratio:1/1;height:auto;display:flex;align-items:center;justify-content:center;margin:0 auto 22px;background:#000;overflow:hidden}.splash-logo img{display:block;width:100%;height:100%;object-fit:fill}
 .setupcard{background:#111413;color:#f2f2f2;max-width:720px;width:100%;border-radius:0;border:2px solid #168388;padding:28px 32px;box-shadow:0 24px 80px rgba(0,0,0,.75);margin-top:28px}
 .bigtitle{font-size:44px;font-weight:900;letter-spacing:4px;background:#168388;color:#fff;display:inline-block;padding:10px 18px;margin:0 0 8px}
 .tag{font-size:17px;font-style:italic;color:burlywood;margin:12px 0 4px}
@@ -183,6 +185,7 @@ body.game-open{overflow:hidden}
 </head>
 <body>
 <div id="toast"></div>
+<div id="buildStamp" aria-label="Build commit"></div>
 
 <div id="setup">
  <div class="setupcard">
@@ -234,7 +237,8 @@ body.game-open{overflow:hidden}
 
 <script>
 'use strict';
-const $=id=>document.getElementById(id);(function(){const img=$('splashLogo');if(!img)return;let done=false;const swap=()=>{if(done)return;done=true;img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};setTimeout(swap,5000)})();
+const $=id=>document.getElementById(id);
+$('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('splashLogo');if(!img)return;let done=false;const swap=()=>{if(done)return;done=true;img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};setTimeout(swap,5000)})();
 
 /* ================= DISCORD RICH PRESENCE BRIDGE =================
    window.discordRPC is injected ONLY by the desktop (Electron) build's
@@ -584,6 +588,9 @@ const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);
 /* ================= STATE, NET & HELPERS ================= */
 let S=null;
 const GOAL_MIN=20,GOAL_MAX=999,GOAL_DEF=100;
+/* Build revision stamp: keep this equal to the parent commit's 7-character SHA.
+   .github/workflows/check-build-commit.yml enforces this on every push and PR. */
+const BUILD_COMMIT = '9ed9c9f';
 const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,roomLabel:null,lobbyChat:[],lobbyPlayers:[],started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,hbTimer:null,lastSeen:0};
 function clampGoal(v){const n=Math.round(Number(v)||0);if(!n)return GOAL_DEF;return Math.max(GOAL_MIN,Math.min(GOAL_MAX,n))}
 let fxSeq=0;
@@ -1257,7 +1264,7 @@ async function endOfTurn(){
   if(v){S.jtUsed=true;log('🌐 JTPortal: “Quite frankly, that never happened.” The event vanishes.');fx(1200,720,'“NEVER HAPPENED.”','#55c1ff',true);nextTurn();return}
  }
  const card=drawCard();
- await revealAll('MARKET EVENT — TURN '+S.turn,cardFace(card));
+ announceAll('MARKET EVENT — TURN '+S.turn,cardFace(card));
  const tk=S.owner.toktimer;if(tk!=null)giveIntel(tk,1,'Toktimer clocked the event');
  await card.run();
  sync();
@@ -2097,7 +2104,7 @@ function onGuestData(d){
   case 'begin':S=null;adoptState(d.s);if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
   case 'state':adoptState(d.s);scheduleRender();break;
   case 'prompt':modal({title:d.title,html:d.html,body:d.body,options:d.options}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'answer',pid:d.pid,v})});break;
-  case 'event':modal({title:d.title,html:d.html,options:[{label:'Continue',v:1}]}).then(()=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'ack',eid:d.eid})});break;
+  case 'event':modal({title:d.title,html:d.html,options:[{label:'Continue',v:1}]});break;
   case 'sys':toast(d.msg);break;
   case 'reload':location.reload();break;
   case 'kick':guestReconnectStopped=true;clearGuestReconnect();stopGuestHeartbeat();showFatal(d.reason||'Kicked from room.');break;
