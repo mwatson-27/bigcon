@@ -20,7 +20,7 @@ body.game-open{overflow:hidden}
 #toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-70px);background:#168388;color:#fff;font-weight:800;padding:10px 24px;border-radius:0;border:2px solid #000;box-shadow:0 10px 30px rgba(0,0,0,.6);opacity:0;transition:all .35s;z-index:90;pointer-events:none;font-size:14px;letter-spacing:1px;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 #setup{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:24px}
-#buildStamp{position:fixed;right:10px;bottom:8px;z-index:100;color:#9ad;background:rgba(0,0,0,.82);border:1px solid #168388;padding:4px 7px;font:10px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.3px;pointer-events:none}
+#buildStamp{position:fixed;right:8px;bottom:6px;z-index:100;color:#8b9999;background:transparent;border:0;padding:2px 3px;font:9px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.2px;opacity:.65;pointer-events:none}body.game-open #buildStamp{display:none}
 .splash-logo{width:min(100%,620px);aspect-ratio:1/1;height:auto;display:flex;align-items:center;justify-content:center;margin:0 auto 22px;background:#000;overflow:hidden}.splash-logo img{display:block;width:100%;height:100%;object-fit:fill}
 .setupcard{background:#111413;color:#f2f2f2;max-width:720px;width:100%;border-radius:0;border:2px solid #168388;padding:28px 32px;box-shadow:0 24px 80px rgba(0,0,0,.75);margin-top:28px}
 .bigtitle{font-size:44px;font-weight:900;letter-spacing:4px;background:#168388;color:#fff;display:inline-block;padding:10px 18px;margin:0 0 8px}
@@ -238,7 +238,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = 'fd0bcb0';
+const BUILD_COMMIT = 'e0e9559';
 const $=id=>document.getElementById(id);
 $('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('splashLogo');if(!img)return;let done=false;const swap=()=>{if(done)return;done=true;img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};setTimeout(swap,5000)})();
 
@@ -1948,10 +1948,10 @@ function broadcastLobby(){
  sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal),chat:Net.lobbyChat.slice(-40)});
  renderLobbyList();renderLobbyChat();
  const n=Net.roster.length;
- const ready=n>=2&&Net.roster.every(e=>e.char);
+ const ready=n>=1&&Net.roster.every(e=>e.char);
  $('btnStart').disabled=!ready;
- $('btnStart').textContent=!ready?(n<2?'START THE CON (need 2+ players)':'START THE CON (everyone pick a face)'):
-  (n>=MAXPLAYERS?'START THE CON — FULL TABLE (8/8)':
+ $('btnStart').textContent=!ready?(n<1?'START THE CON (need a player)':'START THE CON (everyone pick a face)'):
+  (n===1?'START SOLO TEST — 1 PLAYER':n>=MAXPLAYERS?'START THE CON — FULL TABLE (8/8)':
   'START THE CON — '+n+' PLAYERS · '+(MAXPLAYERS-n)+' SEATS OPEN');
 }
 function renderLobbyList(){
@@ -2110,7 +2110,7 @@ function onGuestData(d){
  }
 }
 function enterGame(){
- $('setup').style.display='none';$('app').style.display='flex';
+ $('setup').style.display='none';$('app').style.display='flex';document.body.classList.add('game-open');
  VB={x:0,y:0,w:2400,h:1560};applyVB();
  render();
 }
@@ -2154,7 +2154,7 @@ function showLobby(asHost){
  $('btnJoinGo').disabled=true;guestJoin(nm,code);
 };
  $('btnStart').onclick=()=>{
- if(Net.roster.length<2||Net.roster.some(e=>!e.char)){toast('Everyone needs their own face first.');return}
+ if(Net.roster.length<1||Net.roster.some(e=>!e.char)){toast('Pick a character before starting.');return}
  requestTurnNotificationPermission();$('btnStart').disabled=true;
  initGame(Net.roster.map(e=>({name:e.name,char:e.char})));
 };
