@@ -1,0 +1,31 @@
+name: Check build commit stamp
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-commit-stamp:
+    if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the exact commit being tested
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - name: Require the build stamp to match the parent revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(git rev-parse --short=7 HEAD^)"
+          actual="$(grep -oE "const BUILD_COMMIT = '[0-9a-f]{7}';" index.html | sed -E "s/.*'([0-9a-f]{7})'.*/\1/")"
+          if [[ -z "$actual" ]]; then
+            echo "::error::index.html must define BUILD_COMMIT using a 7-character commit SHA."
+            exit 1
+          fi
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::BUILD_COMMIT is '$actual' but this commit's parent is '$expected'. Update BUILD_COMMIT before committing."
+            exit 1
+          fi
+          echo "Build stamp matches parent revision $expected."
