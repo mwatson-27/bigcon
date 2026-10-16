@@ -874,7 +874,6 @@ function initGame(defs){
 }
 async function startTurn(){
  if(S)S.backroomAbilityUsed=false;
- if(S)S.backroomAbilityUsed=false;
  if(!S||S.over)return;
  log('—— TURN '+S.turn+' · '+pname(S.cur)+' ——');
  S.phase='move';S.mode=null;S.spun=false;S.audited=false;S.cooked=false;S.budgeted=false;S.pressured=false;S.extraStep=false;S.slipped=false;S.dossier=false;
