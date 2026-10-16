@@ -237,6 +237,8 @@ body.game-open{overflow:hidden}
 
 <script>
 'use strict';
+/* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
+const BUILD_COMMIT = '3a1269b';
 const $=id=>document.getElementById(id);
 $('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('splashLogo');if(!img)return;let done=false;const swap=()=>{if(done)return;done=true;img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};setTimeout(swap,5000)})();
 
@@ -588,9 +590,6 @@ const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);
 /* ================= STATE, NET & HELPERS ================= */
 let S=null;
 const GOAL_MIN=20,GOAL_MAX=999,GOAL_DEF=100;
-/* Build revision stamp: keep this equal to the parent commit's 7-character SHA.
-   .github/workflows/check-build-commit.yml enforces this on every push and PR. */
-const BUILD_COMMIT = '801ff16';
 const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,roomLabel:null,lobbyChat:[],lobbyPlayers:[],started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,hbTimer:null,lastSeen:0};
 function clampGoal(v){const n=Math.round(Number(v)||0);if(!n)return GOAL_DEF;return Math.max(GOAL_MIN,Math.min(GOAL_MAX,n))}
 let fxSeq=0;
