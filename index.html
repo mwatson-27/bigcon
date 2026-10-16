@@ -68,7 +68,8 @@ body.game-open{overflow:hidden}
 .zoombar button:hover{background:#168388}
 .panhint{position:absolute;left:12px;bottom:10px;font-size:11px;letter-spacing:1px;color:#9ad;background:#000;padding:4px 10px;border-radius:0;border:1px solid #168388;z-index:5;pointer-events:none}
 #side{flex:0 1 384px;max-width:100%;display:flex;flex-direction:column;gap:10px}
-@media(max-width:1080px){#app{flex-direction:column}#side{flex:1 1 auto;width:100%}}
+#side>*{flex-shrink:0;min-width:0}
+@media(max-width:900px){#app{flex-direction:column}#side{flex:1 1 auto;width:100%}}
 .netstrip{background:#000;border:1px solid #168388;border-radius:0;padding:6px 11px;font-size:11px;letter-spacing:1px;color:#cde;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .netstrip b{color:aqua;letter-spacing:3px}
 .moodstrip{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#000;border:1px solid #168388;border-radius:0;padding:6px 11px;font-size:11px;letter-spacing:.5px;color:#cde}
@@ -685,13 +686,31 @@ function acccInvestigate(pi){
  if(!hits.length)return;
  if(Math.random()>=1/3)return
  hits.sort((a,b)=>b.n-a.n||a.g.name.localeCompare(b.g.name));
- const hit=hits[0];
- hit.owned.forEach(n=>{delete S.owner[n.id];delete S.bugs[n.id];fx(n.x,n.y-70,'🧐 DIVESTED','#55c1ff')});
- log('🧐 MONOPOLY ALERT! '+pname(pi)+' is forced to dump the whole '+hit.g.name+' book ('+hit.owned.map(n=>n.name.join(' ')).join(', ')+').');
+ const hit=hits[0],offender=S.players[pi];
+ const divested=shuffle(hit.owned.slice());
+ // Give at most one node to each rival; any remaining nodes return to the market.
+ divested.forEach(n=>{delete S.owner[n.id];delete S.bugs[n.id];fx(n.x,n.y-70,'🧐 DIVESTED','#55c1ff')});
+ const recipients=shuffle(S.players.map((_,i)=>i).filter(i=>i!==pi));
+ const transfers=[];
+ for(let i=0;i<Math.min(divested.length,recipients.length);i++){
+  const node=divested[i],recipient=recipients[i];
+  S.owner[node.id]=recipient;
+  transfers.push({node,recipient});
+  fxAt(recipient,'+'+node.name.join(' '),'#55c1ff');
+ }
+ const moneyFine=Math.floor(offender.money*0.20);
+ const intelFine=Math.floor(offender.intel*0.20);
+ if(moneyFine>0)payVoid(pi,moneyFine,'ACCC monopoly fine (20%)');
+ if(intelFine>0){offender.intel-=intelFine;fxAt(pi,'🛈−'+intelFine,'#55c1ff');log('🛈 '+pname(pi)+' pays an ACCC fine of '+intelFine+' Intel (20%).')}
+ const transferText=transfers.length?transfers.map(t=>esc(t.node.name.join(' '))+' → '+esc(S.players[t.recipient].name)).join('; '):'none — all divested nodes return to the market';
+ const lost=divested.slice(transfers.length).map(n=>n.name.join(' '));
+ log('🧐 MONOPOLY ALERT! '+pname(pi)+' is forced to dump the whole '+hit.g.name+' book ('+hit.owned.map(n=>n.name.join(' ')).join(', ')+'). Redistributed: '+(transfers.length?transfers.map(t=>t.node.name.join(' ')+' to '+pname(t.recipient)).join(', '):'none')+'. '+(lost.length?'Returned to market: '+lost.join(', ')+'. ':'')+'Fine: $'+moneyFine+' and '+intelFine+' Intel.');
  fxAt(pi,'MONOPOLY ALERT','#55c1ff',true);
  announceAll('MONOPOLY ALERT',
-  monopolyAlertFace(esc(S.players[pi].name)+' held more than two '+esc(hit.g.name)+' properties.')
-  +'<p>The ACCC breaks up the book. Divested: <b>'+hit.owned.map(n=>esc(n.name.join(' '))).join('</b>, <b>')+'</b>.</p>');
+  monopolyAlertFace(esc(offender.name)+' held more than two '+esc(hit.g.name)+' properties.')
+  +'<p>The ACCC breaks up the book. Divested: <b>'+hit.owned.map(n=>esc(n.name.join(' '))).join('</b>, <b>')+'</b>.</p>'
+  +'<p>Randomly redistributed (max one node per rival): '+transferText+'.'+(lost.length?' Remaining nodes return to the market: <b>'+lost.map(esc).join('</b>, <b>')+'</b>.':'')+'</p>'
+  +'<p>Fine: <b>$'+moneyFine+'</b> and <b>'+intelFine+' Intel</b> (20% of current balances).</p>');
 }
 /* MADE moves money off the rest of the table, not out of thin air. */
 function madePay(){
@@ -989,7 +1008,7 @@ async function applyIntent(pi,m){
  if(Net.lock){sysTo(pi,'⏳ Your previous action is still resolving — please wait a moment.');return} Net.lock=true;clearTimeout(Net.lockTimer);Net.lockTimer=setTimeout(()=>{if(Net.lock){console.error('[BIGCON] stale action lock released');Net.lock=false;Net.lockTimer=null;sync()}},30000);
  try{
   const act=m.act,p=S.players[pi];
-  if(act==='move'&&S.phase==='move'){
+  if(act==='move'&&S.phase==='move'&&!S.mode){
    if(S.steps<=0)return;
    if(!(ADJ[p.pos]||[]).includes(m.id)){sysTo(pi,'You can only move along the red threads.');return}
    await doMove(pi,m.id);
@@ -1099,10 +1118,10 @@ async function applyIntent(pi,m){
    await endOfTurn()}
  } finally {clearTimeout(Net.lockTimer);Net.lockTimer=null;Net.lock=false}
 }
-function canUseBackroomAbility(pi){return !!(S&&S.phase==='move'&&S.cur===pi&&S.owner.back===pi&&!S.backroomAbilityUsed)}
+function canUseBackroomAbility(pi){return !!(S&&S.phase==='move'&&S.cur===pi&&S.owner.back===pi&&!S.backroomAbilityUsed&&S.steps>=2)}
 function abilityPhase(pi){return !!(S&&(S.phase==='action'||canUseBackroomAbility(pi)))}
 async function finishNodeAbility(pi){
- if(canUseBackroomAbility(pi)){S.backroomAbilityUsed=true;S.mode=null;log('🤝 Backroom Deals lets '+pname(pi)+' use one node ability during movement.');sync()}
+ if(canUseBackroomAbility(pi)){S.steps-=2;S.backroomAbilityUsed=true;S.mode=null;log('🤝 Backroom Deals lets '+pname(pi)+' use one node ability during movement (−2 movement steps).');fxAt(pi,'−2 STEPS','#e19bff');sync()}
  else await endOfTurn();
 }
 function qantasGrounded(){return !!(S&&S.turn===1)}
@@ -1281,9 +1300,9 @@ function showRules(){
  +'<h4>The board is the whole collage</h4><p><b>82 exhibits.</b> Charts are no longer stacked in one corner — US yields sit by Trump, Japan by the tankers, Germany by Davos, UK by the papers, Australia by the coat of arms, Canada by the vault, the 10-year master in the middle. Each game <b>Quikstop opens in a different neighbourhood</b>, so the first moves change. New pins from the collage: <b>Westpac</b>, <b>BHP</b>, <b>Herald Sun / The Jim Reaper</b>, <b>the bullet train</b>, the circled <b>ASICS shoe</b>, and <b>Toktimer</b>. Red threads are the paths — long ones dash. <i>Drag to pan, scroll to zoom.</i></p>'
  +'<h4>Winning</h4><p><b>Money <i>and</i> a finished portfolio.</b> The host sets a cash target in the lobby (anything from $'+GOAL_MIN+' to $'+GOAL_MAX+'); to take the con you must reach it <b>while holding at least one '+WIN_TYPES.join(', one ')+' node</b> — the seven-type set (BANK, REGULATOR, CHART, WILD, CORPORATE, COMMODITY and MEDIA) is tracked in your sidebar. There are only four REGULATORS on the whole board, so the set is a race of its own. Nodes, synergies, bugs and the mood are all just ways of getting there faster — the board banner and the sidebar show the target and who is closest.</p>'
  +'<h4>Your turn</h4><p><b>1 · Income</b> — $3 salary (+$1 CPI-indexed with Inflation Compensation) + holdings &amp; powers &amp; mood. <b>2 · Move</b> — 3 steps (+1 with COAL CORP HQ, +1 with the Coal Train <i>or</i> the Bullet Train, +1 with the ASICS shoe, +1 by burning a favor). Tolls: $1 entering a rival’s node — $2 if they hold Albanese, free if you hold James Bond. <b>3 · One action</b> (plus free intel ops). <b>4 · Market event</b> for the whole table — and the mood moves.</p>'
- +'<h4>Actions</h4><ul><li><b>Seize</b> the node you stand on (+1 🔥). Hostile takeover: double cost (list price with the Dossier; MADE, Qantas and the RBA never inflate), old owner pockets list price, +2 🔥, +$2 ACCC fee if they own the ACCC.</li><li><b>Plant a bug</b> (1 🛈; free with INSIDER TRADING) — skim $1/turn ($2 with the WEF).</li><li><b>Leak dirt</b> (2 🛈) — rival +2 Cortisol · <b>Audit</b> ($4, ASIC) — rival +1 Cortisol · <b>The Tweet</b> ($2, Trump) — rival loses the greater of 3 Intel or 50% of their Intel.</li><li><b>Spin</b> ($3 Press Room) / <b>Fox Spin</b> ($2 Fox Business) · <b>Cook the books</b> ($3, The Rock) · <b>Budget night</b> ($3, the Government) · <b>Lean on the table</b> (Backroom Deals: every rival +1 🔥).</li><li><b>Push the boulder</b> — earns $10 the first time, then doubles every push ($10, $20, $40, $80…). No Cortisol cost. · <b>Scrub</b> (Real Yield) · <b>Fly the Qantas jet</b> ($3, teleport — Qantas itself cannot be reached on turn 1) · <b>Slipstream</b> ($2, Formula 1: +2 steps and $2 off the next seizure) · <b>Lay low</b> (choose $1 cash or −2 Cortisol).</li></ul>'
+ +'<h4>Actions</h4><ul><li><b>Seize</b> the node you stand on (+1 🔥). Hostile takeover: double cost (list price with the Dossier; MADE, Qantas and the RBA never inflate), old owner pockets list price, +2 🔥, +$2 ACCC fee if they own the ACCC.</li><li><b>Plant a bug</b> (1 🛈; free with INSIDER TRADING) — skim $1/turn ($2 with the WEF).</li><li><b>Leak dirt</b> (2 🛈) — rival +2 Cortisol · <b>Audit</b> ($4, ASIC) — rival +1 Cortisol · <b>The Tweet</b> ($2, Trump) — rival loses the greater of 3 Intel or 50% of their Intel.</li><li><b>Spin</b> ($3 Press Room) / <b>Fox Spin</b> ($2 Fox Business) · <b>Cook the books</b> ($3, The Rock) · <b>Budget night</b> ($3, the Government) · <b>Lean on the table</b> (Backroom Deals: every rival +1 🔥; using a Backroom ability costs 2 movement steps).</li><li><b>Push the boulder</b> — earns $10 the first time, then doubles every push ($10, $20, $40, $80…). No Cortisol cost. · <b>Scrub</b> (Real Yield) · <b>Fly the Qantas jet</b> ($3, teleport — Qantas itself cannot be reached on turn 1) · <b>Slipstream</b> ($2, Formula 1: +2 steps and $2 off the next seizure) · <b>Lay low</b> (choose $1 cash or −2 Cortisol).</li></ul>'
  +'<h4>Cortisol &amp; raids</h4><p>Cortisol is capped at 9. At 🔥9 the regulators raid you, and a raid hurts: your <b>two</b> highest-income nodes are seized, every bug you planted is pulled, you pay a fine of $5 or 30% of your cash (whichever is larger), your Intel is burned down to 1, Cortisol resets to 0 and your <b>next turn brings no income and a single step</b>. <b>The whole table sees the raid</b> — it pops up on every screen. The Hedge Fund pays $3 on every raid; the Group Photograph pays 1 🛈 Intel.</p>'
- +'<h4>ACCC concentration</h4><p>Charts are exempt. If you hold <b>more than two</b> properties in the same tracked industry — banking, regulators, corporates, commodities, media, oil, education, JTPortal, Jim Chalmers, Big Bessent, or monetary policy — then at the start of <b>your turn</b> there is a <b>33% chance</b> the ACCC investigates and you <b>lose every node you own in that industry</b>. Nodes go back on the market. Coal is not a tracked industry; <b>Mark Watson is the named monopoly exception</b>.</p>'
+ +'<h4>ACCC concentration</h4><p>Charts are exempt. If you hold <b>more than two</b> properties in the same tracked industry — banking, regulators, corporates, commodities, media, oil, education, JTPortal, Jim Chalmers, Big Bessent, or monetary policy — then at the start of <b>your turn</b> there is a <b>33% chance</b> the ACCC investigates. You pay a <b>20% fine on both cash and Intel</b>; divested nodes are randomly redistributed to other players (maximum one node per player), with any remainder returned to the market. Coal is not a tracked industry; <b>Mark Watson is the named monopoly exception</b>.</p>'
  +'<h4>MADE (???)</h4><p>Nobody knows what the purple graphic is, but it moves money: at the <b>start of every player\'s turn</b> there is a <b>33% chance</b> MADE pays out — <b>+$10 and +1 Intel</b> to its owner. Every other player with <b>more than two nodes and at least $50</b> pays 15% of their cash to the void. Seizing MADE always costs list price — it never inflates after a takeover. You may also force MADE to divest from any rival for <b>5 Intel</b>, paying the former owner <b>$7 compensation</b>.</p>'
  +'<h4>Turn notifications &amp; player identity</h4><p>Desktop turn alerts are enabled by default. Use <b>TURN ALERTS</b> in the game sidebar to switch them on or off; your choice is saved on this device. Your browser or desktop app must allow notifications for alerts to appear. Choose a character in the lobby to lock in that character’s dedicated player colour, shown beside the portrait and used throughout the game. Player names support up to 80 characters.</p><p class="fine">No dice. The dice were rigged from the start.</p>',
  options:[{label:'Back to the con',v:1}]});
@@ -1475,17 +1494,18 @@ function renderSide(){
     +((S.owner.qantas===me)?'<button class="act" data-act="flymode"'+(p.money>=3?'':' disabled')+'>✈️ Fly the Qantas jet — $3 (anywhere)</button>':'')
     +((S.owner.f1===me&&!S.slipped)?'<button class="act" data-act="slip"'+(p.money>=2?'':' disabled')+'>🏎️ Slipstream — $2 (+2 steps, $2 off next seizure)</button>':'');
     if(S.owner.back===me&&!S.backroomAbilityUsed){
-     phaseHtml+='<div class="sublabel">BACKROOM DEALS · ONE NODE ABILITY THIS MOVEMENT PHASE</div><div class="btns">';
-     if(S.owner.trump===me)phaseHtml+='<button class="act" data-act="tweetmode"'+(p.money>=2?'':' disabled')+'>🦅 The Tweet — $2</button>';
-     phaseHtml+='<button class="act" data-act="pressure">🤝 Lean on the table</button>';
-     if(S.owner.gov===me)phaseHtml+='<button class="act" data-act="budget"'+(p.money>=3?'':' disabled')+'>🦘 Budget night — $3</button>';
-     if(S.owner.rock===me)phaseHtml+='<button class="act" data-act="cook"'+(p.money>=3?'':' disabled')+'>💪 Cook the books — $3</button>';
-     if(S.owner.asic===me)phaseHtml+='<button class="act" data-act="auditmode"'+((p.money>=4&&!S.audited)?'':' disabled')+'>⚖️ Audit — $4</button>';
-     if(S.owner.press===me)phaseHtml+='<button class="act" data-act="spin" data-kind="press"'+((p.money>=3&&!S.spun)?'':' disabled')+'>🗞️ Spin the press — $3</button>';
-     if(S.owner.fox===me)phaseHtml+='<button class="act" data-act="spin" data-kind="fox"'+((p.money>=2&&!S.spun)?'':' disabled')+'>🦊 Fox spin — $2</button>';
-     if(S.owner.sisy===me&&p.pos==='sisy')phaseHtml+='<button class="act" data-act="push">🪨 Push the boulder — +$'+(S.sisyPayout||10)+'</button>';
-     if(S.owner.real===me&&p.pos==='real')phaseHtml+='<button class="act" data-act="scrub">📉 Read the real yields — −1 🔥</button>';
-     if(S.owner.asics===me&&p.pos==='asics')phaseHtml+='<button class="act" data-act="jog">👟 Jog a lap — −1 🔥</button>';
+     phaseHtml+='<div class="sublabel">BACKROOM DEALS · ONE NODE ABILITY · COSTS 2 MOVEMENT STEPS</div><div class="btns">';
+     const backroomStepLock=S.steps<2?' disabled':'';
+     if(S.owner.trump===me)phaseHtml+='<button class="act" data-act="tweetmode"'+((p.money>=2?'':' disabled')+backroomStepLock)+'>🦅 The Tweet — $2 · 2 steps</button>';
+     phaseHtml+='<button class="act" data-act="pressure"'+backroomStepLock+'>🤝 Lean on the table · 2 steps</button>';
+     if(S.owner.gov===me)phaseHtml+='<button class="act" data-act="budget"'+((p.money>=3?'':' disabled')+backroomStepLock)+'>🦘 Budget night — $3 · 2 steps</button>';
+     if(S.owner.rock===me)phaseHtml+='<button class="act" data-act="cook"'+((p.money>=3?'':' disabled')+backroomStepLock)+'>💪 Cook the books — $3 · 2 steps</button>';
+     if(S.owner.asic===me)phaseHtml+='<button class="act" data-act="auditmode"'+((p.money>=4&&!S.audited?'':' disabled')+backroomStepLock)+'>⚖️ Audit — $4 · 2 steps</button>';
+     if(S.owner.press===me)phaseHtml+='<button class="act" data-act="spin" data-kind="press"'+((p.money>=3&&!S.spun?'':' disabled')+backroomStepLock)+'>🗞️ Spin the press — $3 · 2 steps</button>';
+     if(S.owner.fox===me)phaseHtml+='<button class="act" data-act="spin" data-kind="fox"'+((p.money>=2?'':' disabled')+backroomStepLock)+'>🦊 Fox spin — $2 · 2 steps</button>';
+     if(S.owner.sisy===me&&p.pos==='sisy')phaseHtml+='<button class="act" data-act="push"'+backroomStepLock+'>🪨 Push the boulder — +$'+(S.sisyPayout||10)+' · 2 steps</button>';
+     if(S.owner.real===me&&p.pos==='real')phaseHtml+='<button class="act" data-act="scrub"'+backroomStepLock+'>📉 Read the real yields — −1 🔥 · 2 steps</button>';
+     if(S.owner.asics===me&&p.pos==='asics')phaseHtml+='<button class="act" data-act="jog"'+backroomStepLock+'>👟 Jog a lap — −1 🔥 · 2 steps</button>';
      phaseHtml+='</div>';
     }
 
