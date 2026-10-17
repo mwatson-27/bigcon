@@ -288,4 +288,4 @@ The maintainer decisions have now been applied on branch `fix/rules-copy-and-wat
 - **MADE tooltip resolved:** now describes the 15% cash cut for qualifying players and explicitly says no Cortisol is added.
 - **Counts resolved:** board copy and source header now say 70 exhibits; event-deck header comment now says 24 cards.
 
-These changes intentionally do not alter away-seat/disconnection behavior. Automated validation is pending the branch CI run.
+These changes intentionally do not alter away-seat/disconnection behavior. Automated validation passed on the PR branch: 92 tests, 91 pass, 1 documented skip, 0 fail.
