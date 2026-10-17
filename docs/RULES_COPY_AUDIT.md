@@ -272,3 +272,20 @@ Both drivers were executed verbatim (modulo print formatting) during this audit;
 ## Pinning candidates (optional next step)
 
 If the rule decisions confirm **copy-is-wrong** for #14 and #16, the natural pins are: (a) away-delta exactness (Driver 1 E/F, currently unpinned anywhere in `tests/` — DC-01..06 cover lifecycle, not the payout math), and (b) a Watson-owner inversion probe (Driver 2 probe 1) as an EC-08 companion. Both belong in `tests/economy.test.mjs` / `tests/multiplayer.test.mjs` conventions, driven through the shared harness.
+
+
+## Follow-up implementation status (2026-10-17)
+
+The maintainer decisions have now been applied on branch `fix/rules-copy-and-watson-exemption`; the numbered findings above preserve the original audit record.
+
+- **#11 resolved:** help text now describes 70 live exhibits and no longer names removed Germany/Davos or Canada/vault pins.
+- **#12 resolved:** all room-code examples use `LOW CORTISOL`, a real member of `BUZZWORDS`.
+- **#13 resolved:** the help text, action title, and log describe selling Intel at the current market rate without implying a physical Rumor Exchange.
+- **#14 deferred by maintainer:** disconnect/away-seat behavior is deliberately unchanged for now; the audit finding remains open.
+- **#15 resolved:** removed the unreachable Scrub handler, both UI buttons, its dispatch case, and its help entry.
+- **#16 resolved:** COAL is now a tracked industry (`coal`, `train`, `port`, `bhp`, `watson`); owning Mark Watson exempts that player's COAL holdings from ACCC monopoly investigations, without exempting other industries.
+- **#17 resolved:** help text now explains that charts are exempt from the six type-based industries, while CASH-RATE and INFLATION count in MONETARY POLICY.
+- **MADE tooltip resolved:** now describes the 15% cash cut for qualifying players and explicitly says no Cortisol is added.
+- **Counts resolved:** board copy and source header now say 70 exhibits; event-deck header comment now says 24 cards.
+
+These changes intentionally do not alter away-seat/disconnection behavior. Automated validation passed on the PR branch: 92 tests, 91 pass, 1 documented skip, 0 fail.

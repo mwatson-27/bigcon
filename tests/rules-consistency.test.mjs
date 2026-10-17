@@ -4,8 +4,8 @@
  *
  * RC-01/02/06/07 are structural (assets, deck, win types, dead references);
  * RC-03/04/05 drive the real vm actions and compare against the rules copy.
- * Known drift (baked asset typos, the "82 exhibits" claim, dead refs to the
- * removed-node list, the "25 cards" header comment) is reported informationally.
+ * Known drift (baked asset typos and dead refs to the removed-node list) is
+ * reported informationally.
  *
  * Behaviour tests use a controlled deck of `quiet` events (each +$2 to every
  * player) so the automatic end-of-turn chain that `finishNodeAbility` triggers
@@ -62,7 +62,10 @@ test('RC-01 every node is structurally complete and every baked asset exists on 
     if (c.url) continue; // remote-only portraits (Alexander_Lane, DJT, …)
     assert.ok(exists(path.join(repoRoot, 'characters', c.file)), `${c.id}: characters/${c.file} exists on disk`);
   }
-  console.log(`    informational: node count ${NODES.length} vs the "82 exhibits" copy claim (RC-07 drift)`);
+  assert.equal(NODES.length, 70, 'help copy and live board both describe 70 exhibits');
+  assert.ok(SOURCE.includes('70 exhibits'), 'the help modal uses the live exhibit count');
+  assert.ok(!SOURCE.includes('82 exhibits'), 'obsolete exhibit count is gone');
+  console.log(`    informational: live node count ${NODES.length}`);
 });
 
 /* ================= RC-02 — the deck is complete ================= */
@@ -71,7 +74,7 @@ test('RC-02 the event deck contains every card once and initGame deals it whole'
   const CARDS = engine.acc.CARDS;
   const ids = new Set(CARDS.map(c => c.id));
   assert.equal(ids.size, CARDS.length, 'card ids are unique');
-  /* The header comment promises "25 cards"; the shipped table holds 24. */
+  /* The header comment and shipped table both describe 24 cards. */
   assert.equal(CARDS.length, 24, `the deck deals ${CARDS.length} cards (update when the set changes)`);
   for (const c of CARDS) {
     assert.ok(c.title && c.icon && typeof c.text === 'string', `${c.id}: labelled for the ticker`);
@@ -415,7 +418,8 @@ test('RC-05b divest MADE costs 5 Intel + $7 compensation to the former owner', a
   armAction(engine);
   await engine.f.applyIntent(0, { act: 'divestmade' });
   await settle();
-  assert.equal(S.players[0].intel, 0, 'exactly 5 Intel');
+  const madePaidDuringTurn = S.log.some(l => l.includes('MADE pays out'));
+  assert.equal(S.players[0].intel, madePaidDuringTurn ? 1 : 0, 'divestment spends 5 Intel; the ordinary MADE payout may return 1');
   assert.equal(S.players[0].money, 20 - 7 + 2, 'exactly $7 out (+ quiet quarter)');
   assert.equal(S.players[1].money, 10 + 7 + 2 + 3, 'the former owner pockets the $7 compensation (+ turn income)');
   assert.equal(S.owner.made, 0, 'MADE changes hands');
@@ -455,5 +459,10 @@ test('RC-07 every S.owner/own() node reference maps to a real node or a known re
   /* Informational: references into removed nodes are known drift, not failures. */
   const toRemoved = [...refs].filter(id => removed.has(id)).sort();
   console.log(`    informational: ${toRemoved.length} reference(s) inside the removed-node set: ${toRemoved.join(', ') || 'none'}`);
-  console.log(`    informational: copy claims "82 exhibits"; the board deals ${engine.acc.NODES.length}`);
+  assert.ok(SOURCE.includes('Mark Watson</b>') && SOURCE.includes('COAL industry'), 'help copy describes Watson\'s COAL exemption');
+  assert.ok(SOURCE.includes('pays 15% of their cash. No Cortisol is added.'), 'MADE tooltip matches the 15% cash-cut mechanic');
+  assert.ok(!SOURCE.includes('data-act="scrub"') && !SOURCE.includes('case \'scrub\'') && !SOURCE.includes('Scrub</b>'), 'unreachable Scrub action is removed from engine, UI and help');
+  assert.ok(SOURCE.includes('LOW CORTISOL') && !SOURCE.includes('HORNSBY HEIGHTS'), 'room-code examples come from the buzzword pool');
+  assert.ok(SOURCE.includes('Sell intel</b> (your action, anywhere)'), 'sell Intel copy matches its global action');
+  assert.ok(SOURCE.includes('the CASH-RATE and INFLATION charts'), 'chart exception copy describes the monetary-policy exception');
 });

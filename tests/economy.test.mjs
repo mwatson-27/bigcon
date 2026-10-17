@@ -338,13 +338,44 @@ test('EC-08c the same bank book CAN be safe when the 1-in-3 gate misses', t => {
   assert.equal(engine.modalRec.filter(m => m.title === 'MONOPOLY ALERT').length, 0);
 });
 
-test('EC-08d the Watson monopoly exception: holding Mark Watson is itself an offence', t => {
+test('EC-08d Mark Watson alone is not a monopoly offence', t => {
   const engine = ctx_engine(t);
   hostMode(engine);
-  const S = fixture(engine, { owner: { watson: 0 }, players: [{ money: 50 }, { money: 0 }] });
-  withRandomSeq([0.1, 0.5, 0.5, 0.5], () => engine.f.acccInvestigate(0));
-  assert.equal(S.owner.watson, 1, 'watson divested to the one rival');
-  assert.equal(S.players[0].money, 50 - Math.floor(50 * 0.2));
+  const S = fixture(engine, { owner: { watson: 0 }, players: [{ money: 50, intel: 10 }, { money: 0 }] });
+  withRandomSeq([0.1], () => engine.f.acccInvestigate(0));
+  assert.equal(S.owner.watson, 0, 'Watson remains with its owner');
+  assert.equal(S.players[0].money, 50, 'no monopoly fine');
+  assert.equal(S.players[0].intel, 10, 'no Intel fine');
+  assert.equal(engine.modalRec.filter(m => m.title === 'MONOPOLY ALERT').length, 0);
+});
+
+test('EC-08g three COAL holdings trigger ACCC unless the owner also holds Mark Watson', t => {
+  const engine = ctx_engine(t);
+  hostMode(engine);
+  const S = fixture(engine, {
+    owner: { coal: 0, train: 0, port: 0 },
+    players: [{ money: 100, intel: 10 }, { money: 0, intel: 0 }],
+  });
+  withRandomSeq([0.1, 0.5, 0.5, 0.5, 0.5], () => engine.f.acccInvestigate(0));
+  assert.notEqual(S.owner.coal, 0, 'the COAL book is broken up');
+  assert.notEqual(S.owner.train, 0, 'the COAL book is broken up');
+  assert.notEqual(S.owner.port, 0, 'the COAL book is broken up');
+  assert.equal(S.players[0].money, 80, '20% cash fine');
+  assert.equal(S.players[0].intel, 8, '20% Intel fine');
+
+  const protectedState = fixture(engine, {
+    owner: { watson: 0, coal: 0, train: 0, port: 0 },
+    players: [{ money: 100, intel: 10 }, { money: 0, intel: 0 }],
+  });
+  const alertsBefore = engine.modalRec.filter(m => m.title === 'MONOPOLY ALERT').length;
+  withRandomSeq([0.1], () => engine.f.acccInvestigate(0));
+  assert.equal(protectedState.owner.watson, 0);
+  assert.equal(protectedState.owner.coal, 0);
+  assert.equal(protectedState.owner.train, 0);
+  assert.equal(protectedState.owner.port, 0);
+  assert.equal(protectedState.players[0].money, 100, 'Watson protects the COAL book from fines');
+  assert.equal(protectedState.players[0].intel, 10);
+  assert.equal(engine.modalRec.filter(m => m.title === 'MONOPOLY ALERT').length, alertsBefore, 'no new alert for the protected COAL book');
 });
 
 test('EC-08e fewer rivals than divested nodes: one node max per rival, the rest return to market', t => {

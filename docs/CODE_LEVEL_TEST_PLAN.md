@@ -2,7 +2,7 @@
 
 **Repository:** `waxmotson/bigcon`  
 **Scope:** rules engine, game flow, multiplayer synchronisation, randomized board generation, and rules/help consistency.  
-**Status:** implemented and green (2026-10-17). Sections CF/MP/DC/RM/EC/CR/RC of this plan are covered by dependency-free Node tests (91 tests: 90 pass, 1 documented skip, 0 fail, ~45 s). The Playwright E2E layer (3. Browser) is deferred, and DC-05 (host migration) is skipped because the feature does not exist. Run everything with `node --test 'tests/*.test.mjs'` (quote the glob).
+**Status:** implemented and green (2026-10-17). Sections CF/MP/DC/RM/EC/CR/RC of this plan are covered by dependency-free Node tests (92 tests: 91 pass, 1 documented skip, 0 fail, ~45 s). The Playwright E2E layer (3. Browser) is deferred, and DC-05 (host migration) is skipped because the feature does not exist. Run everything with `node --test 'tests/*.test.mjs'` (quote the glob).
 
 ## Goals
 
@@ -24,7 +24,7 @@ Relevant implementation areas include `applyIntent()`, `addCortisol()`, `raid()`
 
 - `tests/helpers/harness.mjs` — shared harness: loads the entire inline `<script>` of `index.html` into a `node:vm` context with a stubbed DOM, virtual clock, and fake PeerJS connections (recorded sends, auto-acked events, scripted answers, held modals). Seeded `makeGame` retries the seat shuffle (mulberry32) until the host seats at index 0.
 - `tests/smoke-engine.test.mjs`, `tests/smoke.test.mjs`, `tests/rules-smoke.test.mjs` — pre-existing smoke layer.
-- `tests/cortisol-raids.test.mjs` (CR) — 14 tests; `tests/economy.test.mjs` (EC) — 19 tests.
+- `tests/cortisol-raids.test.mjs` (CR) — 14 tests; `tests/economy.test.mjs` (EC) — 20 tests.
 - `tests/game-flow.test.mjs` (CF) — 13 tests including the hostile-takeover pricing (CF-06b) and the in-flight action lock.
 - `tests/multiplayer.test.mjs` (MP/DC) — 12 tests + DC-05 skipped.
 - `tests/board-generation.test.mjs` (RM) — 200-seed generator sweep + initGame wire checks + `pubState`→`adoptState` round-trip.
@@ -37,8 +37,8 @@ Relevant implementation areas include `applyIntent()`, `addCortisol()`, `raid()`
 3. **Cortisol protection quirk** — with zero or one owned node, positive cortisol changes are silently ignored (reductions always apply). Marked *rule decision required*; pinned as current behaviour. (CR-01/02/02b)
 4. **`separateNodes()` does not guarantee zero overlap** — residual node-box overlaps occur on ~46% of seeds (126 pair-overlaps across 200 seeds; worst observed 5 pairs in one seed), from wall clamping plus mutual pushes. Marked *rule decision required*; the test pins a per-seed envelope of 8. (RM sweep)
 5. **Health of the generated graph is good** — connectivity from Quikstop holds on every seed; path depth median 5, p95 7, max 7 (loose max 12). (RM sweep)
-6. **Copy drift** — help copy claims "82 exhibits" vs 70 live nodes; a source header comment promises "25 cards" while the table holds 24; three typo'd filenames (`oil price increease.png`, `whistelblower.png`, `us treasury yeild.png`) are shipped as the real assets. Informational; flagged by RC-01/RC-07.
-7. **Dead references** — `S.owner.*`/`own()` references to the removed-node set (`econ`, `notes`, `real`, `spend`, `timeline`) survive in the source but are inert. RC-07 guarantees no reference escapes validation entirely.
+6. **Copy drift (partially resolved in follow-up branch)** — the help copy and source header now say 70 exhibits and the event-deck header now says 24 cards; three typo'd filenames (`oil price increease.png`, `whistelblower.png`, `us treasury yeild.png`) are shipped as the real assets. Informational; flagged by RC-01/RC-07.
+7. **Dead references** — `S.owner.*`/`own()` references to the removed-node set (`econ`, `notes`, `real`, `spend`, `timeline`) survive in the source but are inert. The unreachable `scrub` action handler/UI was removed in the follow-up rules-copy branch. RC-07 guarantees no reference escapes validation entirely.
 8. **Budget-night direction** — `payTo(i, amt, to)` means each rival *pays* the Treasurer $1; the copy ("the Treasurer collects") is accurate, but the transfer direction is easy to misread, so RC-03 pins it explicitly.
 9. **Host migration is unimplemented (DC-05 skipped)** — disconnects fall back to the away-seat watchdog (20 s → seat auto-plays "lays low" + $1 Intel), and reclamation by playerId/displayed name restores the seat cleanly. Pinned by DC-01..DC-06.
 10. **Testing note** — `deepStrictEqual` rejects structurally identical objects that originate in different `node:vm` realms (both engines create their own realm), so wire-equality assertions compare JSON serialisations — the same thing the real wire carries.
@@ -298,3 +298,8 @@ Prefer structured metadata tests over brittle string scraping. If the UI still e
 7. Use the rules registry to prevent future help-text drift.
 
 **Important:** this is a plan, not a test-results report. Each assertion must be checked against an explicitly approved game rule where the current implementation and wording disagree.
+
+
+### Follow-up rules-copy implementation
+
+Branch `fix/rules-copy-and-watson-exemption` applies the maintainer's decisions from `docs/RULES_COPY_AUDIT.md`: Mark Watson now exempts the owner from COAL-industry ACCC investigations (COAL is tracked as its own industry); the MADE tooltip is corrected; unreachable Scrub UI/handler/help copy is removed; room-code, board-location, Rumor Exchange, chart-exemption and exhibit/card-count copy are corrected. Disconnection behavior remains intentionally unchanged. See the audit's follow-up status section for the item-by-item ledger. CI passed: 92 tests, 91 pass, 1 documented skip, 0 fail.
