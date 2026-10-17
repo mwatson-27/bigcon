@@ -1,0 +1,273 @@
+# Big Con — Code-Level Test Plan
+
+**Repository:** `waxmotson/bigcon`  
+**Scope:** rules engine, game flow, multiplayer synchronisation, randomized board generation, and rules/help consistency.  
+**Status:** test plan; this document does not claim the tests have been implemented or run.
+
+## Goals
+
+1. Detect regressions in core gameplay and win conditions.
+2. Ensure the host remains authoritative and every client sees the same game state.
+3. Make Cortisol, raids, economy, node abilities, and events deterministic enough to test.
+4. Validate randomized boards for connectivity and reasonable access to valuable/scarce nodes.
+5. Prevent the implementation, tooltips, event copy, and help panel from describing different rules.
+
+## Current implementation considerations
+
+The browser game currently keeps much of its logic in `index.html`. The test harness should avoid depending on the DOM wherever possible. Prefer extracting pure rule functions into a module, or expose a test-only adapter guarded from production use. Do not add test hooks that allow normal clients to mutate host state.
+
+Relevant implementation areas include `applyIntent()`, `addCortisol()`, `raid()`, `madePay()`, `acccInvestigate()`, `generateRandomBoard()`, `rebuildAdj()`, `pubState()`, `adoptState()`, `sendAll()`, `sendTo()`, `askPlayer()`, `announceAll()`, and `revealAll()`. Names may change during refactoring; tests should target stable public rule APIs rather than line numbers.
+
+## Test strategy
+
+Use three layers:
+
+- **Unit tests:** pure rule functions with seeded randomness and a small fixture state.
+- **Integration tests:** a host plus simulated client connections, fake timers, and deterministic prompt responses.
+- **Browser/end-to-end tests:** real browser contexts for lobby, UI, disconnect/reconnect, and cross-client behaviour.
+
+Recommended tooling, subject to repository setup: Vitest or Node's built-in test runner for extracted pure logic; Playwright for browser tests. If adding dependencies is undesirable, start with a dependency-free Node test harness and add Playwright as a separate optional CI job.
+
+### Determinism and fixtures
+
+- Inject or stub the random-number source for board generation, event draws, and random outcomes.
+- Use fake timers for heartbeat, prompt timeouts, lock watchdogs, and reconnect windows.
+- Build a canonical fixture with 2, 4, and 8 players, unique player IDs, known node owners, known adjacency, fixed money/Intel/Cortisol, and a known event deck.
+- Compare deep state snapshots after each action. Ignore presentation-only fields such as animation timers.
+- Every test should assert both the state change and the relevant log/event output where applicable.
+- Keep a regression test for every confirmed production bug.
+
+## 1. Core game flow
+
+### CF-01 — Start a solo test game
+**Setup:** one player; lobby's solo-test option enabled.  
+**Steps:** create lobby, start game, complete a turn, reset/restart.  
+**Assertions:** game starts without a remote connection; active player and phase are valid; no connection-index access crashes; reset clears old state, timers, prompts, and locks.
+
+### CF-02 — Start a normal multiplayer game
+**Setup:** 2 and 4 connected clients.  
+**Steps:** start lobby and inspect all clients.  
+**Assertions:** one host; each seat has one unique player identity; all clients agree on player order, turn, phase, board layout, and ownership.
+
+### CF-03 — Legal movement
+**Setup:** current player has steps and an adjacent destination.  
+**Steps:** submit a legal move.  
+**Assertions:** position updates once; step count decrements exactly once; host and clients converge to the same state.
+
+### CF-04 — Illegal movement and stale actions
+**Steps:** attempt a non-adjacent destination, move with zero steps, move during the wrong phase, and submit an action for a non-current player.  
+**Assertions:** no state mutation; action receives a useful rejection; lock is released; subsequent legal action still succeeds.
+
+### CF-05 — Seize an available node
+**Setup:** player at an unowned node in action phase with sufficient funds.  
+**Steps:** seize node.  
+**Assertions:** ownership changes to the actor; funds change by the displayed price and modifiers; seizure effects run once; node is no longer available to another player.
+
+### CF-06 — Seizure failure cases
+**Steps:** insufficient money, already-owned node, wrong phase, invalid node ID, and duplicate request.  
+**Assertions:** no negative or duplicated charge; no ownership overwrite; no uncaught exception; action lock always recovers.
+
+### CF-07 — Finish a turn and collect income
+**Steps:** finish movement/action, advance to next player, then complete the next round.  
+**Assertions:** each player gets exactly one turn; passive income runs once per eligible turn; round, current player, phase, and steps remain consistent across clients.
+
+### CF-08 — Event draw and resolution
+**Setup:** fixed deck containing a harmless event and a choice-based event.  
+**Assertions:** exactly one card is consumed; effects apply once; choice recipient is correct; cancellation/timeout follows the documented default; no stale prompt remains.
+
+### CF-09 — Win condition
+**Setup:** state one step short of victory.  
+**Steps:** satisfy the final missing requirement.  
+**Assertions:** game ends once, correct winner is announced to all clients, further intents are rejected, and the end state survives reconnect.
+
+## 2. Multiplayer ordering and identity
+
+Run the following suite with **2, 4, and 8 players**, using at least 100 seeded seat shuffles per player count.
+
+### MP-01 — Identity remains bound to the right connection
+Assert that every player index/ID maps to the intended connection after shuffling. Never assume the host is at connection index zero unless the architecture explicitly guarantees and enforces it.
+
+### MP-02 — Broadcast reaches all and only connected peers
+Send state, chat, event, and system messages. Verify host is not sent a duplicate copy of its own broadcast and each connected peer receives one copy.
+
+### MP-03 — Private message isolation
+Send a private prompt/system message to one player. Assert that no other client receives the prompt contents or response.
+
+### MP-04 — State convergence
+After each action, compare normalized host and client state: player IDs, turn, phase, positions, steps, money, Intel, Cortisol, ownership, bugs, market mood, event state, and victory state.
+
+### MP-05 — Reordered and duplicated messages
+Deliver duplicate and delayed intents/state messages. Assert actions are idempotent where required, stale actions are rejected, and clients do not roll back to an older state.
+
+### MP-06 — Invalid client input
+Send unknown action names, missing fields, invalid player targets, invalid node IDs, negative values, and malformed payloads. Assert host validation rejects them without crashing or changing state.
+
+## 3. Disconnect and reconnect
+
+### DC-01 — Disconnect during movement
+Disconnect the active player between a movement intent and its resolution. Verify whether the action finishes or rolls back according to the chosen policy; it must not run twice. Reconnect and confirm position, steps, turn, and phase.
+
+### DC-02 — Disconnect during a private choice
+Disconnect the prompt recipient while `askPlayer()` is pending. Verify the documented timeout/default is applied once, pending prompt state is cleaned up, and the game advances.
+
+### DC-03 — Reconnect before prompt timeout
+Reconnect with the same identity before timeout. Verify prompt ownership and response routing; a response from an old connection must not resolve the prompt twice.
+
+### DC-04 — Disconnect during non-blocking event announcement
+Disconnect a client after the host sends an event announcement. Verify event effects do not depend on the client's modal being dismissed; reconnecting client receives current state and does not replay effects.
+
+### DC-05 — Host disconnect
+If host migration is unsupported, show a clear terminal/disconnected state rather than allowing guests to submit actions that appear to succeed. If supported, test migration explicitly.
+
+### DC-06 — Timer and lock cleanup
+After disconnect, reconnect, timeout, and reset, assert no orphaned timers, unresolved promises, stale acknowledgement sets, or permanently held action locks remain.
+
+## 4. Cortisol and raids
+
+The current `addCortisol()` implementation includes a guard that ignores positive changes when the player owns one or fewer nodes. Treat that as a rule requiring an explicit decision, not an assumed intended behaviour.
+
+### CR-01 — Positive Cortisol with zero nodes
+Apply +1 and +2. Assert behaviour matches the approved rule, remains within 0–9, and logs the actual applied amount.
+
+### CR-02 — Positive Cortisol with one node
+Repeat CR-01. Specifically assert whether the one-node protection applies; this test should fail if implementation and approved rules disagree.
+
+### CR-03 — Positive Cortisol with multiple nodes
+Apply +1, +2, and a large increment. Assert correct clamp at 9 and no off-by-one behaviour.
+
+### CR-04 — Cortisol reductions
+Apply negative changes at 0, 1, and higher values. Assert it never falls below zero and reduction is not blocked by a positive-change protection rule.
+
+### CR-05 — Event modifiers
+Test the Big Bessent / The Jim reduction and Herald Intel effect for event-sourced Cortisol. Assert modifiers apply only under their intended conditions and Intel is awarded at most once.
+
+### CR-06 — Raid threshold
+Test Cortisol values 7, 8, and 9 followed by +1, plus an increment that crosses the threshold. Assert exactly one raid occurs when the approved threshold is reached.
+
+### CR-07 — Raid side effects
+Assert the two highest-income owned nodes (with deterministic tie-breaking) are seized; bugs are removed; the fine is correct; Intel is reduced to 1 when applicable; Cortisol resets to 0; `raided` is set; and raid bonuses/event announcement occur once.
+
+### CR-08 — Raid with zero or one owned node
+Assert no crash and no duplicate seizure. Verify fine and account-penalty behaviour matches the rules when there are no nodes to seize.
+
+### CR-09 — Recovery turn
+On the raided player's next turn, verify no income and one movement step according to the stated rules; verify normal income and movement resume on the subsequent turn.
+
+## 5. Economy and victory
+
+### EC-01 — MADE payout
+With MADE owned, run `madePay()`. Assert owner receives $10 and 1 Intel once. For each opponent, verify the 15% cash transfer only when they have more than two nodes and at least $50; assert rounding and payment bounds.
+
+### EC-02 — MADE payout edge cases
+Test no owner, owner with maximum relevant resources, opponents at $49/$50, opponents with 2/3 nodes, and zero-dollar rounded cuts. Ensure the node description, help text, logs, and implementation agree.
+
+### EC-03 — Repeated Sisyphus pushes
+Test the first several pushes with a deterministic state. Assert the payout sequence matches the approved design, the push has no unintended Cortisol cost, and the amount does not overflow numeric/state/UI limits. Add a long-run test to make exponential growth and any intended cap/reset explicit.
+
+### EC-04 — Passive income and synergies
+For each income component, test baseline salary, node income, chart modifiers, industry counts, pair synergies, market mood modifiers, and bug skims. Assert total equals the sum of eligible components and each modifier is applied exactly once.
+
+### EC-05 — Income timing
+Verify income is awarded at the intended point in the turn, not on game start, turn reset, reconnect, or duplicate state delivery. Verify raided players' skipped-income turn is respected.
+
+### EC-06 — Victory predicate for every required type
+Create a table-driven test with one fixture per each of the seven required node types. For each type, assert that one owned node satisfies only that type, that missing any one type blocks victory, and that acquiring the final missing type wins only when the cash threshold is also satisfied.
+
+### EC-07 — Victory edge cases
+Test exactly at and one unit below the cash threshold; node divestment/removal after near-victory; simultaneous apparent win conditions; and actions received after game over. Winner selection must be deterministic and documented.
+
+### EC-08 — ACCC concentration
+Test 0–2 and 3+ holdings for each configured industry, overlapping industry groups, the Mark Watson exception, and cases where there are fewer rivals than divested nodes. Assert each node is transferred at most once, remaining nodes return to market, and fines are calculated correctly.
+
+## 6. Random map validation
+
+Use seeded generation to make failures reproducible. Run at least **1,000 seeds** in CI if runtime permits; otherwise run 100 in PR CI and 1,000 nightly.
+
+### RM-01 — Node and edge integrity
+Every expected node appears exactly once; every edge references two distinct existing nodes; no duplicate undirected edges; no self-loops; coordinates and rotations are finite.
+
+### RM-02 — Connectivity
+Run BFS/DFS from every node. All intended playable nodes must be reachable from the starting node unless the rules explicitly allow isolated nodes.
+
+### RM-03 — Adjacency consistency
+Assert `rebuildAdj()` produces symmetric adjacency for undirected edges and that movement legality uses the same graph as rendering.
+
+### RM-04 — Spacing and overlap
+Check node bounding boxes or circles against minimum spacing. Account for the actual rendered node size and viewport scale; log seeds that produce overlaps or unreadable crossings.
+
+### RM-05 — Path-length distribution
+Record shortest-path distances from Quikstop to every node and summarize min/median/max and distribution by node category. Set acceptable thresholds based on playtest data, not arbitrary assumptions.
+
+### RM-06 — Valuable-node placement
+Measure access to each node in `HIGH_VALUE_NODE_IDS`. Confirm prized nodes are placed as intended and that assignment does not duplicate or omit positions.
+
+### RM-07 — Scarce type availability
+For every required victory type, verify at least one valid instance exists and is reachable. Check whether starting position and player order create systematic first-mover advantages.
+
+### RM-08 — Layout/state round trip
+Serialize a generated layout and edges, apply them on a guest, and compare node coordinates, rotations, and adjacency. Confirm a late join/reconnect sees the same board.
+
+### RM-09 — Distribution fairness
+Across many seeds, compare player start options and distance to valuable nodes. Report outliers and compare seat advantage by player index; do not require every random board to be identical.
+
+## 7. Rules and UI consistency
+
+Create a canonical rule registry for node abilities, event cards, costs, modifiers, and victory conditions. Where feasible, generate tooltips/help content from that registry rather than maintaining duplicated prose.
+
+### RC-01 — Node inventory coverage
+Enumerate every node in `NODES`. For each node, require a stable ID, display name, price/cost, income, ability definition (or explicit “no active ability”), and a corresponding help/tooltip entry where applicable.
+
+### RC-02 — Event inventory coverage
+Enumerate every event card/deck entry. Ensure its effect handler exists and its description explains trigger, target, cost, duration, and relevant edge cases.
+
+### RC-03 — Cost and requirement consistency
+Compare displayed action cost and requirements with host-side validation for seizure, movement abilities, Intel abilities, audits, leaks, divestment, and any other activated action.
+
+### RC-04 — Cortisol and raid wording
+Verify every reference to the raid threshold, Cortisol protection, raid effects, and recovery turn matches the approved constants and implementation.
+
+### RC-05 — MADE and Sisyphus wording
+Verify MADE eligibility, payout amount, Intel, opponent loss conditions, and frequency. Verify Sisyphus growth/reset/cost rules. These descriptions must be updated together with code changes.
+
+### RC-06 — Victory copy
+Check the help panel, in-game status, end screen, and any onboarding text all describe the same cash threshold and all seven required node types.
+
+### RC-07 — Automated drift check
+Prefer structured metadata tests over brittle string scraping. If the UI still embeds prose in HTML, add a temporary audit script that flags missing node IDs, missing event handlers, stale numeric thresholds, and conflicting duplicated rule strings for manual review.
+
+## CI gates and exit criteria
+
+**Per pull request**
+- All unit tests pass.
+- Core flow, Cortisol/raid, MADE/Sisyphus, and victory regression tests pass.
+- At least 100 seeded map generations pass integrity/connectivity checks.
+- Static rule-inventory check reports no missing node/event handlers.
+- Browser smoke test starts a game and completes a turn, if browser CI is available.
+
+**Nightly / pre-release**
+- 1,000+ seeded maps.
+- 2/4/8-player multiplayer suite.
+- Disconnect/reconnect and prompt-timeout suite.
+- Longer economy simulation across multiple random seeds.
+- Full browser suite in at least two browser contexts.
+
+**Release blockers**
+- Host/client state divergence after a completed action.
+- Duplicate or skipped turn, event effect, payout, or raid.
+- Unreachable required victory type.
+- Victory predicate disagrees with documented rules.
+- Private prompt contents delivered to the wrong client.
+- A malformed action can crash the host or mutate an invalid target.
+- Node/event rule descriptions contradict their actual implementation.
+
+## Implementation order
+
+1. Extract pure rules and define canonical test fixtures.
+2. Add regression tests for Cortisol protection, ACCC/Watson, MADE, and Sisyphus.
+3. Add core-flow and victory-predicate tests.
+4. Add seeded random-map integrity and connectivity tests.
+5. Add simulated host/client tests for ordering and prompt lifecycle.
+6. Add Playwright end-to-end coverage and CI gates.
+7. Use the rules registry to prevent future help-text drift.
+
+**Important:** this is a plan, not a test-results report. Each assertion must be checked against an explicitly approved game rule where the current implementation and wording disagree.
