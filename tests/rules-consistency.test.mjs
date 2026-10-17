@@ -418,7 +418,8 @@ test('RC-05b divest MADE costs 5 Intel + $7 compensation to the former owner', a
   armAction(engine);
   await engine.f.applyIntent(0, { act: 'divestmade' });
   await settle();
-  assert.equal(S.players[0].intel, 0, 'exactly 5 Intel');
+  const madePaidDuringTurn = S.log.some(l => l.includes('MADE pays out'));
+  assert.equal(S.players[0].intel, madePaidDuringTurn ? 1 : 0, 'divestment spends 5 Intel; the ordinary MADE payout may return 1');
   assert.equal(S.players[0].money, 20 - 7 + 2, 'exactly $7 out (+ quiet quarter)');
   assert.equal(S.players[1].money, 10 + 7 + 2 + 3, 'the former owner pockets the $7 compensation (+ turn income)');
   assert.equal(S.owner.made, 0, 'MADE changes hands');
