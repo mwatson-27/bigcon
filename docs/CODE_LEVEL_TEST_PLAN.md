@@ -2,7 +2,7 @@
 
 **Repository:** `waxmotson/bigcon`  
 **Scope:** rules engine, game flow, multiplayer synchronisation, randomized board generation, and rules/help consistency.  
-**Status:** test plan; this document does not claim the tests have been implemented or run.
+**Status:** implemented and green (2026-10-17). Sections CF/MP/DC/RM/EC/CR/RC of this plan are covered by dependency-free Node tests (91 tests: 90 pass, 1 documented skip, 0 fail, ~45 s). The Playwright E2E layer (3. Browser) is deferred, and DC-05 (host migration) is skipped because the feature does not exist. Run everything with `node --test 'tests/*.test.mjs'` (quote the glob).
 
 ## Goals
 
@@ -17,6 +17,31 @@
 The browser game currently keeps much of its logic in `index.html`. The test harness should avoid depending on the DOM wherever possible. Prefer extracting pure rule functions into a module, or expose a test-only adapter guarded from production use. Do not add test hooks that allow normal clients to mutate host state.
 
 Relevant implementation areas include `applyIntent()`, `addCortisol()`, `raid()`, `madePay()`, `acccInvestigate()`, `generateRandomBoard()`, `rebuildAdj()`, `pubState()`, `adoptState()`, `sendAll()`, `sendTo()`, `askPlayer()`, `announceAll()`, and `revealAll()`. Names may change during refactoring; tests should target stable public rule APIs rather than line numbers.
+
+## Execution status & engine findings
+
+**Implemented (all uncommitted at time of writing — review before any commit):**
+
+- `tests/helpers/harness.mjs` — shared harness: loads the entire inline `<script>` of `index.html` into a `node:vm` context with a stubbed DOM, virtual clock, and fake PeerJS connections (recorded sends, auto-acked events, scripted answers, held modals). Seeded `makeGame` retries the seat shuffle (mulberry32) until the host seats at index 0.
+- `tests/smoke-engine.test.mjs`, `tests/smoke.test.mjs`, `tests/rules-smoke.test.mjs` — pre-existing smoke layer.
+- `tests/cortisol-raids.test.mjs` (CR) — 14 tests; `tests/economy.test.mjs` (EC) — 19 tests.
+- `tests/game-flow.test.mjs` (CF) — 13 tests including the hostile-takeover pricing (CF-06b) and the in-flight action lock.
+- `tests/multiplayer.test.mjs` (MP/DC) — 12 tests + DC-05 skipped.
+- `tests/board-generation.test.mjs` (RM) — 200-seed generator sweep + initGame wire checks + `pubState`→`adoptState` round-trip.
+- `tests/rules-consistency.test.mjs` (RC) — 22 tests: assets/copies on disk, deck completeness, every card's `run()` on a clean table, behaviour-driven action costs, cortisol constants, win types/goal clamp, dead-reference audit.
+
+**Engine findings recorded (no production code changed; each has a pinning test):**
+
+1. **`revealAll()` ack-gate ordering race** — the guest-side ack gate is registered only after the announcement modal's await resolves, while `sendTo` fires the `event` message first; an instant ack is dropped. Real browsers mask this with network latency; the harness acks on a retry loop. (MP/CF layer)
+2. **`applyIntent()` trusts the seat index** — `pi` comes from `Net.conns.indexOf(c)` with no bounds check against `S.players.length`. Unreachable with length-matched arrays, but a hardening candidate. (MP-05)
+3. **Cortisol protection quirk** — with zero or one owned node, positive cortisol changes are silently ignored (reductions always apply). Marked *rule decision required*; pinned as current behaviour. (CR-01/02/02b)
+4. **`separateNodes()` does not guarantee zero overlap** — residual node-box overlaps occur on ~46% of seeds (126 pair-overlaps across 200 seeds; worst observed 5 pairs in one seed), from wall clamping plus mutual pushes. Marked *rule decision required*; the test pins a per-seed envelope of 8. (RM sweep)
+5. **Health of the generated graph is good** — connectivity from Quikstop holds on every seed; path depth median 5, p95 7, max 7 (loose max 12). (RM sweep)
+6. **Copy drift** — help copy claims "82 exhibits" vs 70 live nodes; a source header comment promises "25 cards" while the table holds 24; three typo'd filenames (`oil price increease.png`, `whistelblower.png`, `us treasury yeild.png`) are shipped as the real assets. Informational; flagged by RC-01/RC-07.
+7. **Dead references** — `S.owner.*`/`own()` references to the removed-node set (`econ`, `notes`, `real`, `spend`, `timeline`) survive in the source but are inert. RC-07 guarantees no reference escapes validation entirely.
+8. **Budget-night direction** — `payTo(i, amt, to)` means each rival *pays* the Treasurer $1; the copy ("the Treasurer collects") is accurate, but the transfer direction is easy to misread, so RC-03 pins it explicitly.
+9. **Host migration is unimplemented (DC-05 skipped)** — disconnects fall back to the away-seat watchdog (20 s → seat auto-plays "lays low" + $1 Intel), and reclamation by playerId/displayed name restores the seat cleanly. Pinned by DC-01..DC-06.
+10. **Testing note** — `deepStrictEqual` rejects structurally identical objects that originate in different `node:vm` realms (both engines create their own realm), so wire-equality assertions compare JSON serialisations — the same thing the real wire carries.
 
 ## Test strategy
 
