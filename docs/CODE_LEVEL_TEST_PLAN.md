@@ -2,7 +2,7 @@
 
 **Repository:** `waxmotson/bigcon`  
 **Scope:** rules engine, game flow, multiplayer synchronisation, randomized board generation, and rules/help consistency.  
-**Status:** implemented and green (2026-10-17). Sections CF/MP/DC/RM/EC/CR/RC of this plan are covered by dependency-free Node tests (91 tests: 90 pass, 1 documented skip, 0 fail, ~45 s). The Playwright E2E layer (3. Browser) is deferred, and DC-05 (host migration) is skipped because the feature does not exist. Run everything with `node --test 'tests/*.test.mjs'` (quote the glob).
+**Status:** implemented and green (2026-10-17). Sections CF/MP/DC/RM/EC/CR/RC of this plan are covered by dependency-free Node tests (92 tests: 91 pass, 1 documented skip, 0 fail, ~45 s). The Playwright E2E layer (3. Browser) is deferred, and DC-05 (host migration) is skipped because the feature does not exist. Run everything with `node --test 'tests/*.test.mjs'` (quote the glob).
 
 ## Goals
 
@@ -24,7 +24,7 @@ Relevant implementation areas include `applyIntent()`, `addCortisol()`, `raid()`
 
 - `tests/helpers/harness.mjs` — shared harness: loads the entire inline `<script>` of `index.html` into a `node:vm` context with a stubbed DOM, virtual clock, and fake PeerJS connections (recorded sends, auto-acked events, scripted answers, held modals). Seeded `makeGame` retries the seat shuffle (mulberry32) until the host seats at index 0.
 - `tests/smoke-engine.test.mjs`, `tests/smoke.test.mjs`, `tests/rules-smoke.test.mjs` — pre-existing smoke layer.
-- `tests/cortisol-raids.test.mjs` (CR) — 14 tests; `tests/economy.test.mjs` (EC) — 19 tests.
+- `tests/cortisol-raids.test.mjs` (CR) — 14 tests; `tests/economy.test.mjs` (EC) — 20 tests.
 - `tests/game-flow.test.mjs` (CF) — 13 tests including the hostile-takeover pricing (CF-06b) and the in-flight action lock.
 - `tests/multiplayer.test.mjs` (MP/DC) — 12 tests + DC-05 skipped.
 - `tests/board-generation.test.mjs` (RM) — 200-seed generator sweep + initGame wire checks + `pubState`→`adoptState` round-trip.
@@ -302,4 +302,4 @@ Prefer structured metadata tests over brittle string scraping. If the UI still e
 
 ### Follow-up rules-copy implementation
 
-Branch `fix/rules-copy-and-watson-exemption` applies the maintainer's decisions from `docs/RULES_COPY_AUDIT.md`: Mark Watson now exempts the owner from COAL-industry ACCC investigations (COAL is tracked as its own industry); the MADE tooltip is corrected; unreachable Scrub UI/handler/help copy is removed; room-code, board-location, Rumor Exchange, chart-exemption and exhibit/card-count copy are corrected. Disconnection behavior remains intentionally unchanged. See the audit's follow-up status section for the item-by-item ledger. CI is pending.
+Branch `fix/rules-copy-and-watson-exemption` applies the maintainer's decisions from `docs/RULES_COPY_AUDIT.md`: Mark Watson now exempts the owner from COAL-industry ACCC investigations (COAL is tracked as its own industry); the MADE tooltip is corrected; unreachable Scrub UI/handler/help copy is removed; room-code, board-location, Rumor Exchange, chart-exemption and exhibit/card-count copy are corrected. Disconnection behavior remains intentionally unchanged. See the audit's follow-up status section for the item-by-item ledger. CI passed: 92 tests, 91 pass, 1 documented skip, 0 fail.
