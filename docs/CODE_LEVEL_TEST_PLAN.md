@@ -43,6 +43,8 @@ Relevant implementation areas include `applyIntent()`, `addCortisol()`, `raid()`
 9. **Host migration is unimplemented (DC-05 skipped)** — disconnects fall back to the away-seat watchdog (20 s → seat auto-plays "lays low" + $1 Intel), and reclamation by playerId/displayed name restores the seat cleanly. Pinned by DC-01..DC-06.
 10. **Testing note** — `deepStrictEqual` rejects structurally identical objects that originate in different `node:vm` realms (both engines create their own realm), so wire-equality assertions compare JSON serialisations — the same thing the real wire carries.
 
+**Continuation:** the rules-copy vs gameplay-mechanics audit (2026-10-17) lives in **`docs/RULES_COPY_AUDIT.md`** — its findings are numbered **#11–#17**, continuing this ledger, in the form *copy (source, quote) → implementation (file:line) → driven behavior → verdict → rule decision*. It also extends item 6 (the initGame log tell the truth — "70 exhibits") and item 7 (full dead-ref call-site table), and corrects item 9: the away watchdog pays **$1 cash via `gain()`**, not "$1 Intel", and the seat is not lay-low (help copy drifts from both watchdog sites; see audit finding #14).
+
 ## Test strategy
 
 Use three layers:
