@@ -69,11 +69,11 @@ test('Cortisol protection currently ignores positive changes with zero or one ow
   }
 });
 
-test('Cortisol increases when the player owns multiple nodes and clamps at 9', () => {
+test('Cortisol reaching the raid threshold triggers a raid and resets Cortisol', () => {
   const nodes = [{ id: 'a' }, { id: 'b' }];
   const h = harness({ owners: { a: 0, b: 0 }, nodes, players: [{ cortisol: 7 }] });
   h.run('addCortisol', 0, 4, 'test', false);
-  assert.equal(h.state.players[0].cortisol, 9);
+  assert.equal(h.state.players[0].cortisol, 0); // raid resets Cortisol
   assert.equal(h.state.players[0].raids, 1);
 });
 
