@@ -1299,7 +1299,7 @@ function addChat(pi,text){
 }
 function showRules(){
  modal({title:'HOW TO PULL THE BIG CON',html:
- '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code — a jt portal <b>buzzword</b> (NESA, HORNSBY HEIGHTS, JAKE TOMKINS…), every one of them straight off the jt portal news ticker; the others <b>join</b> by typing it — the table seats up to <b>eight</b>. Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. Chat in the <b>lobby</b> before the con starts, and in the sidebar once it does.</p>'
+ '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code — a jt portal <b>buzzword</b> (NESA, LOW CORTISOL, JAKE TOMKINS…), every one of them straight off the jt portal news ticker; the others <b>join</b> by typing it — the table seats up to <b>eight</b>. Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. Chat in the <b>lobby</b> before the con starts, and in the sidebar once it does.</p>'
  +'<h4>The market mood — events you can feel</h4><p>Every market event shifts the mood of the whole board — watch the <b>ticker</b> across the top, the <b>tint</b> of the board and the <b>glowing nodes</b>: <b style="color:#f5c542">BOOM</b> (commodities +$1/turn), <b style="color:#ff6b5e">PANIC</b> (banks −$1/turn, intel dearer), <b style="color:#e19bff">MEDIA FRENZY</b> (media +$1/turn), <b style="color:#8fbf7f">CALM</b>. Yields go vertical in a panic; the oil graph spikes in a boom. Money, Cortisol and Intel changes pop up on the board as they happen.</p>'
  +'<h4>Intel ops (🛈)</h4><ul><li><b>Burn a favor</b> (1 🛈, while moving) — +1 step this turn.</li><li><b>Spy on the deck</b> (2 🛈, free action) — privately see the next event card, anywhere.</li><li><b>The Dossier</b> (3 🛈, free action) — your hostile takeovers this turn cost <b>list price, not double</b>.</li><li><b>Sweep for bugs</b> (2 🛈, your action) — remove every bug on your nodes.</li><li><b>Mass panic</b> (5 🛈, your action) — every player gains +2 Cortisol.</li><li><b>Divest MADE</b> (5 🛈, your action) — take MADE from any rival and pay its former owner $7 compensation.</li><li><b>Sell intel</b> (your action, anywhere): 1 🛈 = <b>$2</b> calm/boom, <b>$3</b> frenzy, <b>$4</b> panic. Bad news is good news.</li></ul>'
  +'<h4>The board is the whole collage</h4><p><b>70 exhibits.</b> Charts are spread across the collage — US yields sit by Trump, Japan by the tankers, UK by the papers, Australia by the coat of arms, and the 10-year master in the middle. Each game <b>Quikstop opens in a different neighbourhood</b>, so the first moves change. New pins from the collage: <b>Westpac</b>, <b>BHP</b>, <b>Herald Sun / The Jim Reaper</b>, <b>the bullet train</b>, the circled <b>ASICS shoe</b>, and <b>Toktimer</b>. Red threads are the paths — long ones dash. <i>Drag to pan, scroll to zoom.</i></p>'
@@ -1549,7 +1549,7 @@ function renderSide(){
    if(S.owner.gov===me)btns.push('<button class="act" data-act="budget"'+((p.money>=3&&!S.budgeted)?'':' disabled')+'>🦘 Budget night — $3 (rivals each pay you $1, +1 🛈)</button>');
    if(S.owner.back===me)btns.push('<button class="act" data-act="pressure"'+(!S.pressured?'':' disabled')+'>🤝 Lean on the table — rivals each +1 🔥</button>');
    /* ---- INTEL OPS ---- */
-   btns.push('<div class="sublabel">INTEL OPS · you hold 🛈 '+p.intel+' · exchange pays $'+md.rate+'/🛈</div>');
+   btns.push('<div class="sublabel">INTEL OPS · you hold 🛈 '+p.intel+' · market rate $'+md.rate+'/🛈</div>');
    btns.push('<button class="act" data-act="spy"'+(p.intel>=2?'':' disabled')+' title="Free action — see the next event card, anywhere">🛈 Spy on the deck — 2 🛈 (see next event)</button>');
    btns.push('<button class="act" data-act="dossier"'+((p.intel>=3&&!S.dossier)?'':' disabled')+' title="Free action — hostile takeovers cost list price this turn">📂 The Dossier — 3 🛈 (takeovers at list price)</button>');
    btns.push('<button class="act" data-act="divestmade"'+((p.intel>=5&&p.money>=7&&S.owner.made!=null&&S.owner.made!==me)?'':' disabled')+' title="Pay 5 Intel and $7 compensation to take MADE from any rival">🟣 Divest MADE — 5 🛈 + $7 compensation</button>');
@@ -1583,7 +1583,7 @@ function renderSide(){
  const chatVal=(window.__chatDraft)||'';
  side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomLabel||Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':'SEAT '+(Net.myIdx+1))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
   +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
-  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.8 · 82 exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
+  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.8 · 70 exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
   +'<div class="turncard" style="border-color:'+p.color+'"><div class="turnlab">TURN '+S.turn+'</div><div class="turnname" style="color:'+p.color+'">'+esc(p.name)+(isTurn?' — that’s you':'')+'</div>'
   +'<div class="resline">$ '+p.money+' &nbsp;·&nbsp; 🛈 '+p.intel+' &nbsp;·&nbsp; 🔥 '+p.cortisol+(p.cortisol>=6?' <span class="danger">RAID AT 9</span>':'')+'</div>'
   +'<div class="holds" title="holdings of '+esc(p.name)+'">'+(isTurn?ownedIcons:'<span style="opacity:.5;font-size:12px">'+NODES.filter(n=>S.owner[n.id]===S.cur).length+' holdings</span>')+'</div></div>'
@@ -2146,7 +2146,7 @@ function showLobby(asHost){
  if(typeof Peer==='undefined'){setNetStatus('Could not load the networking library — check your internet connection and reload.',true);return}
  const nm=cleanName($('joinName').value);const code=matchBuzzword($('joinCode').value);requestTurnNotificationPermission();
  if(!nm){setNetStatus('Enter your name first.',true);return}
- if(!code){setNetStatus('Enter the buzzword the host read out — e.g. NESA or HORNSBY HEIGHTS.',true);return}
+ if(!code){setNetStatus('Enter the buzzword the host read out — e.g. NESA or LOW CORTISOL.',true);return}
  $('btnJoinGo').disabled=true;guestJoin(nm,code);
 };
  $('btnStart').onclick=()=>{
@@ -2407,7 +2407,7 @@ function addChat(pi,text){
 }
 function showRules(){
  modal({title:'HOW TO PULL THE BIG CON',html:
- '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code — a jt portal <b>buzzword</b> (NESA, HORNSBY HEIGHTS, JAKE TOMKINS…), every one of them straight off the jt portal news ticker; the others <b>join</b> by typing it — the table seats up to <b>eight</b>. Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. Chat in the <b>lobby</b> before the con starts, and in the sidebar once it does.</p>'
+ '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code — a jt portal <b>buzzword</b> (NESA, LOW CORTISOL, JAKE TOMKINS…), every one of them straight off the jt portal news ticker; the others <b>join</b> by typing it — the table seats up to <b>eight</b>. Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. Chat in the <b>lobby</b> before the con starts, and in the sidebar once it does.</p>'
  +'<h4>The market mood — events you can feel</h4><p>Every market event shifts the mood of the whole board — watch the <b>ticker</b> across the top, the <b>tint</b> of the board and the <b>glowing nodes</b>: <b style="color:#f5c542">BOOM</b> (commodities +$1/turn), <b style="color:#ff6b5e">PANIC</b> (banks −$1/turn, intel dearer), <b style="color:#e19bff">MEDIA FRENZY</b> (media +$1/turn), <b style="color:#8fbf7f">CALM</b>. Yields go vertical in a panic; the oil graph spikes in a boom. Money, Cortisol and Intel changes pop up on the board as they happen.</p>'
  +'<h4>Intel ops (🛈)</h4><ul><li><b>Burn a favor</b> (1 🛈, while moving) — +1 step this turn.</li><li><b>Spy on the deck</b> (2 🛈, free action) — privately see the next event card, anywhere.</li><li><b>The Dossier</b> (3 🛈, free action) — your hostile takeovers this turn cost <b>list price, not double</b>.</li><li><b>Sweep for bugs</b> (2 🛈, your action) — remove every bug on your nodes.</li><li><b>Mass panic</b> (5 🛈, your action) — every player gains +2 Cortisol.</li><li><b>Divest MADE</b> (5 🛈, your action) — take MADE from any rival and pay its former owner $7 compensation.</li><li><b>Sell intel</b> (your action, anywhere): 1 🛈 = <b>$2</b> calm/boom, <b>$3</b> frenzy, <b>$4</b> panic. Bad news is good news.</li></ul>'
  +'<h4>The board is the whole collage</h4><p><b>70 exhibits.</b> Charts are spread across the collage — US yields sit by Trump, Japan by the tankers, UK by the papers, Australia by the coat of arms, and the 10-year master in the middle. Each game <b>Quikstop opens in a different neighbourhood</b>, so the first moves change. New pins from the collage: <b>Westpac</b>, <b>BHP</b>, <b>Herald Sun / The Jim Reaper</b>, <b>the bullet train</b>, the circled <b>ASICS shoe</b>, and <b>Toktimer</b>. Red threads are the paths — long ones dash. <i>Drag to pan, scroll to zoom.</i></p>'
@@ -2657,14 +2657,14 @@ function renderSide(){
    if(S.owner.gov===me)btns.push('<button class="act" data-act="budget"'+((p.money>=3&&!S.budgeted)?'':' disabled')+'>🦘 Budget night — $3 (rivals each pay you $1, +1 🛈)</button>');
    if(S.owner.back===me)btns.push('<button class="act" data-act="pressure"'+(!S.pressured?'':' disabled')+'>🤝 Lean on the table — rivals each +1 🔥</button>');
    /* ---- INTEL OPS ---- */
-   btns.push('<div class="sublabel">INTEL OPS · you hold 🛈 '+p.intel+' · exchange pays $'+md.rate+'/🛈</div>');
+   btns.push('<div class="sublabel">INTEL OPS · you hold 🛈 '+p.intel+' · market rate $'+md.rate+'/🛈</div>');
    btns.push('<button class="act" data-act="spy"'+(p.intel>=2?'':' disabled')+' title="Free action — see the next event card, anywhere">🛈 Spy on the deck — 2 🛈 (see next event)</button>');
    btns.push('<button class="act" data-act="dossier"'+((p.intel>=3&&!S.dossier)?'':' disabled')+' title="Free action — hostile takeovers cost list price this turn">📂 The Dossier — 3 🛈 (takeovers at list price)</button>');
    btns.push('<button class="act" data-act="divestmade"'+((p.intel>=5&&p.money>=7&&S.owner.made!=null&&S.owner.made!==me)?'':' disabled')+' title="Pay 5 Intel and $7 compensation to take MADE from any rival">🟣 Divest MADE — 5 🛈 + $7 compensation</button>');
    btns.push('<button class="act" data-act="sweep"'+(p.intel>=2?'':' disabled')+' title="Your action — remove all bugs on your nodes">🧹 Sweep for bugs — 2 🛈 (cleanse your nodes)</button>');
     btns.push('<button class="act" data-act="masspanic"'+(p.intel>=5?'':' disabled')+' title="Your action — every player gains 2 Cortisol">🔥 Mass panic — 5 🛈 (+2 Cortisol to everyone)</button>');
    for(let k=1;k<=3;k++){
-    btns.push('<button class="act" data-act="sell" data-n="'+k+'"'+(p.intel>=k?'':' disabled')+' title="Your action — cash rumors at the exchange">💰 Sell '+k+' 🛈 → $'+(k*md.rate)+'</button>');
+    btns.push('<button class="act" data-act="sell" data-n="'+k+'"'+(p.intel>=k?'':' disabled')+' title="Your action — sell Intel at the current market rate">💰 Sell '+k+' 🛈 → $'+(k*md.rate)+'</button>');
    }
    btns.push('<button class="act" data-act="laylowcash">Lay low — pocket $1</button>');
    btns.push('<button class="act" data-act="laylowcool">Lay low — cool 2 🔥</button>');
@@ -2691,7 +2691,7 @@ function renderSide(){
  const chatVal=(window.__chatDraft)||'';
  side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomLabel||Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':'SEAT '+(Net.myIdx+1))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
   +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
-  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.8 · 82 exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
+  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.8 · 70 exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
   +'<div class="turncard" style="border-color:'+p.color+'"><div class="turnlab">TURN '+S.turn+'</div><div class="turnname" style="color:'+p.color+'">'+esc(p.name)+(isTurn?' — that’s you':'')+'</div>'
   +'<div class="resline">$ '+p.money+' &nbsp;·&nbsp; 🛈 '+p.intel+' &nbsp;·&nbsp; 🔥 '+p.cortisol+(p.cortisol>=6?' <span class="danger">RAID AT 9</span>':'')+'</div>'
   +'<div class="holds" title="holdings of '+esc(p.name)+'">'+(isTurn?ownedIcons:'<span style="opacity:.5;font-size:12px">'+NODES.filter(n=>S.owner[n.id]===S.cur).length+' holdings</span>')+'</div></div>'
@@ -3254,7 +3254,7 @@ function showLobby(asHost){
  if(typeof Peer==='undefined'){setNetStatus('Could not load the networking library — check your internet connection and reload.',true);return}
  const nm=cleanName($('joinName').value);const code=matchBuzzword($('joinCode').value);requestTurnNotificationPermission();
  if(!nm){setNetStatus('Enter your name first.',true);return}
- if(!code){setNetStatus('Enter the buzzword the host read out — e.g. NESA or HORNSBY HEIGHTS.',true);return}
+ if(!code){setNetStatus('Enter the buzzword the host read out — e.g. NESA or LOW CORTISOL.',true);return}
  $('btnJoinGo').disabled=true;guestJoin(nm,code);
 };
  $('btnStart').onclick=()=>{
