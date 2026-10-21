@@ -222,6 +222,15 @@ body.game-open{overflow:hidden}
    <button class="gobtn" id="btnStart" style="margin-top:12px" disabled>🔥 START THE CON (need 2+ players)</button>
   </div>
   <div id="netStatus"></div>
+  <div class="netform show" id="transportSettings" style="display:flex;margin-top:8px">
+   <label class="namelab" style="font-size:12px;color:#9ad;flex-wrap:wrap">Connection system
+    <select id="transportMode" style="flex:1;min-width:150px;background:#000;color:#fff;border:1px solid #168388;padding:8px;font:inherit">
+     <option value="peerjs">PeerJS (direct / TURN)</option><option value="cloudflare">Cloudflare Durable Objects relay</option>
+    </select>
+   </label>
+   <label class="namelab" id="relayUrlRow" style="display:none"><input id="relayUrl" type="url" placeholder="https://your-worker.workers.dev" autocomplete="url"></label>
+   <div id="relayHelp" style="font-size:11px;color:#9ad;line-height:1.4">Cloudflare mode uses a deployed Worker URL. PeerJS remains the default.</div>
+  </div>
   <div class="setuplinks"><button data-srules>📖 How to play</button></div>
  </div>
 </div>
@@ -1713,6 +1722,8 @@ function handleNodeTap(t){
  }
 });
 
+/* Initialise optional transport preferences after the setup controls exist. */
+loadTransportSettings();
 /* ================= NETWORKING ================= */
 const PFX='bigcon-oz-';
 /* Room codes are jt portal buzzwords — every one of these has its own line in
@@ -1739,6 +1750,94 @@ function showFatal(msg){
  card.innerHTML='<div class="mtitle">CONNECTION LOST</div><div class="mbody"><p>'+esc(msg)+'</p></div><div class="mopts"><button onclick="location.reload()">Reload</button></div>';
  ov.appendChild(card);document.body.appendChild(ov);
 }
+
+/* ---- OPTIONAL CLOUDFLARE DURABLE OBJECT RELAY ----
+   Configure the Worker URL in the setup panel. This transport preserves the
+   PeerJS subset used by the game, while the Durable Object relays room traffic.
+   It is opt-in; the existing PeerJS path remains unchanged. */
+function transportSettings(){
+ const mode=$('transportMode')?.value||'peerjs';
+ const raw=$('relayUrl')?.value||'';
+ try{localStorage.setItem('bigcon-transport-mode',mode);localStorage.setItem('bigcon-relay-url',raw)}catch(_){}
+ return {mode,url:raw.trim().replace(/^http:/i,'ws:').replace(/^https:/i,'wss:').replace(/\/+$/,'')};
+}
+function loadTransportSettings(){
+ try{
+  const mode=localStorage.getItem('bigcon-transport-mode')||'peerjs';
+  const url=localStorage.getItem('bigcon-relay-url')||'';
+  if($('transportMode'))$('transportMode').value=mode;
+  if($('relayUrl'))$('relayUrl').value=url;
+ }catch(_){}
+ const refresh=()=>{
+  const mode=$('transportMode')?.value||'peerjs';
+  if($('relayUrlRow'))$('relayUrlRow').style.display=mode==='cloudflare'?'flex':'none';
+  if($('relayHelp'))$('relayHelp').textContent=mode==='cloudflare'
+   ?'Uses a Cloudflare Worker + Durable Object you deploy. Paste its HTTPS workers.dev URL above. Reconnects use the same room code.'
+   :'PeerJS direct / TURN transport is active. Cloudflare is optional.';
+ };
+ $('transportMode')?.addEventListener('change',()=>{transportSettings();refresh()});
+ $('relayUrl')?.addEventListener('change',transportSettings);
+ $('relayUrl')?.addEventListener('blur',transportSettings);
+ loadTransportSettings._refresh=refresh;refresh();
+}
+class RelayEvents{
+ constructor(){this.events={}}
+ on(name,fn){(this.events[name]||(this.events[name]=[])).push(fn);return this}
+ emit(name,...args){for(const fn of this.events[name]||[]){try{fn(...args)}catch(e){console.error(e)}}}
+}
+class CloudflareDataConnection extends RelayEvents{
+ constructor(peer,room,id,hostSide){super();this.peer=peer;this.room=room;this.id=id;this.hostSide=hostSide;this.open=false;this.__bigconClosed=false;this.__lastSeen=Date.now()}
+ send(data){if(!this.open||!this.peer.socket||this.peer.socket.readyState!==1)throw new Error('Relay connection is not open');this.peer.socket.send(JSON.stringify({type:'data',target:this.hostSide?this.id:'host',data}))}
+ close(){if(this.__bigconClosed)return;this.__bigconClosed=true;this.open=false;this.emit('close');if(this.peer.socket&&this.peer.socket.readyState===1)this.peer.socket.send(JSON.stringify({type:'leave',target:this.id}));}
+}
+class CloudflarePeer extends RelayEvents{
+ constructor(idOrOptions,maybeOptions){
+  super();this.id=typeof idOrOptions==='string'?idOrOptions:null;this.options=typeof idOrOptions==='string'?maybeOptions:idOrOptions;this.destroyed=false;this.disconnected=false;this.socket=null;this.connections=new Map();this.hostSide=!!this.id;
+  queueMicrotask(()=>{if(this.destroyed)return;if(this.hostSide)this._connectSocket(this.id.slice(PFX.length),'host');else this.emit('open','guest-'+crypto.randomUUID())});
+ }
+ _baseUrl(){
+  const url=(transportSettings().url||'').trim();
+  if(!url)throw new Error('Enter your deployed Cloudflare Worker URL in Connection system settings.');
+  return url;
+ }
+ _connectSocket(room,role){
+  let base;try{base=this._baseUrl()}catch(e){this.emit('error',{type:'configuration',message:e.message});return}
+  const url=base.replace(/^https:/i,'wss:').replace(/^http:/i,'ws:')+'/ws/'+encodeURIComponent(room)+'?role='+role;
+  const ws=new WebSocket(url);this.socket=ws;
+  ws.addEventListener('open',()=>{if(this.destroyed){ws.close();return}ws.send(JSON.stringify({type:'join',role}));});
+  ws.addEventListener('message',ev=>{
+   let m;try{m=JSON.parse(ev.data)}catch(_){return}
+   if(m.type==='ready'){
+    if(role==='host'){this.emit('open',this.id);return}
+    const c=this.connections.get('outgoing');if(c&&!c.open){c.id=m.id;c.open=true;c.emit('open');}
+   }else if(m.type==='incoming'&&role==='host'){
+    const c=new CloudflareDataConnection(this,room,m.id,true);c.open=true;this.connections.set(m.id,c);this.emit('connection',c);c.emit('open');
+   }else if(m.type==='data'){
+    const c=role==='host'?this.connections.get(m.source):this.connections.get('outgoing');
+    if(c&&c.open){c.__lastSeen=Date.now();c.emit('data',m.data)}
+   }else if(m.type==='left'){
+    const c=role==='host'?this.connections.get(m.id):this.connections.get('outgoing');
+    if(c){c.open=false;c.__bigconClosed=true;c.emit('close');if(role==='host')this.connections.delete(m.id)}
+   }else if(m.type==='error'){this.emit('error',{type:m.code||'network',message:m.message||'Cloudflare relay error'})}
+  });
+  ws.addEventListener('close',()=>{this.disconnected=true;for(const c of this.connections.values()){if(c.open){c.open=false;c.emit('close')}}this.emit('disconnected')});
+  ws.addEventListener('error',()=>this.emit('error',{type:'socket-error',message:'Cloudflare relay socket error'}));
+ }
+ connect(target){
+  const room=String(target||'').startsWith(PFX)?String(target).slice(PFX.length):String(target||'');
+  const c=new CloudflareDataConnection(this,room,'outgoing',false);this.connections.set('outgoing',c);
+  try{this._connectSocket(room,'guest')}catch(e){queueMicrotask(()=>this.emit('error',{type:'configuration',message:e.message}))}
+  return c;
+ }
+ reconnect(){if(this.destroyed)return;this._connectSocket(this.id?this.id.slice(PFX.length):Net.roomCode,this.hostSide?'host':'guest')}
+ destroy(){this.destroyed=true;for(const c of this.connections.values())c.close();if(this.socket){try{this.socket.close()}catch(_){}}this.emit('close')}
+}
+function selectedPeerClass(){
+ const cfg=transportSettings();
+ if(cfg.mode!=='cloudflare')return Peer;
+ return CloudflarePeer;
+}
+
 /* ---- WEBRTC / ICE CONFIG ---- */
 /* Keep game traffic peer-to-peer. STUN discovers routes; TURN relays only when
    a direct route is impossible. Several relays over UDP, TCP and TLS/443:
@@ -1781,7 +1880,7 @@ function hostOpenPeer(){
  const code=Net.roomCode;
  const old=Net.peer;
  if(old&&!old.destroyed){try{old.destroy()}catch(_){}}
- const p=new Peer(PFX+code,BIGCON_PEER_OPTIONS);
+ const p=new (selectedPeerClass())(PFX+code,BIGCON_PEER_OPTIONS);
  Net.peer=p;
  let opened=false;
  p.on('open',()=>{
@@ -2018,7 +2117,7 @@ function connectGuestTransport(isRetry){
  if(oldPeer&&!oldPeer.destroyed){
   try{oldPeer.destroy()}catch(_){}
  }
- const p=new Peer(BIGCON_PEER_OPTIONS);
+ const p=new (selectedPeerClass())(BIGCON_PEER_OPTIONS);
  Net.peer=p;
  p.on('open',()=>{
   if(token!==guestTransportToken||guestReconnectStopped)return;
