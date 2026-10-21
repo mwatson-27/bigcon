@@ -247,7 +247,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = '7c75b9e';
+const BUILD_COMMIT = 'e2a846d';
 const $=id=>document.getElementById(id);
 $('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('splashLogo');if(!img)return;let done=false;const swap=()=>{if(done)return;done=true;img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};setTimeout(swap,5000)})();
 
@@ -1818,6 +1818,9 @@ class CloudflarePeer extends RelayEvents{
    }else if(m.type==='left'){
     const c=role==='host'?this.connections.get(m.id):this.connections.get('outgoing');
     if(c){c.open=false;c.__bigconClosed=true;c.emit('close');if(role==='host')this.connections.delete(m.id)}
+   }else if(m.type==='host_back'&&!this.hostSide){
+    const c=this.connections.get('outgoing');
+    if(c&&c.open){try{c.send({t:'hello',name:Net.myName,playerId:Net.playerId})}catch(_){}}
    }else if(m.type==='error'){this.emit('error',{type:m.code||'network',message:m.message||'Cloudflare relay error'})}
   });
   ws.addEventListener('close',()=>{this.disconnected=true;for(const c of this.connections.values()){if(c.open){c.open=false;c.emit('close')}}this.emit('disconnected')});
