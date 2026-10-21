@@ -238,7 +238,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = '6ad8889';
+const BUILD_COMMIT = '7c75b9e';
 const $=id=>document.getElementById(id);
 $('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('splashLogo');if(!img)return;let done=false;const swap=()=>{if(done)return;done=true;img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};setTimeout(swap,5000)})();
 
@@ -1753,7 +1753,20 @@ const BIGCON_ICE_CONFIG={
  iceCandidatePoolSize:4
 };
 const BIGCON_PEER_OPTIONS={config:BIGCON_ICE_CONFIG,debug:1,pingInterval:5000};
-const HEARTBEAT_MS=4000,CONN_TIMEOUT_MS=16000;
+// Tolerate short stalls on congested or filtered school networks.
+const HEARTBEAT_MS=5000,CONN_TIMEOUT_MS=35000;
+const PEER_REOPEN_BASE_MS=3500;
+let hostReopenTimer=null,hostReopenAttempt=0;
+function scheduleHostReopen(reason){
+ if(hostReopenTimer)return;
+ hostReopenAttempt++;
+ const delay=Math.min(20000,PEER_REOPEN_BASE_MS*Math.pow(2,Math.min(hostReopenAttempt-1,3)));
+ setNetStatus((reason||'Signalling connection interrupted')+' — retrying room registration in '+Math.ceil(delay/1000)+'s…',true);
+ hostReopenTimer=setTimeout(()=>{
+  hostReopenTimer=null;
+  if(Net.role==='host'&&Net.roomCode)hostOpenPeer();
+ },delay);
+}
 
 /* ---- HOST ---- */
 function hostCreate(name){
@@ -1764,6 +1777,7 @@ function hostCreate(name){
  startHostHeartbeat();
 }
 function hostOpenPeer(){
+ if(hostReopenTimer){clearTimeout(hostReopenTimer);hostReopenTimer=null}
  const code=Net.roomCode;
  const old=Net.peer;
  if(old&&!old.destroyed){try{old.destroy()}catch(_){}}
@@ -1773,22 +1787,23 @@ function hostOpenPeer(){
  p.on('open',()=>{
   opened=true;
   if(Net.peer!==p)return;
+  hostReopenAttempt=0;
+  $('btnCreate').disabled=false;
   showLobby(true);
   if(!Net.started)setNetStatus('Room created — seats up to 8. Waiting for co-conspirators…');
  });
  p.on('disconnected',()=>{
   if(Net.peer!==p||p.destroyed)return;
-  try{p.reconnect()}catch(_){setTimeout(()=>{if(Net.peer===p)hostOpenPeer()},1500)}
+  try{p.reconnect()}catch(_){scheduleHostReopen('Signalling server disconnected')}
  });
  p.on('error',e=>{
   const ty=e&&e.type;
   if(Net.peer!==p)return;
-  if(ty==='unavailable-id'&&!opened&&!Net.started){try{p.destroy()}catch(x){}Net.roomCode=genCode();Net.roomLabel=codeLabel(Net.roomCode);hostOpenPeer();return}
-  if(ty==='unavailable-id'){/* our own stale registration on the matchmaker */ setTimeout(()=>{if(Net.peer===p)hostOpenPeer()},2000);return}
+  if(ty==='unavailable-id'&&!opened&&!Net.started){try{p.destroy()}catch(x){}Net.roomCode=genCode();Net.roomLabel=codeLabel(Net.roomCode);hostReopenAttempt=0;hostOpenPeer();return}
+  if(ty==='unavailable-id'){scheduleHostReopen('Room ID is temporarily registered elsewhere');return}
   if(ty==='network'||ty==='socket-error'||ty==='socket-closed'||ty==='server-error'){
-   /* live games keep running peer-to-peer; we only need the matchmaker for new joins */
-   setNetStatus('Matchmaker hiccup — reopening the room…',true);
-   setTimeout(()=>{if(Net.peer===p)hostOpenPeer()},2000);
+   // Back off rather than repeatedly destroying/recreating the peer in a tight loop.
+   scheduleHostReopen('Matchmaker error ('+ty+')');
    return;
   }
   if(ty==='peer-unavailable')return;
@@ -1975,7 +1990,8 @@ function clearGuestReconnect(){
 }
 
 function guestReconnectDelay(){
- return Math.min(8000,1000*Math.pow(2,Math.max(0,guestReconnectAttempt-1)));
+ // Exponential backoff with a cap avoids retry storms on filtered Wi-Fi.
+ return Math.min(15000,1200*Math.pow(2,Math.min(Math.max(0,guestReconnectAttempt-1),4)));
 }
 
 function guestConnectionLost(token){
@@ -1985,7 +2001,8 @@ function guestConnectionLost(token){
  const attempt=guestReconnectAttempt;
  const delay=guestReconnectDelay();
  stopGuestHeartbeat();
- setNetStatus((Net.begun?'Connection lost':'Lost the lobby connection')+' — reconnecting ('+attempt+')…',true);
+ console.warn('[BigCon] connection lost; scheduling retry',{attempt,delayMs:delay,room:Net.roomCode,stage:Net.begun?'game':'lobby'});
+ setNetStatus((Net.begun?'Connection lost':'Lost the lobby connection')+' — reconnecting ('+attempt+') in '+Math.ceil(delay/1000)+'s…',true);
  guestReconnectTimer=setTimeout(()=>{
   guestReconnectTimer=null;
   if(token!==guestTransportToken||guestReconnectStopped)return;
@@ -2014,7 +2031,7 @@ function connectGuestTransport(isRetry){
     try{c.close()}catch(_){}
     guestConnectionLost(token);
    }
-  },15000);
+  },30000);
   c.on('open',()=>{
    connectionOpened=true;
    clearTimeout(connectionTimeout);
@@ -2043,7 +2060,7 @@ function connectGuestTransport(isRetry){
   if(ty==='peer-unavailable'){
    /* the host may just be re-registering with the matchmaker — keep trying a while */
    if(Net.begun||guestReconnectAttempt<5)guestConnectionLost(token);
-   else setNetStatus('Room “'+codeLabel(code)+'” not found — check the buzzword (and that the host still has the page open).',true);
+   else {setNetStatus('Room “'+codeLabel(code)+'” not found yet — retrying in case the host is reconnecting.',true);guestConnectionLost(token)}
   }else if(ty==='network'||ty==='socket-error'||ty==='socket-closed'||ty==='server-error'||ty==='unavailable-id'){
    guestConnectionLost(token);
   }else{
