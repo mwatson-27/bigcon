@@ -705,6 +705,7 @@ function acccInvestigate(pi){
  const divested=shuffle(hit.owned.slice());
  // Give at most one node to each rival; any remaining nodes return to the market.
  divested.forEach(n=>{delete S.owner[n.id];delete S.bugs[n.id];fx(n.x,n.y-70,'🧐 DIVESTED','#55c1ff')});
+ if(divested.some(n=>n.id==='sisy'))S.sisyPayout=10;
  const recipients=shuffle(S.players.map((_,i)=>i).filter(i=>i!==pi));
  const transfers=[];
  for(let i=0;i<Math.min(divested.length,recipients.length);i++){
@@ -846,11 +847,12 @@ function generateRandomBoard(slot){
  const ids=NODES.map(n=>n.id).filter(id=>id!=='quik');
  const positions=shuffle(ORIGINAL_NODE_LAYOUT.filter(p=>p.id!=='quik').map(p=>({x:p.x,y:p.y,rot:p.rot})));
  const farthest=positions.slice().sort((a,b)=>Math.hypot(b.x-slot.x,b.y-slot.y)-Math.hypot(a.x-slot.x,a.y-slot.y));
- const prized=shuffle(ids.filter(id=>HIGH_VALUE_NODE_IDS.has(id)));
- const ordinary=shuffle(ids.filter(id=>!HIGH_VALUE_NODE_IDS.has(id)));
+ const prized=shuffle(ids.filter(id=>HIGH_VALUE_NODE_IDS.has(id)&&id!=='made'));
+ const ordinary=shuffle(ids.filter(id=>!HIGH_VALUE_NODE_IDS.has(id)&&id!=='made'));
  const assignment={quik:{x:slot.x,y:slot.y,rot:slot.rot}};
- prized.forEach((id,i)=>{assignment[id]=farthest[i]});
- const remaining=shuffle(farthest.slice(prized.length));
+ assignment.made=farthest[0];
+ prized.forEach((id,i)=>{assignment[id]=farthest[i+1]});
+ const remaining=shuffle(farthest.slice(1+prized.length));
  ordinary.forEach((id,i)=>{assignment[id]=remaining[i]});
  NODES.forEach(n=>{const p=assignment[n.id]||ORIGINAL_LAYOUT_BY_ID[n.id];n.x=p.x;n.y=p.y;n.rot=p.rot});
  /* Randomized nearest-neighbour spanning tree, then extra local links. */
@@ -867,12 +869,17 @@ function generateRandomBoard(slot){
   placed.push(id);
  }
  for(const id of ids){
+  if(id==='made')continue;
   const n=NMAP[id];
   const near=ids.filter(other=>other!==id).map(other=>({id:other,d:Math.hypot(NMAP[other].x-n.x,NMAP[other].y-n.y)})).sort((a,b)=>a.d-b.d).slice(0,8);
   shuffle(near).slice(0,2+Math.floor(Math.random()*2)).forEach(v=>add(id,v.id));
  }
  const nearest=ids.map(id=>({id,d:Math.hypot(NMAP[id].x-q.x,NMAP[id].y-q.y)})).sort((a,b)=>a.d-b.d);
  nearest.slice(0,5).forEach(v=>add('quik',v.id));
+ /* Cap MADE to 1-2 connections: trim extras, ensure at least one. */
+ let madeEdges=edges.filter(e=>e[0]==='made'||e[1]==='made');
+ if(madeEdges.length>2){const kept=[];let c=0;for(const e of edges){if(e[0]==='made'||e[1]==='made'){if(c<2){c++;kept.push(e)}}else kept.push(e)};edges.length=0;edges.push(...kept)}
+ if(!edges.some(e=>e[0]==='made'||e[1]==='made')){const nearMade=ids.filter(x=>x!=='made').map(x=>({id:x,d:Math.hypot(NMAP[x].x-NMAP.made.x,NMAP[x].y-NMAP.made.y)})).sort((a,b)=>a.d-b.d)[0].id;add('made',nearMade)}
  EDGES=edges;rebuildAdj();separateNodes();
  return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
 }
@@ -1114,7 +1121,7 @@ async function applyIntent(pi,m){
    const oldOwner=S.owner.made;
    const confirm=await askPlayer(pi,{title:'DIVEST MADE — 5 INTEL + $7',body:'Force MADE away from '+pname(oldOwner)+'? They receive $7 compensation.',options:[{label:'Pay 5 Intel + $7 compensation',v:1},{label:'Cancel',v:0}],def:0});
    if(!confirm){sync();return}
-   p.intel-=5;p.money-=7;S.players[oldOwner].money+=7;S.owner.made=pi;delete S.bugs.made;
+   p.intel-=5;p.money-=7;S.players[oldOwner].money+=7;delete S.owner.made;delete S.bugs.made;
    fxAt(pi,'🛈−5 · −$7','#55c1ff');fxAt(oldOwner,'+$7 compensation','#7fe08d');
    log('🟣 '+pname(pi)+' forces MADE to divest from '+pname(oldOwner)+', paying $7 compensation.');
    addCortisol(pi,1,'the forced divestment');await endOfTurn();
@@ -1154,6 +1161,7 @@ function takeoverCost(pi,nid,base){
 }
 async function doMove(pi,id){
  if(!canReach(id)){sysTo(pi,'Qantas is grounded on the first turn — the jet is still at the gate.');return}
+ const prevPos=S.players[pi].pos;
  const owner=S.owner[id];
  if(owner!=null&&owner!==pi){
   if(S.owner.bond007===pi){log('🤵 007 flashes… credentials. No toll.')}
@@ -1166,6 +1174,7 @@ async function doMove(pi,id){
   }
  }
  S.players[pi].pos=id;S.steps--;
+ if(prevPos==='sisy'&&id!=='sisy'&&S.owner.back!==pi)S.sisyPayout=10;
  log('→ '+pname(pi)+' moves to '+NMAP[id].name.join(' ')+'.');
  if(S.steps<=0)await endMovement();else sync();
 }
@@ -1173,7 +1182,9 @@ async function doFly(pi,id){
  const p=S.players[pi];
  if(!canReach(id)){sysTo(pi,'Qantas is grounded on the first turn — you cannot land there yet.');S.mode=null;sync();return}
  if(p.money<3){sysTo(pi,'The Flying Kangaroo wants $3 for the seat.');S.mode=null;sync();return}
+ const prevFlyPos=p.pos;
  p.money-=3;fxAt(pi,'−$3','#ff6b5e');S.mode=null;p.pos=id;S.steps=0;
+ if(prevFlyPos==='sisy'&&id!=='sisy'&&S.owner.back!==pi)S.sisyPayout=10;
  log('✈️ '+pname(pi)+' takes the Qantas jet straight to '+NMAP[id].name.join(' ')+'.');
  await endMovement();
 }
@@ -1220,7 +1231,7 @@ async function doSeize(pi){
   S.players[prev].money+=n.cost;log('💸 '+pname(prev)+' pockets a $'+n.cost+' buyout.');fxAt(prev,'+$'+n.cost,'#7fe08d');
   if(S.owner.accc===prev&&p.money>=2){p.money-=2;S.players[prev].money+=2;log('🧐 ACCC review fee: '+pname(pi)+' pays '+pname(prev)+' $2.')}
  }
- S.owner[nid]=pi;
+ S.owner[nid]=pi;if(nid==='sisy')S.sisyPayout=10;
  S.seizeCount[nid]=(S.seizeCount[nid]||0)+1;
  const via=useInt>0?' (paid $'+cash+' + '+useInt+' 🛈)':'';
  log('📝 '+pname(pi)+(isTake?' muscles in on ':' seizes ')+n.name.join(' ')+via+'.');
@@ -1560,7 +1571,7 @@ function renderSide(){
    btns.push('<div class="sublabel">INTEL OPS · you hold 🛈 '+p.intel+' · market rate $'+md.rate+'/🛈</div>');
    btns.push('<button class="act" data-act="spy"'+(p.intel>=2?'':' disabled')+' title="Free action — see the next event card, anywhere">🛈 Spy on the deck — 2 🛈 (see next event)</button>');
    btns.push('<button class="act" data-act="dossier"'+((p.intel>=3&&!S.dossier)?'':' disabled')+' title="Free action — hostile takeovers cost list price this turn">📂 The Dossier — 3 🛈 (takeovers at list price)</button>');
-   btns.push('<button class="act" data-act="divestmade"'+((p.intel>=5&&p.money>=7&&S.owner.made!=null&&S.owner.made!==me)?'':' disabled')+' title="Pay 5 Intel and $7 compensation to take MADE from any rival">🟣 Divest MADE — 5 🛈 + $7 compensation</button>');
+   btns.push('<button class="act" data-act="divestmade"'+((p.intel>=5&&p.money>=7&&S.owner.made!=null&&S.owner.made!==me)?'':' disabled')+' title="Pay 5 Intel and $7 compensation to remove MADE from any rival">🟣 Divest MADE — 5 🛈 + $7 compensation</button>');
    btns.push('<button class="act" data-act="sweep"'+(p.intel>=2?'':' disabled')+' title="Your action — remove all bugs on your nodes">🧹 Sweep for bugs — 2 🛈 (cleanse your nodes)</button>');
     btns.push('<button class="act" data-act="masspanic"'+(p.intel>=5?'':' disabled')+' title="Your action — every player gains 2 Cortisol">🔥 Mass panic — 5 🛈 (+2 Cortisol to everyone)</button>');
    for(let k=1;k<=3;k++){

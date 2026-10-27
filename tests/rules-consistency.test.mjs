@@ -422,7 +422,7 @@ test('RC-05b divest MADE costs 5 Intel + $7 compensation to the former owner', a
   assert.equal(S.players[0].intel, madePaidDuringTurn ? 1 : 0, 'divestment spends 5 Intel; the ordinary MADE payout may return 1');
   assert.equal(S.players[0].money, 20 - 7 + 2, 'exactly $7 out (+ quiet quarter)');
   assert.equal(S.players[1].money, 10 + 7 + 2 + 3, 'the former owner pockets the $7 compensation (+ turn income)');
-  assert.equal(S.owner.made, 0, 'MADE changes hands');
+  assert.equal(S.owner.made, undefined, 'MADE is removed from all ownership');
   assert.ok(S.log.some(l => l.includes('paying $7 compensation')), 'the table saw the divestment');
 });
 
