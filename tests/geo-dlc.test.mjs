@@ -248,6 +248,23 @@ test('GD-07 Pyongyang City pays +$1 income per GEOGRAPHY node owned', t => {
 });
 
 /* ================= GD-08/09 — THE CORPORATE BOEING vs QANTAS ================= */
+test('GD-07c Qantas starts available; only the Boeing shutdown grounds it', async t => {
+  const { e, S } = await geoGame(t);
+  assert.equal(S.turn, 1);
+  assert.equal(e.f.qantasGrounded(), false, 'a fresh game does not silently ground Qantas');
+  assert.equal(e.f.canReach('qantas'), true, 'the jet is available before a shutdown');
+  S.owner.geo_boeing = 0;
+  S.owner.qantas = 1;
+  S.players[0].money = 10;
+  armAction(e);
+  const down = e.f.applyIntent(0, { act: 'qantasdown' });
+  assert.equal(e.f.qantasGrounded(), true, 'the Boeing action grounds the airline immediately');
+  assert.equal(e.f.canReach('qantas'), false, 'the grounded jet cannot be reached');
+  await down;
+  await settle();
+});
+
+
 test('GD-08 shutting down Qantas parks it for two full turns: no jet, no Qantas income', async t => {
   const { e, S } = await geoGame(t);
   S.owner.geo_boeing = 0;
