@@ -289,3 +289,12 @@ The maintainer decisions have now been applied on branch `fix/rules-copy-and-wat
 - **Counts resolved:** board copy and source header now say 70 exhibits; event-deck header comment now says 24 cards.
 
 These changes intentionally do not alter away-seat/disconnection behavior. Automated validation passed on the PR branch: 92 tests, 91 pass, 1 documented skip, 0 fail.
+
+## Geography DLC copy status (2026-10-28)
+
+The Geography DLC ships with its own copy, audited against the engine as part of the GD suite (`tests/geo-dlc.test.mjs`, GD-16):
+
+- Help panel gains a "🌍 The Geography DLC" section listing all ten nodes with the exact costs and once-per-turn gates the engine enforces (`applyIntent` geo branches, lines checked by GD-03..GD-13); the section sits before "Turn notifications".
+- Version/exhibit copy moved to a dual form: the sidebar brand reads `v1.9 · 80/70 exhibits` depending on `S.dlcGeo`, the help text says "On: the board deals 80 exhibits. Off: the same 70 exhibits as always", and the board stamp/`<title>`/notification/turn-alert storage key all read v1.9. The base-game "70 exhibits" pin is intact and `82 exhibits` appears nowhere (RC-01/RC-07 still enforce both).
+- Node power copy (`sp`) for the ten geo nodes matches the implemented behaviours; the lobby note names all ten nodes and states the host decides.
+- No drift found between DLC copy and behaviour; findings #11–#17 above are unaffected. Automated validation on the DLC branch: 112 tests, 111 pass, 1 documented skip, 0 fail.

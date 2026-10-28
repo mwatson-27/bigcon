@@ -29,6 +29,7 @@ Relevant implementation areas include `applyIntent()`, `addCortisol()`, `raid()`
 - `tests/multiplayer.test.mjs` (MP/DC) — 12 tests + DC-05 skipped.
 - `tests/board-generation.test.mjs` (RM) — 200-seed generator sweep + initGame wire checks + `pubState`→`adoptState` round-trip.
 - `tests/rules-consistency.test.mjs` (RC) — 22 tests: assets/copies on disk, deck completeness, every card's `run()` on a clean table, behaviour-driven action costs, cortisol constants, win types/goal clamp, dead-reference audit.
+- `tests/geo-dlc.test.mjs` (GD) — 20 tests for the Geography DLC: world rebuild both ways, 80-pin generation sweeps, missiles/rubble/rebuild, beach day, tribute income, Qantas grounding, oil crash, Stage 5 decline, Venice either/or, Tuvalu claim, lobby mirroring, copy pins.
 
 **Engine findings recorded (no production code changed; each has a pinning test):**
 
@@ -41,7 +42,9 @@ Relevant implementation areas include `applyIntent()`, `addCortisol()`, `raid()`
 7. **Dead references** — `S.owner.*`/`own()` references to the removed-node set (`econ`, `notes`, `real`, `spend`, `timeline`) survive in the source but are inert. The unreachable `scrub` action handler/UI was removed in the follow-up rules-copy branch. RC-07 guarantees no reference escapes validation entirely.
 8. **Budget-night direction** — `payTo(i, amt, to)` means each rival *pays* the Treasurer $1; the copy ("the Treasurer collects") is accurate, but the transfer direction is easy to misread, so RC-03 pins it explicitly.
 9. **Host migration is unimplemented (DC-05 skipped)** — disconnects fall back to the away-seat watchdog (20 s → seat auto-plays "lays low" + $1 Intel), and reclamation by playerId/displayed name restores the seat cleanly. Pinned by DC-01..DC-06.
-10. **Testing note** — `deepStrictEqual` rejects structurally identical objects that originate in different `node:vm` realms (both engines create their own realm), so wire-equality assertions compare JSON serialisations — the same thing the real wire carries.
+10. **Testing note** — `deepStrictEqual` rejects structurally identical objects that originate in different `node:vm` realms (both engines create their own realm), so wire-equality assertions compare JSON serialisations — the same thing the real wire carries. (GD-12b hits this for `S.ov`.)
+11. **`applyIntent()`'s synchronous prefix reaches the market event** — the intent branch runs synchronously into `finishNodeAbility → endOfTurn → card.run()`; a `quiet` deck therefore applies its +$2 (and its mood reset) *before* the intent promise yields, while the next seat's `startTurn` income lands in microtasks after. Behaviour tests pin immediate effects pre-await and chain results after `settle()` (GD layer; RC-03 tests post-await throughout, which is equivalent for its sums).
+12. **Geo once-per-turn flags reset at every `startTurn`** — `geoMissiled/geoBeach/geoBoeing/geoCrash/geoStage5/geoVenice` are cleared at the top of `startTurn`, so after any action chain they read `false`. Same-turn "already used" gates are tested by restoring the flag manually (GD-06/GD-12) rather than racing the chain.
 
 **Continuation:** the rules-copy vs gameplay-mechanics audit (2026-10-17) lives in **`docs/RULES_COPY_AUDIT.md`** — its findings are numbered **#11–#17**, continuing this ledger, in the form *copy (source, quote) → implementation (file:line) → driven behavior → verdict → rule decision*. It also extends item 6 (the initGame log tell the truth — "70 exhibits") and item 7 (full dead-ref call-site table), and corrects item 9: the away watchdog pays **$1 cash via `gain()`**, not "$1 Intel", and the seat is not lay-low (help copy drifts from both watchdog sites; see audit finding #14).
 
@@ -262,6 +265,34 @@ Check the help panel, in-game status, end screen, and any onboarding text all de
 ### RC-07 — Automated drift check
 Prefer structured metadata tests over brittle string scraping. If the UI still embeds prose in HTML, add a temporary audit script that flags missing node IDs, missing event handlers, stale numeric thresholds, and conflicting duplicated rule strings for manual review.
 
+## 8. Geography DLC (GD)
+
+Ten extra exhibits (`GEO_NODES`) behind a host-toggled lobby flag (`S.dlcGeo` / `Net.dlcGeo`). `rebuildWorld(geo)` swaps the node set, `WORLD_EDGES` unions `GEO_EDGES` when on, and the flag travels with every state payload (`pubState` serialises it; `adoptState` rebuilds the world before render). All behaviour lives in `tests/geo-dlc.test.mjs` and uses the `quiet` deck exactly like RC-03.
+
+### GD-01 / GD-01b — World rebuild & node integrity
+`rebuildWorld(false)` restores the classic 70-exhibit world (NMAP rebuilt, not accumulated; high-value set rebuilt); `rebuildWorld(true)` deals 80 with every `GEO_EDGES` pair present and every `GEO_HIGH_VALUE_IDS` pin seeded far out. Each GEO node is structurally complete with a shipped asset under `./static/GeographyDLC/`.
+
+### GD-02 / GD-14 — The 80-pin board
+`initGame` with the flag deals 80 connected pins on every probed seed (log tells the table the DLC is live, no rubble on a fresh world); a 30-seed generator sweep keeps the DLC board a valid collage (every geo pin plotted, no mutual overlaps, fully walkable).
+
+### GD-03..GD-05 — MISSILE COMMAND
+Strike ($4 + 1 Intel, once/turn): owned target ⇒ expropriated with NO payout; either way the pin becomes rubble (no income, nothing to seize). Guards: no self-strike, Pillars holdings immune, rubble unstrikeable, no charge on refused launches. Rebuild on-site pays exact list price, returns the node UNOWNED, and the Pyongyang Hotel skims $2 kickbacks off every rebuild.
+
+### GD-06..GD-09 — Passive incomes & the Boeing
+Wonsan beach day: free −2 Cortisol, once/turn, on-site only. Pyongyang City: +$1 income per owned GEO node (and note the base-game westpac/REGULATOR pairing — the missile site is a regulator, GD-07 pins the interaction). The Corporate Boeing: SHUT DOWN QANTAS ($4, once/turn) grounds the jet through the current and next two turns — nobody flies it, its owner's Qantas income is $0 — and a Boeing owner cannot ground their own airline.
+
+### GD-10..GD-11b — Crash & decline
+Oil crash ($3, once/turn): PANIC mood (logged before the quiet card calms it), every player pays $2 per owned oil node, Pillars holders exempt (and the Pillars pin itself still pays its $1 income). Stage 5 (2 Intel, once/turn): the richest *other* player makes no income of any kind on their next turn; the call is consumed at their next `startTurn`; ESG-rich seats cannot be declined; a one-seat table has no call.
+
+### GD-12..GD-12c — Venice
+Gondola therapy: free −1 Cortisol on-site. Overtourism ($2, once/turn, *either/or* with the gondola): a rival-owned standing pin's owner takes +1 Cortisol at each of their turns while the Venice owner keeps the city; it sweeps when Venice changes hands. Guards: ESG holdings refused, rubble refused, no fare on refused launches.
+
+### GD-13 — Tuvalu
+THE JOIN IS FREE: the first arrival auto-claims (no action, no cost, no Cortisol) via `doMove` and `doFly`; later arrivals pay the ordinary toll; rubble is unclaimable.
+
+### GD-15 / GD-16 — Lobby & copy
+The checkbox is host-gated (guest flips are refused and mirrored); the welcome and lobby payloads carry `dlcGeo`; adopting a geo state rebuilds the guest world. Help copy: v1.9, "80 exhibits" on / "70 exhibits" off, and the RC-01 pin that the string `82 exhibits` never appears.
+
 ## CI gates and exit criteria
 
 **Per pull request**
@@ -303,3 +334,7 @@ Prefer structured metadata tests over brittle string scraping. If the UI still e
 ### Follow-up rules-copy implementation
 
 Branch `fix/rules-copy-and-watson-exemption` applies the maintainer's decisions from `docs/RULES_COPY_AUDIT.md`: Mark Watson now exempts the owner from COAL-industry ACCC investigations (COAL is tracked as its own industry); the MADE tooltip is corrected; unreachable Scrub UI/handler/help copy is removed; room-code, board-location, Rumor Exchange, chart-exemption and exhibit/card-count copy are corrected. Disconnection behavior remains intentionally unchanged. See the audit's follow-up status section for the item-by-item ledger. CI passed: 92 tests, 91 pass, 1 documented skip, 0 fail.
+
+### Geography DLC implementation
+
+Adds ten exhibits (MISSILE COMMAND, PYONGYANG CITY, PYONGYANG HOTEL, WONSAN RESORT, THE CORPORATE BOEING, THE SOUTH CHINA SEA, STAGE 5 DECLINE, PILLARS OF SUSTAINABILITY, VENICE DI CCTV, TUVALU .TV) behind a host-toggled lobby flag that mirrors to every guest and rides with `pubState`/`adoptState`. Missiles expropriate owned nodes with no payout and leave rebuildable rubble (rebuild = list price, returns unowned, Hotel skims $2); Wonsan/La Serenissima sell Cortisol relief with an either/or overtourism curse; the Boeing grounds Qantas for two turns; the South China Sea crashes oil; Stage 5 silences the richest seat's next income; the Pillars are the ESG shield (missile/crash/decline immunity, −1 Cortisol/turn); Tuvalu joins the first arrival for free. Version stamp v1.8 → v1.9 (80 exhibits on, 70 off; `BUILD_COMMIT` tracks HEAD). Full suite: **112 tests, 111 pass, 1 documented skip, 0 fail.**

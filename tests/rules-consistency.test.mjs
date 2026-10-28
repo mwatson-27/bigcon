@@ -445,7 +445,10 @@ test('RC-06 exactly seven win types exist and the goal clamps 20..999 with defau
 /* ================= RC-07 — dead reference audit ================= */
 test('RC-07 every S.owner/own() node reference maps to a real node or a known removal', t => {
   const engine = engineFor(t);
+  /* Base world at load (DLC off) plus the DLC id list — the DLC world is
+     rebuilt on demand, so the static audit unions its ids explicitly. */
   const nodeIds = new Set(engine.acc.NODES.map(n => n.id));
+  engine.acc.GEO_NODE_IDS.forEach(id => nodeIds.add(id));
   const removedMatch = SOURCE.match(/REMOVED_NODE_IDS=new Set\(\[([^\]]+)\]/);
   assert.ok(removedMatch, 'the removed-node list exists in the source');
   const removed = new Set([...removedMatch[1].matchAll(/'(\w+)'/g)].map(m => m[1]));

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>THE BIG CON v1.8</title>
+<title>THE BIG CON v1.9</title>
 <link rel="icon" href="favicon.ico">
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
@@ -167,7 +167,7 @@ button.mini:hover{background:#168388}
 .pface{width:28px;height:28px;border-radius:50%;object-fit:cover;border:2px solid var(--pc,#168388);flex:0 0 28px;background:#000}
 #board text{font-family:system-ui,Segoe UI,Helvetica,Arial,sans-serif}
 
-/* v1.8 UI: the map is a fixed, full-height left viewport; only the sidebar scrolls. */
+/* v1.9 UI: the map is a fixed, full-height left viewport; only the sidebar scrolls. */
 body.game-open{overflow:hidden}
 #app{display:none;flex-wrap:nowrap;gap:0;padding:0;align-items:stretch;width:100vw;height:100vh;height:100dvh;overflow:hidden}
 #boardWrap{flex:1 1 auto;min-width:0;height:100%;position:relative;overflow:hidden;background:#1d201f}
@@ -211,6 +211,11 @@ body.game-open{overflow:hidden}
     <div class="goalctl"><span class="gd">$</span><input id="goalInput" type="number" min="20" max="999" step="5" value="100"><span class="gn" id="goalNote">the host sets the target</span></div>
     <div class="gn" style="margin-top:6px">THE FULL SET: BANK · REGULATOR · CHART · WILD · CORPORATE · COMMODITY · MEDIA</div>
    </div>
+   <div class="goalrow">
+    <div class="cl">🌍 GEOGRAPHY DLC — TEN EXTRA ISLAND EXHIBITS, HOST-TOGGLED</div>
+    <div class="goalctl"><label style="display:flex;align-items:center;gap:10px;font:inherit;cursor:pointer"><input id="geoToggle" type="checkbox" style="width:20px;height:20px;accent-color:#168388;cursor:pointer"><span style="white-space:nowrap">ENABLE THE GEOGRAPHY DLC</span></label></div>
+    <div class="gn" id="geoNote" style="margin-top:6px">MISSILE COMMAND · PYONGYANG CITY · PYONGYANG HOTEL · WONSAN RESORT · THE CORPORATE BOEING · THE SOUTH CHINA SEA · STAGE 5 DECLINE · PILLARS OF SUSTAINABILITY · VENICE · TUVALU — missiles &amp; rubble, oil crashes, grounding the airline, the ESG shield, overtourism and one free country. The host decides; the whole table plays the same board.</div>
+   </div>
    <div class="lobbychat">
     <div class="cl">THE WIRE — LOBBY CHAT</div>
     <div class="chatlist" id="lobbyChatList"></div>
@@ -246,7 +251,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = 'da5d0e9';
+const BUILD_COMMIT = '3485491';
 const $=id=>document.getElementById(id);
 $('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('splashLogo');if(!img)return;let done=false;const swap=()=>{if(done)return;done=true;img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};setTimeout(swap,5000)})();
 
@@ -324,8 +329,8 @@ const Presence=(function(){
  };
 })();
 
-/* ================= THE COMPLETE EVIDENCE BOARD — 70 exhibits ================= */
-const NODES=[
+/* ================= THE COMPLETE EVIDENCE BOARD — 70 exhibits · +10 with the GEOGRAPHY DLC ================= */
+const BASE_NODES=[
 {id:'citi',image:'./static/citi tower.webp',name:['CITI TOWER'],icon:'🏦',type:'BANK',shape:'logo',band:'#1a5fa8',income:3,cost:8,x:210,y:150,rot:-2,sub:'too big to fail · 007 on payroll',sp:'+$1 income per CORPORATE node you own (James Bond is on the payroll).'},
 {id:'commbank',image:'./static/cba.png',name:['COMMONWEALTH BANK'],icon:'🏦',type:'BANK',shape:'logo',band:'#d4a017',income:2,cost:6,x:400,y:95,rot:2,sub:'can’t be beat? we’ll see',sp:'+$2 income while you own any other BANK (the big four stick together).'},
 {id:'nab',image:'./static/nab.png',name:['NAB'],icon:'🏦',type:'BANK',shape:'logo',band:'#c0392b',income:2,cost:6,x:590,y:165,rot:-1,sub:'more than money',sp:'Seizing CHART nodes costs you $1 less (their analysts share screens).'},
@@ -404,10 +409,35 @@ const NODES=[
 {id:'asics',image:'./static/running shoe.jpg',name:['THE RUNNING SHOE','ASICS'],icon:'👟',type:'WILD',shape:'photo',income:1,cost:3,x:430,y:1360,rot:3,sub:'circled in red · why is this here',sp:'+1 movement step (you are always jogging). Stand here (once owned) to JOG: free −1 Cortisol.'},
 {id:'toktimer',image:'./static/toktimer.png',name:['TOKTIMER'],icon:'⏱️',type:'WILD',shape:'photo',income:1,cost:5,x:1920,y:1020,rot:-2,sub:'the clock is running',sp:'+1 Intel whenever a Market Event is revealed. Time is information.'}
 ];
-const NMAP={};NODES.forEach(n=>NMAP[n.id]=n);
-/* Canonical coordinate deck: the host publishes each generated layout and graph. */
-const ORIGINAL_NODE_LAYOUT=NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot}));
-const ORIGINAL_LAYOUT_BY_ID=Object.fromEntries(ORIGINAL_NODE_LAYOUT.map(p=>[p.id,p]));
+/* ─────────── 🌍 GEOGRAPHY DLC — ten more pins, host-toggled in the lobby ───────────
+   The whole GEOGRAPHY set is appended to BASE_NODES only when the lobby flag is on
+   (rebuildWorld). Abilities are id-hooked exactly like the base game: startTurn
+   passives, income() synergies, and applyIntent actions keyed on the node id. */
+let NODES=[];
+const GEO_NODE_IDS=['geo_missile','geo_wonsan','geo_pyoncity','geo_pyothotel','geo_boeing','geo_scs','geo_stage5','geo_pillars','geo_venice','geo_tuvalu'];
+const OIL_IDS=['oil','oilgraph','barrels','tanker','petronas'];
+const GEO_HIGH_VALUE_IDS=['geo_missile','geo_scs','geo_pyothotel','geo_boeing','geo_pillars'];
+const GEO_NODES=[
+{id:'geo_missile',image:'./static/GeographyDLC/nk_missile.jpg',name:['MISSILE COMMAND'],icon:'🚀',type:'REGULATOR',shape:'photo',income:0,cost:8,x:2140,y:1180,rot:2,sub:'strategic assets · keys under the desk',sp:'Unlocks LAUNCH A MISSILE ($4 + 1 Intel, once per turn): strike any node. An owned node is expropriated with NO payout; either way it becomes rubble — no income, no seizing. Stand on rubble in your action phase and pay the list price to rebuild it; it returns unowned, buyable from next turn. Pillars-protected nodes cannot be struck.'},
+{id:'geo_wonsan',image:'./static/GeographyDLC/nk_wonsanresort.jpg',name:['WONSAN','RESORT'],icon:'🏖️',type:'WILD',shape:'photo',income:2,cost:5,x:2080,y:700,rot:-2,sub:'the beach town · sanctioned paradise',sp:'Stand here (once owned) for BEACH DAY: free, once per turn, −2 Cortisol. The sand is quiet. The waves are loud. Nobody is watching.'},
+{id:'geo_pyoncity',image:'./static/GeographyDLC/nk_pyongyangcity.webp',name:['PYONGYANG','CITY'],icon:'🌆',type:'BANK',shape:'photo',income:2,cost:6,x:2240,y:1000,rot:1,sub:'the capital · show windows, all lit',sp:'+$1 income per GEOGRAPHY DLC node you own (the capital collects tribute).'},
+{id:'geo_pyothotel',image:'./static/GeographyDLC/nk_pyongyanghotel.jpg',name:['PYONGYANG','HOTEL'],icon:'🏨',type:'CORPORATE',shape:'photo',income:2,cost:8,x:2200,y:830,rot:-1,sub:'106 floors · 47 in use',sp:'Gain $2 whenever ANY rubble node is REBUILT (construction kickbacks, allegedly).'},
+{id:'geo_boeing',image:'./static/GeographyDLC/geo_boeing.jpg',name:['THE CORPORATE','BOEING'],icon:'🛩️',type:'CORPORATE',shape:'photo',income:2,cost:7,x:1920,y:590,rot:2,sub:'white tail · no livery · no paperwork',sp:'Unlocks SHUT DOWN QANTAS ($4, once per turn): the kangaroo is grounded for two full turns — nobody flies the jet, and its owner collects nothing from it.'},
+{id:'geo_scs',image:'./static/GeographyDLC/geo_southchinasea.jpg',name:['THE SOUTH','CHINA SEA'],icon:'🌊',type:'COMMODITY',shape:'photo',income:4,cost:9,x:1880,y:1300,rot:-2,sub:'disputed waters · freedom of navigation',sp:'Unlocks TRIGGER AN OIL CRASH ($3, once per turn): the mood turns PANIC and every player pays $2 per oil node they own. Pillars-protected players are exempt.'},
+{id:'geo_stage5',image:'./static/GeographyDLC/geo_stage5decline.png',name:['STAGE 5','DECLINE'],type:'CHART',shape:'chart',spark:'down',income:1,cost:4,x:2040,y:470,rot:1,sub:'imported uranium · charcoal · decay',sp:'Unlocks CALL STAGE 5 (2 Intel, once per turn): the current richest player (not you) makes NO income on their next turn.'},
+{id:'geo_pillars',image:'./static/GeographyDLC/geo_pillars.jpg',name:['PILLARS OF','SUSTAINABILITY'],icon:'🧱',type:'REGULATOR',shape:'photo',income:1,cost:6,x:1760,y:250,rot:-1,sub:'ESG-laminated · one pillar is cardboard',sp:'ESG SHIELD: −1 Cortisol at the start of each of your turns. Your nodes cannot be missile-struck; you pay nothing on an OIL CRASH; Stage 5 Decline cannot call you.'},
+{id:'geo_venice',image:'./static/GeographyDLC/geo_venice.svg',name:['VENICE','DI CCTV'],type:'MEDIA',shape:'photo',income:3,cost:8,x:150,y:950,rot:2,sub:'la serenissima · sella aperta',sp:'Stand here (once owned) for GONDOLA THERAPY: free, once per turn, −1 Cortisol. Or in your action phase send OVERTOURISM ($2, once per turn, either/or): pick a rival node — its owner takes +1 Cortisol at the start of each of their turns while the cruise ships keep coming.'},
+{id:'geo_tuvalu',image:'./static/GeographyDLC/geo_tuvalu.png',name:['TUVALU','.TV'],icon:'🏝️',type:'WILD',shape:'photo',income:2,cost:5,x:1900,y:1420,rot:-2,sub:'the first country you get free',sp:'THE JOIN IS FREE: the first player to arrive simply owns it. No action, no cost, no Cortisol. After that, normal rules apply.'},
+];
+const GEO_EDGES=[
+ ['geo_missile','geo_pyoncity'],['geo_pyoncity','geo_pyothotel'],['geo_pyothotel','geo_wonsan'],['geo_wonsan','geo_missile'],
+ ['geo_boeing','geo_pyothotel'],['geo_missile','geo_stage5'],['geo_stage5','geo_pillars'],
+ ['geo_scs','geo_tuvalu'],['geo_venice','geo_scs']
+];
+const NMAP={};
+/* The Geography DLC rebuilds these every time the lobby flag flips. */
+let ORIGINAL_NODE_LAYOUT=[];
+let ORIGINAL_LAYOUT_BY_ID={};
 
 const COUNTRY=['us','japan','uk','aus'];
 const BASE_EDGES=[
@@ -444,8 +474,7 @@ const BASE_EDGES=[
  ['bullock','rock'],['rock','jt'],['jt','press'],['watson','golf'],['chalmers','herald']
 ];
 const REMOVED_NODE_IDS=new Set(['notes','vault','unid1','unid2','real','spend','can','tv','ger','timeline','econ','debt']);
-const CLEAN_EDGES=BASE_EDGES.filter(e=>!REMOVED_NODE_IDS.has(e[0])&&!REMOVED_NODE_IDS.has(e[1]));
-let EDGES=CLEAN_EDGES.map(e=>e.slice());
+let CLEAN_EDGES=[],WORLD_EDGES=[],EDGES=[],HIGH_VALUE_NODE_IDS=new Set();
 const ADJ={};
 function rebuildAdj(){
  Object.keys(ADJ).forEach(k=>delete ADJ[k]);
@@ -456,6 +485,30 @@ function rebuildAdj(){
  });
 }
 rebuildAdj();
+/* ================= 🌍 WORLD REBUILD — the DLC toggle rewires everything =================
+   The lobby's Geography flag changes the node set, so every derived mapping is
+   recomputed from scratch: NMAP, the canonical layout deck, the edge graph and
+   the high-value seeding set. With the flag off this produces a world that is
+   byte-for-byte the game as it has always been. */
+const HIGH_VALUE_BASE_IDS=[
+ 'qantas','rba','oil','gold','sat','asics','rock','press','fox','sisy',
+ 'made','bullock','jt','mpc','whistle','term','bond','hedge','petronas'
+];
+let WORLD_GEO=false;
+function rebuildWorld(geo){
+ WORLD_GEO=!!geo;
+ NODES=geo?BASE_NODES.concat(GEO_NODES):BASE_NODES.slice();
+ Object.keys(NMAP).forEach(k=>delete NMAP[k]);
+ NODES.forEach(n=>NMAP[n.id]=n);
+ ORIGINAL_NODE_LAYOUT=NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot}));
+ ORIGINAL_LAYOUT_BY_ID=Object.fromEntries(ORIGINAL_NODE_LAYOUT.map(p=>[p.id,p]));
+ CLEAN_EDGES=BASE_EDGES.filter(e=>!REMOVED_NODE_IDS.has(e[0])&&!REMOVED_NODE_IDS.has(e[1]));
+ WORLD_EDGES=geo?CLEAN_EDGES.concat(GEO_EDGES):CLEAN_EDGES.slice();
+ EDGES=WORLD_EDGES.map(e=>e.slice());
+ HIGH_VALUE_NODE_IDS=new Set(HIGH_VALUE_BASE_IDS.concat(geo?GEO_HIGH_VALUE_IDS:[]));
+ rebuildAdj();
+}
+rebuildWorld(false);
 /* Quikstop is the only exhibit that physically moves each game — five neighbourhoods, same servo */
 const QUIK_HOME={x:350,y:430,rot:2};
 const QUIK_SLOTS=[
@@ -494,7 +547,7 @@ function separateNodes(){
 function applyQuikSlot(slot){
  const q=NMAP.quik;if(!q||!slot)return;
  q.x=slot.x;q.y=slot.y;q.rot=slot.rot;
- EDGES=BASE_EDGES.filter(e=>e[0]!=='quik'&&e[1]!=='quik').concat((slot.links||[]).map(id=>['quik',id]));
+ EDGES=WORLD_EDGES.filter(e=>e[0]!=='quik'&&e[1]!=='quik').concat((slot.links||[]).map(id=>['quik',id]));
  rebuildAdj();
  separateNodes();
 }
@@ -598,7 +651,7 @@ const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);
 /* ================= STATE, NET & HELPERS ================= */
 let S=null;
 const GOAL_MIN=20,GOAL_MAX=999,GOAL_DEF=100;
-const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,roomLabel:null,lobbyChat:[],lobbyPlayers:[],started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,hbTimer:null,lastSeen:0};
+const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,roomLabel:null,lobbyChat:[],lobbyPlayers:[],started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,dlcGeo:false,hbTimer:null,lastSeen:0};
 function clampGoal(v){const n=Math.round(Number(v)||0);if(!n)return GOAL_DEF;return Math.max(GOAL_MIN,Math.min(GOAL_MAX,n))}
 let fxSeq=0;
 const shownFx=new Set();
@@ -765,6 +818,9 @@ function mergeTail(prev,prevN,tail,totalN){
  return prev.slice(0,keep).concat(tail);
 }
 function adoptState(ns){
+ /* The lobby flag travels with the state: rebuild the world before the
+    board-render path touches NMAP/EDGES. */
+ if(ns.dlcGeo!=null&&!!ns.dlcGeo!==WORLD_GEO)rebuildWorld(!!ns.dlcGeo);
  if(S){
   ns.log=mergeTail(S.log,S.logN|0,ns.log||[],ns.logN|0);
   ns.chat=mergeTail(S.chat,S.chatN|0,ns.chat||[],ns.chatN|0);
@@ -833,14 +889,10 @@ function applyLayoutFromState(){
  const slot=QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0];
  if(S.boardLayout){
   S.boardLayout.forEach(p=>{const n=NMAP[p.id];if(n){n.x=p.x;n.y=p.y;n.rot=p.rot}});
-  EDGES=(S.boardEdges||CLEAN_EDGES).map(e=>e.slice());
+  EDGES=(S.boardEdges||WORLD_EDGES).map(e=>e.slice());
   rebuildAdj();
  }else applyQuikSlot(slot);
 }
-const HIGH_VALUE_NODE_IDS=new Set([
- 'qantas','rba','oil','gold','sat','asics','rock','press','fox','sisy',
- 'made','bullock','jt','mpc','whistle','term','bond','hedge','petronas'
-]);
 function generateRandomBoard(slot){
  const q=NMAP.quik;
  q.x=slot.x;q.y=slot.y;q.rot=slot.rot;
@@ -884,6 +936,7 @@ function generateRandomBoard(slot){
  return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
 }
 function initGame(defs){
+ rebuildWorld(!!Net.dlcGeo);
  const quikSlot=Math.floor(Math.random()*QUIK_SLOTS.length);
  const order=defs.map((_,i)=>i);
  for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=order[i];order[i]=order[j];order[j]=t}
@@ -895,13 +948,14 @@ function initGame(defs){
   Net.myIdx=order.indexOf(hostWas);
  }
  const goal=clampGoal(Net.goal);
- S={backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:(charMeta(d.char)||{}).color||PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null};
+ S={backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:(charMeta(d.char)||{}).color||PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null,dlcGeo:!!Net.dlcGeo,rubble:{},ov:null,geoMissiled:false,geoBeach:false,geoBoeing:false,geoCrash:false,geoStage5:false,geoVenice:false,qantasGroundUntil:0,decline:null};
  const slot=QUIK_SLOTS[quikSlot];
  const generated=generateRandomBoard(slot);S.boardLayout=generated.positions;S.boardEdges=generated.edges;
  applyLayoutFromState();
  Net.started=true;
  log('🌅 A new board is dealt — '+NODES.length+' exhibits, '+EDGES.length+' freshly rebuilt connections, '+S.players.length+' at the table.');
  log('🧭 High-value targets are seeded further from Quikstop; the board and routes are reshuffled every game.');
+ if(S.dlcGeo)log('🌍 GEOGRAPHY DLC — 10 extra island exhibits are on the board: missiles, resorts, disputed waters, ESG pillars and one free country.');
  log('🎲 Seating was shuffled. First to move: '+S.players[0].name+'.');
  log('⛽ Quikstop opened '+slot.label+' this game. Everyone starts there with $15 and 2 Intel.');
  log('🏆 WIN CONDITION: $'+goal+' in the bank AND one of every node type ('+WIN_TYPES.join(', ')+'). The host set the target.');
@@ -916,7 +970,7 @@ function initGame(defs){
 /* ================= LOCAL DESKTOP TURN ALERTS =================
    Alerts are opt-out and default on. Permission is requested only from a
    user gesture; the preference is local to this browser/device. */
-const TURN_ALERTS_KEY='bigcon-v1.8-turn-alerts';
+const TURN_ALERTS_KEY='bigcon-v1.9-turn-alerts';
 let lastTurnAlertKey='',lastDeliveredTurnAlertKey='';
 function turnAlertsEnabled(){try{return localStorage.getItem(TURN_ALERTS_KEY)!=='off'}catch(_){return true}}
 function requestTurnNotificationPermission(){
@@ -933,7 +987,7 @@ function notifyCurrentTurn(force){
  lastTurnAlertKey=key;
  if(lastDeliveredTurnAlertKey===key||typeof Notification==='undefined'||Notification.permission!=='granted')return;
  try{
-  const p=S.players[S.cur];const n=new Notification('THE BIG CON v1.8 — Your turn',{body:(p&&p.name?p.name+' — ':'')+'It is your move. Open the game to make your play.',tag:'bigcon-turn-'+key,renotify:false});
+  const p=S.players[S.cur];const n=new Notification('THE BIG CON v1.9 — Your turn',{body:(p&&p.name?p.name+' — ':'')+'It is your move. Open the game to make your play.',tag:'bigcon-turn-'+key,renotify:false});
   lastDeliveredTurnAlertKey=key;
   n.onclick=()=>{try{window.focus()}catch(_){}try{n.close()}catch(_){}};
  }catch(_){}
@@ -950,14 +1004,25 @@ async function startTurn(){
  if(!S||S.over)return;
  log('—— TURN '+S.turn+' · '+pname(S.cur)+' ——');
  S.phase='move';S.mode=null;S.spun=false;S.audited=false;S.cooked=false;S.budgeted=false;S.pressured=false;S.extraStep=false;S.slipped=false;S.dossier=false;
+ if(S.dlcGeo){S.geoMissiled=false;S.geoBeach=false;S.geoBoeing=false;S.geoCrash=false;S.geoStage5=false;S.geoVenice=false}
  if(S.fx.length>30)S.fx=S.fx.slice(-30);
  const p=S.players[S.cur];const own=id=>S.owner[id]===S.cur;
  const underCaution=!!p.raided;S.caution=underCaution;
+ /* 🌍 STAGE 5 DECLINE: the pending "no income" call lands on this player's next turn. */
+ const wasDeclined=S.decline===S.cur;
+ if(S.dlcGeo&&S.decline===S.cur)S.decline=null;
  if(underCaution)log('🚨 '+pname(S.cur)+' spends the turn with the regulators — no income and one step only.');
+ else if(wasDeclined){log('📉 STAGE 5 DECLINE — '+pname(S.cur)+' makes no income this turn: salary, nodes, synergies, all of it.');fxAt(S.cur,'📉 NO INCOME','#ff6b5e')}
  else income(S.cur);
  if(own('rba')&&p.cortisol>0){p.cortisol--;fxAt(S.cur,'🔥−1','#8fbf7f');log('🏛️ Inside the Reserve Bank: −1 Cortisol (now '+p.cortisol+').')}
  if(own('sat')&&p.cortisol>0){p.cortisol--;fxAt(S.cur,'🔥−1','#8fbf7f');log('🛰️ Hiding out in the dry country: −1 Cortisol (now '+p.cortisol+').')}
   if(own('gold')&&p.cortisol>0){const relief=Math.min(2,p.cortisol);p.cortisol-=relief;fxAt(S.cur,'🔥−'+relief,'#8fbf7f');log('🪙 Gold-coloured coins somehow soothe the nerves: −'+relief+' Cortisol (now '+p.cortisol+').')}
+ if(S.dlcGeo&&own('geo_pillars')&&p.cortisol>0){p.cortisol--;fxAt(S.cur,'🔥−1','#8fbf7f');log('🧱 ESG SHIELD — the Pillars absorb 1 Cortisol (now '+p.cortisol+').')}
+ if(S.dlcGeo&&S.ov){
+  const ov=S.ov;
+  if(S.owner[ov.nid]===S.cur&&S.owner.geo_venice===ov.by&&!S.rubble[ov.nid])addCortisol(S.cur,1,'overtourism — the Venice cruise ships keep coming');
+  else S.ov=null;
+ }
  if(own('whistle'))giveIntel(S.cur,1,'the dossier grows');
  if(own('bullock'))giveIntel(S.cur,1,'the Governor briefs you');
  if(own('jt'))giveIntel(S.cur,1,'JTPortal knows things');
@@ -993,7 +1058,7 @@ function income(i){
  const p=S.players[i];const own=id=>S.owner[id]===i;
  const owned=NODES.filter(n=>S.owner[n.id]===i);
  let salary=3;if(own('infl'))salary=4;
- let holdSum=0;owned.forEach(n=>{let v=n.income;if(n.type==='CHART'&&own('ib'))v*=2;holdSum+=v});
+ let holdSum=0;owned.forEach(n=>{let v=n.income;if(n.type==='CHART'&&own('ib'))v*=2;if(n.id==='qantas'&&S.dlcGeo&&qantasGrounded())v=0;holdSum+=v});
  const corp=owned.filter(n=>n.type==='CORPORATE').length,bank=owned.filter(n=>n.type==='BANK').length,chart=owned.filter(n=>n.type==='CHART').length,comm=owned.filter(n=>n.type==='COMMODITY').length,reg=owned.filter(n=>n.type==='REGULATOR').length,med=owned.filter(n=>n.type==='MEDIA').length;
  let syn=0;
  if(own('citi')&&corp)syn+=corp;
@@ -1014,6 +1079,7 @@ function income(i){
  if(own('chalmers')&&reg)syn+=reg;
  if(own('watson')&&own('coal'))syn+=2;
  if(own('mpc')&&chart)syn+=chart;
+ if(S.dlcGeo&&own('geo_pyoncity')){let gc=0;GEO_NODE_IDS.forEach(gid=>{if(S.owner[gid]===i)gc++});if(gc)syn+=gc}
  /* the market mood pays — or takes */
  if(S.mood==='BOOM'&&comm>0){syn+=comm;log('📈 BOOM: commodities pay +$1 each (+'+comm+').')}
  if(S.mood==='FRENZY'&&med>0){syn+=med;log('🗣️ FRENZY: media pays +$1 each (+'+med+').')}
@@ -1089,6 +1155,76 @@ async function applyIntent(pi,m){
    const payout=S.sisyPayout||10;gain(pi,payout,'pushed the boulder uphill');S.sisyPayout=payout*2;log('🪨 The next PUSH will pay $'+S.sisyPayout+'.');await finishNodeAbility(pi)}
   else if(act==='jog'&&abilityPhase(pi)&&!S.mode&&p.pos==='asics'&&S.owner.asics===pi){
    log('👟 '+pname(pi)+' jogs a lap in the circled shoe. Why is it on the board? Irrelevant.');addCortisol(pi,-1,'a cooling lap');await finishNodeAbility(pi)}
+  /* ---- 🌍 GEOGRAPHY DLC ---- */
+  else if(act==='missilemode'&&abilityPhase(pi)&&S.dlcGeo&&!S.mode&&S.owner.geo_missile===pi&&p.money>=4&&p.intel>=1&&!S.geoMissiled){S.mode='missile';sync()}
+  else if(act==='missile'&&abilityPhase(pi)&&S.dlcGeo&&S.mode==='missile'){
+   const n=NMAP[m.id];
+   if(!n||!S.rubble||S.rubble[m.id]){sysTo(pi,'Pick a target that still stands.');S.mode=null;sync();return}
+   if(S.owner[m.id]===pi){sysTo(pi,'You cannot missile your own node.');S.mode=null;sync();return}
+   if(S.owner[m.id]!=null&&S.owner[m.id]===S.owner.geo_pillars){sysTo(pi,'ESG SHIELD — the Pillars of Sustainability protect that node.');S.mode=null;sync();return}
+   if(p.money<4||p.intel<1||S.geoMissiled){sysTo(pi,'Missile unavailable.');S.mode=null;sync();return}
+   p.money-=4;p.intel-=1;fxAt(pi,'−$4 · 🛈−1','#ff6b5e');
+   S.geoMissiled=true;S.mode=null;strikeNode(pi,m.id);
+   await finishNodeAbility(pi);
+  }
+  else if(act==='rebuild'&&S.phase==='action'&&S.dlcGeo&&!S.mode&&S.rubble[p.pos]){
+   const n=NMAP[p.pos],cost=n.cost;
+   if(p.money<cost){sysTo(pi,'Rebuilding '+n.name.join(' ')+' costs $'+cost+' — you cannot afford it.');return}
+   p.money-=cost;fxAt(pi,'−$'+cost,'#ff6b5e');delete S.rubble[p.pos];
+   fx(n.x,n.y-64,'♻️ REBUILT','#7fe08d');
+   log('♻️ '+pname(pi)+' pays $'+cost+' to rebuild '+n.name.join(' ')+'. It returns unowned — first bids from next turn.');
+   const hb=S.owner.geo_pyothotel;if(hb!=null)gain(hb,2,'construction kickbacks on every rebuild');
+   await endOfTurn();
+  }
+  else if(act==='beach'&&abilityPhase(pi)&&S.dlcGeo&&!S.mode&&p.pos==='geo_wonsan'&&S.owner.geo_wonsan===pi&&!S.geoBeach){
+   S.geoBeach=true;log('🏖️ '+pname(pi)+' takes a beach day in Wonsan. The cortisol washes away.');
+   addCortisol(pi,-2,'sunscreen and silence');await finishNodeAbility(pi);
+  }
+  else if(act==='qantasdown'&&abilityPhase(pi)&&S.dlcGeo&&!S.mode&&S.owner.geo_boeing===pi&&p.money>=4&&!S.geoBoeing){
+   if(S.owner.qantas===pi){sysTo(pi,'You own the kangaroo — you cannot shut down your own airline.');return}
+   p.money-=4;fxAt(pi,'−$4','#ff6b5e');S.geoBoeing=true;
+   S.qantasGroundUntil=S.turn+3;
+   const qn=NMAP.qantas;fx(qn.x,qn.y-70,'🛫 GROUNDED','#ff6b5e');
+   log('🛩️ '+pname(pi)+' parks THE CORPORATE BOEING on the runway — QANTAS is grounded for two full turns: no jet for anyone, no income for its owner.');
+   await finishNodeAbility(pi);
+  }
+  else if(act==='oilcrash'&&abilityPhase(pi)&&S.dlcGeo&&!S.mode&&S.owner.geo_scs===pi&&p.money>=3&&!S.geoCrash){
+   p.money-=3;fxAt(pi,'−$3','#ff6b5e');S.geoCrash=true;
+   setMood('PANIC','the South China Sea narrows — crude is crashing');
+   log('🌊 '+pname(pi)+' closes the sea lanes — OIL CRASH! Every oil position goes underwater.');
+   OIL_IDS.forEach(oid=>{
+    const o=S.owner[oid];if(o==null)return;
+    if(S.owner.geo_pillars===o){log('🧱 '+pname(o)+' holds the Pillars of Sustainability — '+NMAP[oid].name.join(' ')+' rides the crash out unscathed.');return}
+    payVoid(o,2,NMAP[oid].name.join(' ')+' crashes underwater');
+   });
+   await finishNodeAbility(pi);
+  }
+  else if(act==='stage5'&&abilityPhase(pi)&&S.dlcGeo&&!S.mode&&S.owner.geo_stage5===pi&&p.intel>=2&&!S.geoStage5){
+   let rich=-1;
+   S.players.forEach((pl,j)=>{if(j!==pi&&(rich<0||S.players[j].money>S.players[rich].money))rich=j});
+   if(rich<0){sysTo(pi,'There is nobody else to decline.');return}
+   if(S.owner.geo_pillars===rich){sysTo(pi,'ESG SHIELD — that player cannot be called into decline.');return}
+   p.intel-=2;fxAt(pi,'🛈−2','#55c1ff');S.geoStage5=true;S.decline=rich;
+   log('📉 '+pname(pi)+' calls STAGE 5 DECLINE — '+pname(rich)+', the richest at the table, will make no income on their next turn.');
+   fxAt(rich,'📉 STAGE 5','#ff6b5e');
+   await finishNodeAbility(pi);
+  }
+  else if(act==='venicecool'&&abilityPhase(pi)&&S.dlcGeo&&!S.mode&&p.pos==='geo_venice'&&S.owner.geo_venice===pi&&!S.geoVenice){
+   S.geoVenice=true;log('🚤 '+pname(pi)+' takes the gondola. Canals > committees.');
+   addCortisol(pi,-1,'a quiet canal');await finishNodeAbility(pi);
+  }
+  else if(act==='overmode'&&S.phase==='action'&&S.dlcGeo&&!S.mode&&S.owner.geo_venice===pi&&p.money>=2&&!S.geoVenice){S.mode='overtour';sync()}
+  else if(act==='overtour'&&S.phase==='action'&&S.dlcGeo&&S.mode==='overtour'){
+   const n=NMAP[m.id],o=S.owner[m.id];
+   if(!n||o==null||o===pi||S.rubble[m.id]){sysTo(pi,'Overtourism targets a rival-owned node that still stands.');S.mode=null;sync();return}
+   if(S.owner.geo_pillars===o){sysTo(pi,'ESG SHIELD — that holding is protected.');S.mode=null;sync();return}
+   if(p.money<2||S.geoVenice){S.mode=null;sync();return}
+   p.money-=2;fxAt(pi,'−$2','#ff6b5e');
+   S.geoVenice=true;S.ov={nid:m.id,by:pi};S.mode=null;
+   fx(n.x,n.y-60,'🛳️ OVERTOURISM','#e19bff');
+   log('🛳️ '+pname(pi)+' sends the cruise ships to '+n.name.join(' ')+' — OVERTOURISM: '+pname(o)+' takes +1 Cortisol at each of their turns while the ships keep coming.');
+   await finishNodeAbility(pi);
+  }
   /* ---- INTEL OPS ---- */
   else if(act==='spy'&&S.phase==='action'&&!S.mode&&p.intel>=2){
    p.intel-=2;fxAt(pi,'🛈−2','#55c1ff');log('🛈 '+pname(pi)+' buys a look at tomorrow.');
@@ -1144,7 +1280,21 @@ async function finishNodeAbility(pi){
  if(canUseBackroomAbility(pi)){S.steps-=2;S.backroomAbilityUsed=true;S.mode=null;log('🤝 Backroom Deals lets '+pname(pi)+' use one node ability during movement (−2 movement steps).');fxAt(pi,'−2 STEPS','#e19bff');sync()}
  else await endOfTurn();
 }
-function qantasGrounded(){return !!(S&&S.turn===1)}
+function qantasGrounded(){return !!(S&&(S.turn===1||(S.dlcGeo&&S.qantasGroundUntil>S.turn)))}
+function qantasGroundedReason(){if(!S)return '';return (S.dlcGeo&&S.qantasGroundUntil>S.turn)?'THE CORPORATE BOEING is parked on the runway':'QANTAS is grounded on the first turn'}
+function strikeNode(pi,nid){
+ const n=NMAP[nid],prev=S.owner[nid];
+ if(prev!=null)delete S.owner[nid];
+ delete S.bugs[nid];
+ S.rubble[nid]=1;
+ if(S.ov&&S.ov.nid===nid)S.ov=null;
+ fx(n.x,n.y-70,'💥 MISSILE','#ff6b5e');
+ log('🚀 '+pname(pi)+' launches a missile at '+n.name.join(' ')+(prev!=null?' — '+pname(prev)+' is expropriated with NO payout.':' — an unowned exhibit goes up in smoke.')+' What is left is rubble: no income, nothing to seize, until someone arrives and pays $'+n.cost+' to rebuild it.');
+ sync();
+}
+function canMissileNode(me,nid){
+ return !!(S&&S.dlcGeo&&!S.rubble[nid]&&S.owner[nid]!==me&&!(S.owner[nid]!=null&&S.owner[nid]===S.owner.geo_pillars));
+}
 function canReach(id){return !(id==='qantas'&&qantasGrounded())}
 function seizeListPrice(pi,n){
  let base=n.cost;
@@ -1160,7 +1310,7 @@ function takeoverCost(pi,nid,base){
  return base*Math.pow(2,Math.max(1,prior));
 }
 async function doMove(pi,id){
- if(!canReach(id)){sysTo(pi,'Qantas is grounded on the first turn — the jet is still at the gate.');return}
+ if(!canReach(id)){sysTo(pi,qantasGroundedReason()+' — the jet is still at the gate.');return}
  const prevPos=S.players[pi].pos;
  const owner=S.owner[id];
  if(owner!=null&&owner!==pi){
@@ -1174,16 +1324,26 @@ async function doMove(pi,id){
   }
  }
  S.players[pi].pos=id;S.steps--;
+ if(S.dlcGeo&&id==='geo_tuvalu'&&S.owner[id]==null&&!S.rubble[id]){
+  S.owner[id]=pi;const n=NMAP[id];
+  fx(n.x,n.y-64,'🏝️ CLAIMED','#7fe08d');
+  log('🏝️ '+pname(pi)+' lands in TUVALU — THE JOIN IS FREE. First arrival claims it: no action, no cost, no Cortisol.');
+ }
  if(prevPos==='sisy'&&id!=='sisy'&&S.owner.back!==pi)S.sisyPayout=10;
  log('→ '+pname(pi)+' moves to '+NMAP[id].name.join(' ')+'.');
  if(S.steps<=0)await endMovement();else sync();
 }
 async function doFly(pi,id){
  const p=S.players[pi];
- if(!canReach(id)){sysTo(pi,'Qantas is grounded on the first turn — you cannot land there yet.');S.mode=null;sync();return}
+ if(!canReach(id)){sysTo(pi,qantasGroundedReason()+' — you cannot land there yet.');S.mode=null;sync();return}
  if(p.money<3){sysTo(pi,'The Flying Kangaroo wants $3 for the seat.');S.mode=null;sync();return}
  const prevFlyPos=p.pos;
  p.money-=3;fxAt(pi,'−$3','#ff6b5e');S.mode=null;p.pos=id;S.steps=0;
+ if(S.dlcGeo&&id==='geo_tuvalu'&&S.owner[id]==null&&!S.rubble[id]){
+  S.owner[id]=pi;const n=NMAP[id];
+  fx(n.x,n.y-64,'🏝️ CLAIMED','#7fe08d');
+  log('🏝️ '+pname(pi)+' jets into TUVALU — THE JOIN IS FREE. First arrival claims it: no action, no cost, no Cortisol.');
+ }
  if(prevFlyPos==='sisy'&&id!=='sisy'&&S.owner.back!==pi)S.sisyPayout=10;
  log('✈️ '+pname(pi)+' takes the Qantas jet straight to '+NMAP[id].name.join(' ')+'.');
  await endMovement();
@@ -1208,6 +1368,7 @@ async function maybePeek(){
 }
 async function doSeize(pi){
  const p=S.players[pi];const nid=p.pos;const n=NMAP[nid];const prev=S.owner[nid];
+ if(S.dlcGeo&&S.rubble[nid]){sysTo(pi,'That node is rubble — it must be rebuilt before it can be owned.');return}
  if(prev===pi)return;
  let base=seizeListPrice(pi,n);
  if(S.slipped&&S.owner.f1===pi){base=Math.max(1,base-2);S.slipped='spent';log('🏎️ The slipstream carries '+pname(pi)+' into the deal — $2 off.')}
@@ -1328,6 +1489,17 @@ function showRules(){
  +'<h4>Cortisol &amp; raids</h4><p>Cortisol is capped at 9. At 🔥9 the regulators raid you, and a raid hurts: your <b>two</b> highest-income nodes are seized, every bug you planted is pulled, you pay a fine of $5 or 30% of your cash (whichever is larger), your Intel is burned down to 1, Cortisol resets to 0 and your <b>next turn brings no income and a single step</b>. <b>The whole table sees the raid</b> — it pops up on every screen. The Hedge Fund pays $3 on every raid; the Group Photograph pays 1 🛈 Intel.</p>'
  +'<h4>ACCC concentration</h4><p>Charts are exempt from the six type-based industries; the custom MONETARY POLICY industry also counts the CASH-RATE and INFLATION charts. If you hold <b>more than two</b> properties in the same tracked industry — banking, regulators, corporates, coal, commodities, media, oil, education, JTPortal, Jim Chalmers, Big Bessent, or monetary policy — then at the start of <b>your turn</b> there is a <b>33% chance</b> the ACCC investigates. You pay a <b>20% fine on both cash and Intel</b>; divested nodes are randomly redistributed to other players (maximum one node per player), with any remainder returned to the market. Owning <b>Mark Watson</b> exempts your holdings in the COAL industry from ACCC monopoly investigations.</p>'
  +'<h4>MADE (???)</h4><p>Nobody knows what the purple graphic is, but it moves money: at the <b>start of every player\'s turn</b> there is a <b>33% chance</b> MADE pays out — <b>+$10 and +1 Intel</b> to its owner. Every other player with <b>more than two nodes and at least $50</b> pays 15% of their cash to the void. Seizing MADE always costs list price — it never inflates after a takeover. You may also force MADE to divest from any rival for <b>5 Intel</b>, paying the former owner <b>$7 compensation</b>.</p>'
+ +'<h4>🌍 The Geography DLC — the board expands over the water</h4><p>Host-toggled in the lobby (look for <b>ENABLE THE GEOGRAPHY DLC</b>). <b>On: the board deals 80 exhibits.</b> Off: the same 70 exhibits as always.</p>'
+ +'<ul><li><b>MISSILE COMMAND ($8)</b> — LAUNCH A MISSILE ($4 + 1 🛈, once per turn): strike any node that still stands. An <b>owned node is expropriated with NO payout</b> to its former owner; either way the pin becomes <b>RUBBLE</b> — no income, nothing to seize. Stand on rubble in your action phase and pay its <b>list price to rebuild</b>: it returns unowned, buyable from any player’s next turn. The <b>PILLARS</b> shield their owner’s nodes.</li>'
+ +'<li><b>PYONGYANG CITY ($6)</b> — +$1 income per Geography node you own. The capital collects tribute.</li>'
+ +'<li><b>PYONGYANG HOTEL ($8)</b> — collects <b>$2</b> whenever anyone rebuilds rubble. Construction kickbacks, allegedly.</li>'
+ +'<li><b>WONSAN RESORT ($5)</b> — stand there (owned) for <b>BEACH DAY</b>: free, once per turn, <b>−2 Cortisol</b>.</li>'
+ +'<li><b>THE CORPORATE BOEING ($7)</b> — SHUT DOWN QANTAS ($4, once per turn): the kangaroo is <b>grounded for two full turns</b> — nobody flies the jet, and its owner collects nothing from it.</li>'
+ +'<li><b>THE SOUTH CHINA SEA ($9)</b> — TRIGGER AN OIL CRASH ($3, once per turn): PANIC mood, and every player pays <b>$2 per oil node</b> they own (Pillars players exempt).</li>'
+ +'<li><b>STAGE 5 DECLINE ($4)</b> — CALL STAGE 5 (2 🛈, once per turn): the <b>richest player</b> (never you) makes <b>no income of any kind on their next turn</b>.</li>'
+ +'<li><b>PILLARS OF SUSTAINABILITY ($6)</b> — <b>ESG SHIELD</b>: −1 Cortisol each of your turns; your nodes cannot be missile-struck, you pay nothing on an oil crash, and Stage 5 cannot call you.</li>'
+ +'<li><b>VENICE DI CCTV ($8)</b> — stand there (owned) for <b>GONDOLA THERAPY</b>: free, once per turn, −1 Cortisol. Or, as your action, send <b>OVERTOURISM</b> ($2, once per turn, one or the other): pick a rival destination — its owner takes <b>+1 Cortisol</b> at the start of every turn of theirs while you keep Venice and the ships keep coming.</li>'
+ +'<li><b>TUVALU .TV ($5)</b> — THE JOIN IS FREE: the first player to arrive simply owns it. No action, no cost, no Cortisol.</li></ul>'
  +'<h4>Turn notifications &amp; player identity</h4><p>Desktop turn alerts are enabled by default. Use <b>TURN ALERTS</b> in the game sidebar to switch them on or off; your choice is saved on this device. Your browser or desktop app must allow notifications for alerts to appear. Choose a character in the lobby to lock in that character’s dedicated player colour, shown beside the portrait and used throughout the game. Player names support up to 80 characters.</p><p class="fine">No dice. The dice were rigged from the start.</p>',
  options:[{label:'Back to the con',v:1}]});
 }
@@ -1355,6 +1527,9 @@ function nodeSVG(n,cls){
  const ownr=o!=null;
  const oc=ownr?S.players[o].color:'#8a7a5f';
  const bug=S&&S.bugs[n.id]!=null;
+ const rb=S&&S.dlcGeo&&S.rubble[n.id];
+ const ot=S&&S.dlcGeo&&S.ov&&S.ov.nid===n.id;
+ const gq=S&&S.dlcGeo&&n.id==='qantas'&&qantasGrounded();
  const md=MOODS[S?S.mood:'CALM'];
  const mb=moodBoost(n);
  const box=nodeBox(n),w=box[0],h=box[1];
@@ -1372,12 +1547,17 @@ function nodeSVG(n,cls){
  }
  const ownerTag=ownr?'<circle cx="'+(w/2-10)+'" cy="'+(-h/2+10)+'" r="8" fill="'+oc+'" stroke="#000" stroke-width="1.5"/><text x="'+(w/2-10)+'" y="'+(-h/2+13.5)+'" text-anchor="middle" font-size="8" font-weight="900" fill="#fff">'+String(o+1)+'</text>':'';
  const bugTag=bug?'<text x="'+(w/2-24)+'" y="'+(-h/2+18)+'" font-size="12">🐛</text>':'';
+ const badges=(ot?'<text x="'+(w/2-36)+'" y="'+(-h/2+18)+'" font-size="12">🛳️</text>':'')+(gq?'<text x="'+(-w/2+6)+'" y="'+(-h/2+18)+'" font-size="12">⛔</text>':'');
  const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+ let tip='';
+ if(rb)tip+='&#10;💥 RUBBLE — arrive and pay $'+n.cost+' in your action phase to rebuild. No income, nothing to seize until rebuilt.';
+ if(ot)tip+='&#10;🛳️ OVERTOURISM — its owner takes +1 Cortisol at each of their turns while Venice stays owned.';
  return '<g class="node '+cls+'" data-id="'+n.id+'" transform="translate('+n.x+','+n.y+') rotate('+n.rot+')">'
   +ownerGlow+moodGlow+halo
   +'<image class="node-image" href="'+n.image+'" x="'+(-w/2)+'" y="'+(-h/2)+'" width="'+w+'" height="'+h+'" preserveAspectRatio="none"/>'
-  +ownerTag+bugTag
-  +'<title>'+esc(n.name.join(' '))+' — '+n.type+' · $'+n.income+'/turn · seize $'+n.cost+'&#10;'+esc(n.sub)+'&#10;'+esc(n.sp)+'</title></g>';
+  +(rb?'<rect x="'+(-w/2)+'" y="'+(-h/2)+'" width="'+w+'" height="'+h+'" fill="rgba(8,6,6,0.72)"/><text x="0" y="-4" text-anchor="middle" font-size="22">💥</text><text x="0" y="16" text-anchor="middle" font-size="9" font-weight="900" fill="#ffb08a" letter-spacing="1">REBUILD $'+n.cost+'</text>':'')
+  +ownerTag+bugTag+badges
+  +'<title>'+esc(n.name.join(' '))+' — '+n.type+' · $'+n.income+'/turn · seize $'+n.cost+'&#10;'+esc(n.sub)+'&#10;'+esc(n.sp)+tip+'</title></g>';
 }
 function tokenLayer(){
  const byPos={};S.players.forEach((p,i)=>{(byPos[p.pos]=byPos[p.pos]||[]).push(i)});
@@ -1413,6 +1593,17 @@ function bugTargetable(n){
   &&S.bugs[n.id]==null
   &&(ADJ[S.players[me].pos]||[]).includes(n.id);
 }
+function missileTargetable(n){
+ const me=Net.myIdx;
+ return S&&S.phase==='action'&&S.mode==='missile'&&S.cur===me&&S.dlcGeo
+  &&canMissileNode(me,n.id);
+}
+function overtourTargetable(n){
+ const me=Net.myIdx;
+ return S&&S.phase==='action'&&S.mode==='overtour'&&S.cur===me&&S.dlcGeo
+  &&S.owner[n.id]!=null&&S.owner[n.id]!==me&&!S.rubble[n.id]
+  &&S.owner[n.id]!==S.owner.geo_pillars;
+}
 function renderBoard(){
  const svg=$('board');
  /* static content lives in #root; floating fx live in #fxg and survive re-renders */
@@ -1446,7 +1637,7 @@ function renderBoard(){
  s+=scribble(1830,860,100,64,4)+scribble(1150,540,95,72,-3)+scribble(1000,1380,92,62,5)+scribble(1630,930,96,62,-4)+scribble(1500,470,98,62,3)+scribble(2020,185,92,66,-5)+scribble(390,1200,102,68,3);
  s+=redArrow(2090,330,1140,310)+redArrow(1965,235,1580,440)+redArrow(1080,585,480,1140)+redArrow(1130,1170,420,640);
  s+=scribText(1930,392,-4,'CASH RATE ↑')+scribText(1150,390,3,'“BOND…”')+scribText(1715,448,-6,'WTI +12%')+scribText(455,295,2,'TOO BIG TO FAIL')+scribText(1930,745,-3,'GOLD ↑')+scribText(1050,1150,4,'RATES ON HOLD')+scribText(640,810,-5,'INSIDER TRADING?');
- s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="268" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.8</text></g>';
+ s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="268" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.9</text></g>';
  /* the market wire — the mood, live */
  s+='<g transform="translate(1230,30)"><rect x="-700" y="-13" width="1400" height="26" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-682" cy="0" r="5" fill="'+md.color+'"/><text x="-668" y="4" font-size="11" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="-20" y="4" text-anchor="middle" font-size="10.5" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,88))+'</text><text x="688" y="4" text-anchor="end" font-size="10" font-weight="800" fill="#9ad">1🛈=$'+md.rate+'</text></g>';
  let lx=560;
@@ -1466,6 +1657,8 @@ function renderBoard(){
    if(S.mode==='fly')cls=canReach(n.id)?'click':'';
    else if(S.phase==='move'&&S.cur===Net.myIdx&&S.steps>0&&(ADJ[curpos]||[]).includes(n.id)&&canReach(n.id))cls='click reach';
    else if(bugTargetable(n))cls='click target';
+   else if(missileTargetable(n))cls='click target';
+   else if(overtourTargetable(n))cls='click target';
   }
   s+=nodeSVG(n,cls);
  });
@@ -1529,6 +1722,10 @@ function renderSide(){
      if(S.owner.fox===me)phaseHtml+='<button class="act" data-act="spin" data-kind="fox"'+((p.money>=2?'':' disabled')+backroomStepLock)+'>🦊 Fox spin — $2 · 2 steps</button>';
      if(S.owner.sisy===me&&p.pos==='sisy')phaseHtml+='<button class="act" data-act="push"'+backroomStepLock+'>🪨 Push the boulder — +$'+(S.sisyPayout||10)+' · 2 steps</button>';
      if(S.owner.asics===me&&p.pos==='asics')phaseHtml+='<button class="act" data-act="jog"'+backroomStepLock+'>👟 Jog a lap — −1 🔥 · 2 steps</button>';
+     if(S.dlcGeo&&S.owner.geo_missile===me)phaseHtml+='<button class="act" data-act="missilemode"'+((p.money>=4&&p.intel>=1&&!S.geoMissiled?'':' disabled')+backroomStepLock)+'>🚀 Missile — $4 + 1🛈 · 2 steps</button>';
+     if(S.dlcGeo&&S.owner.geo_boeing===me)phaseHtml+='<button class="act" data-act="qantasdown"'+((p.money>=4&&!S.geoBoeing?'':' disabled')+backroomStepLock)+'>🛩️ Ground Qantas — $4 · 2 steps</button>';
+     if(S.dlcGeo&&S.owner.geo_scs===me)phaseHtml+='<button class="act" data-act="oilcrash"'+((p.money>=3&&!S.geoCrash?'':' disabled')+backroomStepLock)+'>🌊 Oil crash — $3 · 2 steps</button>';
+     if(S.dlcGeo&&S.owner.geo_stage5===me)phaseHtml+='<button class="act" data-act="stage5"'+((p.intel>=2&&!S.geoStage5?'':' disabled')+backroomStepLock)+'>📉 Stage 5 — 2🛈 · 2 steps</button>';
      phaseHtml+='</div>';
     }
 
@@ -1538,6 +1735,10 @@ function renderSide(){
   const powline='<div class="pow"><b>'+n.name.join(' ')+'</b> — '+n.sp+'</div>';
   if(S.mode==='bug'){
    phaseHtml='<div class="phlabel">PLANT A BUG</div>'+powline+'<p>Click a <b>highlighted rival node next to you</b> on the board. You will skim <b>$1/turn</b> off it.</p><button class="act" data-act="cancel">Cancel</button>';
+  } else if(S.mode==='missile'){
+   phaseHtml='<div class="phlabel">🚀 LAUNCH A MISSILE — $4 + 1 🛈 (once per turn)</div>'+powline+'<p>Click <b>any node</b> on the board. An owned node is expropriated with <b>no payout</b>; either way it becomes <b>rubble</b> — no income, nothing to seize, until someone stands there and pays its list price to rebuild (a rebuild is an action of its own).</p><button class="act" data-act="cancel">Abort the launch</button>';
+  } else if(S.mode==='overtour'){
+   phaseHtml='<div class="phlabel">🛳️ OVERTOURISM — $2</div>'+powline+'<p>Click a <b>rival-owned node</b>. While you own Venice and the ships keep coming, its owner takes <b>+1 Cortisol</b> at the start of each of their turns.</p><button class="act" data-act="cancel">Cancel</button>';
   } else if(S.mode==='leak'||S.mode==='audit'||S.mode==='tweet'||S.mode==='roast'){
    const lab={leak:'LEAK DIRT — 2 🛈 (rival +2 🔥)',audit:'AUDIT — $4 (rival +1 🔥)',tweet:'THE TWEET — $2 (rival loses Intel)',roast:(S.spinKind==='fox'?'FOX SPIN — $2 (rival +1 🔥)':'SPIN THE PRESS — $3 (rival +1 🔥)')}[S.mode];
    phaseHtml='<div class="phlabel">'+lab+'</div>'+powline+'<p>Click a <b>rival</b> in THE SYNDICATE list below.</p><button class="act" data-act="cancel">Cancel</button>';
@@ -1551,6 +1752,9 @@ function renderSide(){
     btns.push('<div class="ownnote">You already control <b>'+n.name.join(' ')+'</b>.</div>');
     if(nid==='sisy')btns.push('<button class="act primary" data-act="push">Push the boulder — +$'+(S.sisyPayout||10)+' (next push doubles)</button>');
     if(nid==='asics')btns.push('<button class="act primary" data-act="jog">Jog a lap — free −1 🔥</button>');
+   }else if(S.dlcGeo&&S.rubble&&S.rubble[nid]){
+    btns.push('<button class="act primary" data-act="rebuild"'+(p.money>=cost?'':' disabled')+'>♻️ Rebuild '+n.name.join(' ')+' — $'+cost+' (returns unowned — first bids from next turn)</button>');
+    btns.push('<div class="ownnote">Rubble since a missile strike — no income, nothing to seize, until it is rebuilt.</div>');
    }else{
     const afford=maxPay>=cost;
     const lbl=isTake?('Hostile takeover — $'+cost+(flatSeize(nid)?' (never inflates)':S.dossier?' (DOSSIER: list price)':' (takeover '+(S.seizeCount[nid]||0)+'×)')):('Seize '+n.name.join(' ')+' — $'+cost);
@@ -1567,6 +1771,17 @@ function renderSide(){
    if(S.owner.trump===me)btns.push('<button class="act" data-act="tweetmode"'+(p.money>=2?'':' disabled')+'>🦅 The Tweet — $2 (rival +1 🔥)</button>');
    if(S.owner.gov===me)btns.push('<button class="act" data-act="budget"'+((p.money>=3&&!S.budgeted)?'':' disabled')+'>🦘 Budget night — $3 (rivals each pay you $1, +1 🛈)</button>');
    if(S.owner.back===me)btns.push('<button class="act" data-act="pressure"'+(!S.pressured?'':' disabled')+'>🤝 Lean on the table — rivals each +1 🔥</button>');
+   /* ---- 🌍 GEOGRAPHY DLC ---- */
+   if(S.dlcGeo&&S.owner.geo_missile===me)btns.push('<button class="act" data-act="missilemode"'+((p.money>=4&&p.intel>=1&&!S.geoMissiled)?'':' disabled')+' title="Strike any node — the owner is expropriated with no payout; the node becomes rubble ($4 + 1 Intel, once per turn)">🚀 Launch a missile — $4 + 1 🛈 (expropriate &amp; rubble)</button>');
+   if(S.dlcGeo&&S.owner.geo_boeing===me)btns.push('<button class="act" data-act="qantasdown"'+((p.money>=4&&!S.geoBoeing&&S.owner.qantas!==me)?'':' disabled')+' title="QANTAS grounded for two full turns — no jet, no income ($4, once per turn)">🛩️ Shut down Qantas — $4 (grounded two turns)</button>');
+   if(S.dlcGeo&&S.owner.geo_scs===me)btns.push('<button class="act" data-act="oilcrash"'+((p.money>=3&&!S.geoCrash)?'':' disabled')+' title="PANIC mood; everyone pays $2 per oil node owned — Pillars exempt ($3, once per turn)">🌊 Trigger an oil crash — $3 (oil pays underwater)</button>');
+   if(S.dlcGeo&&S.owner.geo_stage5===me)btns.push('<button class="act" data-act="stage5"'+((p.intel>=2&&!S.geoStage5)?'':' disabled')+' title="The richest player (not you) makes no income on their next turn (2 Intel, once per turn)">📉 Call Stage 5 decline — 2 🛈</button>');
+   if(S.dlcGeo&&S.owner.geo_venice===me&&nid==='geo_venice')btns.push('<button class="act" data-act="venicecool"'+(!S.geoVenice?'':' disabled')+' title="Free — once per turn, either this or Overtourism">🚤 Gondola therapy — free −1 🔥</button>');
+   if(S.dlcGeo&&S.owner.geo_venice===me){
+    const ot=NODES.filter(nn=>S.owner[nn.id]!=null&&S.owner[nn.id]!==me&&!(S.rubble&&S.rubble[nn.id])&&S.owner[nn.id]!==S.owner.geo_pillars).length;
+    btns.push('<button class="act" data-act="overmode"'+((p.money>=2&&!S.geoVenice&&ot>0)?'':' disabled')+' title="Pick a rival destination: its owner steams +1 Cortisol per turn while the ships keep coming ($2, once per turn, either/or)">🛳️ Overtourism — $2 (mark a rival node)</button>');
+   }
+   if(S.dlcGeo&&S.owner.geo_wonsan===me&&nid==='geo_wonsan')btns.push('<button class="act primary" data-act="beach"'+(!S.geoBeach?'':' disabled')+' title="Free — once per turn">🏖️ Beach day — free −2 🔥</button>');
    /* ---- INTEL OPS ---- */
    btns.push('<div class="sublabel">INTEL OPS · you hold 🛈 '+p.intel+' · market rate $'+md.rate+'/🛈</div>');
    btns.push('<button class="act" data-act="spy"'+(p.intel>=2?'':' disabled')+' title="Free action — see the next event card, anywhere">🛈 Spy on the deck — 2 🛈 (see next event)</button>');
@@ -1602,7 +1817,7 @@ function renderSide(){
  const chatVal=(window.__chatDraft)||'';
  side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomLabel||Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':'SEAT '+(Net.myIdx+1))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
   +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
-  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.8 · 70 exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
+  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.9 · '+(S.dlcGeo?'80':'70')+' exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
   +'<div class="turncard" style="border-color:'+p.color+'"><div class="turnlab">TURN '+S.turn+'</div><div class="turnname" style="color:'+p.color+'">'+esc(p.name)+(isTurn?' — that’s you':'')+'</div>'
   +'<div class="resline">$ '+p.money+' &nbsp;·&nbsp; 🛈 '+p.intel+' &nbsp;·&nbsp; 🔥 '+p.cortisol+(p.cortisol>=6?' <span class="danger">RAID AT 9</span>':'')+'</div>'
   +'<div class="holds" title="holdings of '+esc(p.name)+'">'+(isTurn?ownedIcons:'<span style="opacity:.5;font-size:12px">'+NODES.filter(n=>S.owner[n.id]===S.cur).length+' holdings</span>')+'</div></div>'
@@ -1676,11 +1891,13 @@ function handleNodeTap(t){
  if(S.phase==='move'){
   if(S.mode==='fly'){dispatch({act:'fly',id});return}
   if(S.steps<=0)return;
-  if(!canReach(id)){toast('Qantas is grounded on the first turn.');return}
+  if(!canReach(id)){toast(qantasGroundedReason()+'.');return}
   if((ADJ[S.players[Net.myIdx].pos]||[]).includes(id))dispatch({act:'move',id});
   else toast('You can only move along the red threads — click a highlighted node.');
- } else if(S.phase==='action'&&S.mode==='bug'){
-  dispatch({act:'bug',id});
+ } else if(S.phase==='action'){
+  if(S.mode==='bug')dispatch({act:'bug',id});
+  else if(S.mode==='missile')dispatch({act:'missile',id});
+  else if(S.mode==='overtour')dispatch({act:'overtour',id});
  }
 }
  $('zin').onclick=()=>zoomAt(0.8,innerWidth/2,innerHeight/2);
@@ -1715,6 +1932,14 @@ function handleNodeTap(t){
   case 'auditmode':dispatch({act:'auditmode'});break;
   case 'tweetmode':dispatch({act:'tweetmode'});break;
    case 'pressure':dispatch({act:'pressure'});break;
+   case 'missilemode':dispatch({act:'missilemode'});break;
+   case 'rebuild':dispatch({act:'rebuild'});break;
+   case 'beach':dispatch({act:'beach'});break;
+   case 'qantasdown':dispatch({act:'qantasdown'});break;
+   case 'oilcrash':dispatch({act:'oilcrash'});break;
+   case 'stage5':dispatch({act:'stage5'});break;
+   case 'overmode':dispatch({act:'overmode'});break;
+   case 'venicecool':dispatch({act:'venicecool'});break;
   case 'spin':dispatch({act:'spin',kind:b.dataset.kind});break;
   case 'cook':dispatch({act:'cook'});break;
   case 'budget':dispatch({act:'budget'});break;
@@ -2018,7 +2243,7 @@ function handleHello(c,name,playerId){
   if(old&&old.open){c.send({t:'kick',reason:'This player is already connected in this room. Close the other tab before joining again.'});setTimeout(()=>{try{c.close()}catch(e){}},800);return;}
   Net.roster[existing].conn=c;Net.conns[existing]=c;c.__bigconClosed=false;c.__lastSeen=Date.now();
   if(Net.started&&S){S.players[existing].dc=false;clearTimeout(Net.autoT);log('🔔 '+name+' reconnected to their existing seat.');c.send({t:'welcome',idx:existing,s:pubState(true)});sync(true);return;}
-  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),chat:Net.lobbyChat.slice(-40)});broadcastLobby();return;
+  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,chat:Net.lobbyChat.slice(-40)});broadcastLobby();return;
  }
  if(Net.started&&S){
   const idx=S.players.findIndex(pl=>pl.dc&&pl.name.toLowerCase()===name.toLowerCase());
@@ -2038,7 +2263,7 @@ function handleHello(c,name,playerId){
  Net.roster.push({name,playerId:playerId||crypto.randomUUID(),conn:c,char:null});
  Net.conns=Net.roster.map(e=>e.conn);
  c.__lastSeen=Date.now();
- c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),chat:Net.lobbyChat.slice(-40)});
+ c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,chat:Net.lobbyChat.slice(-40)});
  broadcastLobby();
 }
 function onHostClose(c){
@@ -2072,7 +2297,7 @@ function onHostClose(c){
  }
 }
 function broadcastLobby(){
- sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal),chat:Net.lobbyChat.slice(-40)});
+ sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,chat:Net.lobbyChat.slice(-40)});
  renderLobbyList();renderLobbyChat();
  const n=Net.roster.length;
  const ready=n>=1&&Net.roster.every(e=>e.char);
@@ -2219,6 +2444,7 @@ function onGuestData(d){
    if(d.lobby)Net.lobbyPlayers=d.lobby;
    if(d.chat)Net.lobbyChat=d.chat;
    if(d.goal)setGoalUI(d.goal);
+   if(d.dlcGeo!==undefined)setGeoUI(!!d.dlcGeo);
    if(d.s){S=null;adoptState(d.s);Net.begun=true;enterGame()}
    else showLobby(false);
    break;
@@ -2227,6 +2453,7 @@ function onGuestData(d){
    Net.lobbyChat=d.chat||[];
    renderLobbyChat();
    if(d.goal)setGoalUI(d.goal);
+   if(d.dlcGeo!==undefined)setGeoUI(!!d.dlcGeo);
    renderLobbyList();
    break;
   case 'begin':S=null;adoptState(d.s);if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
@@ -2252,6 +2479,16 @@ function setGoalUI(v){
  if(inp&&document.activeElement!==inp)inp.value=Net.goal;
  const note=$('goalNote');
  if(note)note.textContent=Net.role==='host'?'first player to $'+Net.goal+' wins the con':'the host set the target at $'+Net.goal;
+}
+/* 🌍 The Geography DLC is the same anchor: the host flips it, the table mirrors it. */
+function setGeoUI(v){
+ Net.dlcGeo=!!v;
+ const t=$('geoToggle');
+ if(t)t.checked=!!v;
+ const note=$('geoNote');
+ if(note)note.textContent=Net.role==='host'
+  ?(v?'GEOGRAPHY DLC IS ON — the next con deals 80 exhibits across the water.':'Off — the board stays at 70 exhibits. Tick the box to expand it.')
+  :(v?'The host enabled the Geography DLC — the board has 80 exhibits.':'The host has the Geography DLC off — the board has 70 exhibits.');
 }
 function showLobby(asHost){
  $('hostForm').classList.remove('show');$('joinForm').classList.remove('show');
@@ -2300,6 +2537,11 @@ function showLobby(asHost){
  const push=()=>{if(Net.role!=='host')return;setGoalUI(gi.value);broadcastLobby()};
  gi.oninput=()=>{if(Net.role!=='host')return;const n=Number(gi.value);if(n>=GOAL_MIN&&n<=GOAL_MAX)push()};
  gi.onchange=()=>{if(Net.role!=='host')return;gi.value=clampGoal(gi.value);push()};
+})();
+(function(){
+ const gt=$('geoToggle');
+ if(!gt)return;
+ gt.onchange=()=>{if(Net.role!=='host'){gt.checked=Net.dlcGeo;toast('The host decides whether the Geography DLC is played.');return}setGeoUI(gt.checked);broadcastLobby()};
 })();
  $('btnCopy').onclick=()=>{
  const code=Net.roomLabel||Net.roomCode||'';

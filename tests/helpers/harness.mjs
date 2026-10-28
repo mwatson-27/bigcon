@@ -206,6 +206,11 @@ export function loadEngine(opts = {}) {
     get Net(){return Net}, get NODES(){return NODES}, get NMAP(){return NMAP},
     get EDGES(){return EDGES}, set EDGES(v){EDGES=v}, get ADJ(){return ADJ},
     get CLEAN_EDGES(){return CLEAN_EDGES}, get BASE_EDGES(){return BASE_EDGES},
+    get BASE_NODES(){return BASE_NODES}, set NODES(v){NODES=v},
+    get GEO_NODES(){return GEO_NODES}, get GEO_EDGES(){return GEO_EDGES},
+    get GEO_NODE_IDS(){return GEO_NODE_IDS}, get GEO_HIGH_VALUE_IDS(){return GEO_HIGH_VALUE_IDS},
+    get OIL_IDS(){return OIL_IDS}, get WORLD_EDGES(){return WORLD_EDGES},
+    get WORLD_GEO(){return WORLD_GEO},
     get REMOVED_NODE_IDS(){return REMOVED_NODE_IDS}, get ORIGINAL_LAYOUT_BY_ID(){return ORIGINAL_LAYOUT_BY_ID},
     get CARDS(){return CARDS}, get CARDBYID(){return CARDBYID}, get MOODS(){return MOODS},
     get CHARS(){return CHARS}, get BUZZWORDS(){return BUZZWORDS}, get INDUSTRIES(){return INDUSTRIES},
@@ -237,11 +242,12 @@ export function loadEngine(opts = {}) {
     'applyIntent','startTurn','endOfTurn','nextTurn','winCheck','initGame','income','addCortisol','raid','madePay',
     'acccInvestigate','concentratedIndustries','ownedInIndustry','industryNodes','generateRandomBoard','rebuildAdj',
     'separateNodes','applyQuikSlot','nodeBox','pubState','adoptState','mergeTail','flushState','sendAll','sendTo',
-    'sysTo','askPlayer','announceAll','revealAll','drawCard','handleHello','onHostClose','onHostData','broadcastLobby',
+    'sysTo','askPlayer','announceAll','revealAll','drawCard','handleHello','onHostClose','onHostData','broadcastLobby','setGeoUI',
     'addLobbyChat','addChat','applyChar','lobbyPlayers','clampGoal','matchBuzzword','codeSlug','codeLabel','genCode',
     'shuffle','esc','showRules','setMood','giveIntel','gain','payVoid','payTo','payFee','log','fxAt','fx','pname',
     'doMove','doFly','doBug','doSpin','doSeize','endMovement','maybePeek','seizeListPrice','flatSeize','takeoverCost',
-    'canReach','qantasGrounded','abilityPhase','finishNodeAbility','startHostHeartbeat','sync','setNetStatus','toast',
+    'canReach','qantasGrounded','qantasGroundedReason','abilityPhase','finishNodeAbility','startHostHeartbeat','sync','setNetStatus','toast',
+    'rebuildWorld','strikeNode','canMissileNode',
   ];
   for (const n of fns) engine.f[n] = ctx[n];
   return engine;
@@ -275,6 +281,7 @@ export async function makeGame(engine, playerCount = 2, opts = {}) {
   Net.role = 'host';
   Net.myIdx = 0;
   Net.goal = opts.goal ?? 100;
+  Net.dlcGeo = !!opts.geo;
   Net.started = false;
   Net.begun = true;
   Net.started = false;
@@ -318,6 +325,8 @@ export function makeState(engine, over = {}) {
     budgeted: false, extraStep: false, slipped: false, caution: false, dossier: false, jtUsed: false,
     spinKind: 'press', mood: 'CALM', wire: 'all quiet on the wire… for now', fx: [], over: false, mode: null,
     log: [], chat: [], logN: 0, chatN: 0, quikSlot: 0, boardLayout: null, boardEdges: null, auditedOnce: false,
+    dlcGeo: false, rubble: {}, ov: null, geoMissiled: false, geoBeach: false, geoBoeing: false,
+    geoCrash: false, geoStage5: false, geoVenice: false, qantasGroundUntil: 0, decline: null,
   };
   /* Overriding defaults is merged always, so fixture authors only set what they care about. */
   for (const [k, v] of Object.entries(over)) if (k !== 'players') s[k] = v;
