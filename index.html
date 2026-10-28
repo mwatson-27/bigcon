@@ -1884,7 +1884,7 @@ function renderSide(){
   } else if(S.mode==='missile'){
    phaseHtml='<div class="phlabel">🚀 LAUNCH A MISSILE — $4 + 1 🛈 (once per turn)</div>'+powline+'<p>Click <b>any node</b> on the board. An owned node is expropriated with <b>no payout</b>; either way it becomes <b>rubble</b> — no income, nothing to seize, until someone stands there and pays its list price to rebuild (a rebuild is an action of its own).</p><button class="act" data-act="cancel">Abort the launch</button>';
   } else if(S.mode==='blockade'){
-   phaseHtml='<div class="phlabel">🚧 BLOCKADE — FREE · ONE PER TURN</div>'+powline+'<p>Click <b>any node</b> on the board to wall it off for <b>one full rotation</b> — nobody walks in, nobody lands the jet, not even you. Income and missiles are unaffected; rubble and already-walled nodes are refused.</p><button class="act" data-act="cancel">Cancel</button>';
+   phaseHtml='<div class="phlabel">🚧 ALBANESE BLOCKADE — FREE · ONCE PER TURN</div>'+powline+'<p>Click any <b>highlighted node</b> to block entry for one full rotation. Blocked nodes display a 🚧 marker. Nobody can walk or fly into one, including you; income and missiles are unaffected. Rubble and already-blocked nodes cannot be selected.</p><button class="act" data-act="cancel">Cancel</button>';
   } else if(S.mode==='overtour'){
    phaseHtml='<div class="phlabel">🛳️ OVERTOURISM — $2</div>'+powline+'<p>Click a <b>rival-owned node</b>. While you own Venice and the ships keep coming, its owner takes <b>+1 Cortisol</b> at the start of each of their turns.</p><button class="act" data-act="cancel">Cancel</button>';
   } else if(S.mode==='leak'||S.mode==='audit'||S.mode==='tweet'||S.mode==='roast'){
