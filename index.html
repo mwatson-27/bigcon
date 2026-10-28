@@ -214,9 +214,8 @@ body.game-open{overflow:hidden}
     <div class="gn" style="margin-top:6px">THE FULL SET: BANK · REGULATOR · CHART · WILD · CORPORATE · COMMODITY · MEDIA</div>
    </div>
    <div class="goalrow">
-    <div class="cl">🌍 GEOGRAPHY DLC — TEN EXTRA ISLAND EXHIBITS, HOST-TOGGLED</div>
+    <div class="cl">🌍 GEOGRAPHY DLC — ELEVEN EXTRA ISLAND EXHIBITS, HOST-TOGGLED</div>
     <div class="goalctl"><label style="display:flex;align-items:center;gap:10px;font:inherit;cursor:pointer"><input id="geoToggle" type="checkbox" style="width:20px;height:20px;accent-color:#168388;cursor:pointer"><span style="white-space:nowrap">ENABLE THE GEOGRAPHY DLC</span></label></div>
-    <div class="gn" id="geoNote" style="margin-top:6px">MISSILE COMMAND · PYONGYANG CITY · PYONGYANG HOTEL · WONSAN RESORT · KIM JONG UN · THE CORPORATE BOEING · THE SOUTH CHINA SEA · STAGE 5 DECLINE · PILLARS OF SUSTAINABILITY · VENICE · TUVALU — missiles &amp; rubble, regulator investigations, oil crashes, grounding the airline, the ESG shield, overtourism, the Supreme Leader’s Intel and one free country. The host decides; the whole table plays the same board.</div>
    </div>
    <div class="lobbychat">
     <div class="cl">THE WIRE — LOBBY CHAT</div>
@@ -2621,10 +2620,6 @@ function setGeoUI(v){
  Net.dlcGeo=!!v;
  const t=$('geoToggle');
  if(t)t.checked=!!v;
- const note=$('geoNote');
- if(note)note.textContent=Net.role==='host'
-  ?(v?'GEOGRAPHY DLC IS ON — the next con deals 81 exhibits across the water.':'Off — the board stays at 70 exhibits. Tick the box to expand it.')
-  :(v?'The host enabled the Geography DLC — the board has 81 exhibits.':'The host has the Geography DLC off — the board has 70 exhibits.');
 }
 function showLobby(asHost){
  $('hostForm').classList.remove('show');$('joinForm').classList.remove('show');
