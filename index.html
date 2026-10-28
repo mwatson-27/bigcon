@@ -1384,8 +1384,8 @@ async function finishNodeAbility(pi){
  if(canUseBackroomAbility(pi)){S.steps-=2;S.backroomAbilityUsed=true;S.mode=null;log('🤝 Backroom Deals lets '+pname(pi)+' use one node ability during movement (−2 movement steps).');fxAt(pi,'−2 STEPS','#e19bff');sync()}
  else await endOfTurn();
 }
-function qantasGrounded(){return !!(S&&(S.turn===1||(S.dlcGeo&&S.qantasGroundUntil>S.turn)))}
-function qantasGroundedReason(){if(!S)return '';return (S.dlcGeo&&S.qantasGroundUntil>S.turn)?'THE CORPORATE BOEING is parked on the runway':'QANTAS is grounded on the first turn'}
+function qantasGrounded(){return !!(S&&S.dlcGeo&&S.qantasGroundUntil>S.turn)}
+function qantasGroundedReason(){if(!S)return '';return qantasGrounded()?'THE CORPORATE BOEING is parked on the runway':'QANTAS is not grounded'}
 function strikeNode(pi,nid,opts){
  const silent=opts&&opts.silent;
  const n=NMAP[nid],prev=S.owner[nid];
