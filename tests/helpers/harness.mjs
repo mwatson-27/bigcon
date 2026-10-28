@@ -210,6 +210,7 @@ export function loadEngine(opts = {}) {
     get GEO_NODES(){return GEO_NODES}, get GEO_EDGES(){return GEO_EDGES},
     get GEO_NODE_IDS(){return GEO_NODE_IDS}, get GEO_HIGH_VALUE_IDS(){return GEO_HIGH_VALUE_IDS},
     get GEO_NK_IDS(){return GEO_NK_IDS},
+    get PROJ_PAUSE_MS(){return PROJ_PAUSE_MS},
     get OIL_IDS(){return OIL_IDS}, get WORLD_EDGES(){return WORLD_EDGES},
     get WORLD_GEO(){return WORLD_GEO},
     get REMOVED_NODE_IDS(){return REMOVED_NODE_IDS}, get ORIGINAL_LAYOUT_BY_ID(){return ORIGINAL_LAYOUT_BY_ID},

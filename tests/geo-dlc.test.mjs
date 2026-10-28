@@ -110,16 +110,19 @@ test('GD-03 the missile expropriates an owned node: no payout, rubble, once per 
   armAction(e);
   await e.f.applyIntent(0, { act: 'missilemode' });
   assert.equal(S.mode, 'missile', 'the launch console arms');
-  /* The strike's effects are synchronous — and so is the quiet quarter the
-     chain deals before the promise yields (card.run() has no awaits). */
+  /* The launch cost is paid at the pad; the impact lands after the flight —
+     the virtual clock advances the pause the host holds for the warhead, and
+     the end-of-turn chain (the quiet quarter) follows the impact. */
   const strike = e.f.applyIntent(0, { act: 'missile', id: 'oil' });
-  assert.equal(S.players[0].money, 20 - 4 + 2, '−$4 launch cost, + the quiet quarter already in');
+  assert.equal(S.players[0].money, 20 - 4, '−$4 launch cost at the pad');
   assert.equal(S.players[0].intel, 2, '−1 Intel launch cost');
+  assert.equal(S.geoMissiled, true, 'one missile per turn');
+  e.clock.advance(e.acc.PROJ_PAUSE_MS + 100); /* the flight plays, then the impact lands */
+  await strike;
+  await settle();
   assert.equal(S.owner.oil, undefined, 'the pin is expropriated — nobody owns it');
   assert.equal(S.rubble.oil, 1, 'and it is rubble');
-  assert.equal(S.geoMissiled, true, 'one missile per turn');
   assert.ok(S.log.some(l => l.includes('expropriated with NO payout')), 'the table saw the expropriation');
-  await strike;
   await settle();
   /* The former owner is paid nothing — their turn pays salary only + quiet. */
   assert.equal(S.players[1].money, 40 + 2 + 3, 'no payout: quiet $2 + $3 salary, the strike paid nothing');
@@ -163,10 +166,12 @@ test('GD-05 rubble: rebuild pays list price, returns UNOWNED, and the Hotel skim
   S.owner.geo_pyothotel = 1;             // the rival also owns the Pyongyang Hotel
   S.players[0].money = 40; S.players[0].intel = 3;
   S.players[1].money = 10;
-  /* Chain 1 — the strike. */
+  /* Chain 1 — the strike (the flight pause holds the chain until the clock advances). */
   armAction(e);
   await e.f.applyIntent(0, { act: 'missilemode' });
-  await e.f.applyIntent(0, { act: 'missile', id: 'oil' });
+  const strike = e.f.applyIntent(0, { act: 'missile', id: 'oil' });
+  e.clock.advance(e.acc.PROJ_PAUSE_MS + 100);
+  await strike;
   await settle();
   assert.equal(S.players[0].money, 40 - 4 + 2, 'actor: −$4, + quiet $2');
   assert.equal(S.players[1].money, 10 + 2 + (3 + 2), 'no payout; rival quiet + salary + hotel income');
@@ -589,12 +594,13 @@ test('GD-17 the silo only fires on-site — exempted by Backroom mid-move or own
   await e.f.applyIntent(0, { act: 'missilemode' });
   assert.equal(S.mode, 'missile', 'Backroom Deals mid-move arms the silo');
   const strike = e.f.applyIntent(0, { act: 'missile', id: 'oil' });
+  e.clock.advance(e.acc.PROJ_PAUSE_MS + 100); /* the flight plays, then the impact lands mid-move */
+  await strike;
+  await settle();
   assert.equal(S.rubble.oil, 1, 'the strike lands mid-move');
   assert.equal(S.steps, 1, 'the Backroom ability cost 2 movement steps');
   assert.equal(S.backroomAbilityUsed, true, 'one Backroom ability per turn');
   assert.equal(S.phase, 'move', 'a mid-move launch does not end the turn');
-  await strike;
-  await settle();
 });
 
 /* ================= GD-18 — the REGULATOR probe ================= */
@@ -608,11 +614,12 @@ test('GD-18 striking a REGULATOR schedules a next-turn investigation: 50/50 raid
   armAction(e);
   await e.f.applyIntent(0, { act: 'missilemode' });
   const strike = e.f.applyIntent(0, { act: 'missile', id: 'accc' });
+  e.clock.advance(e.acc.PROJ_PAUSE_MS + 100); /* the flight plays, then the impact lands */
+  await strike;
+  await settle();
   assert.equal(S.missileProbe && S.missileProbe.by, 0, 'the probe is scheduled against the striker');
   assert.equal(S.rubble.accc, 1, 'the regulator burns');
   assert.equal(S.owner.accc, undefined, 'expropriated with no payout');
-  await strike;
-  await settle();
   assert.equal(S.players[1].money, 40 + 2 + 3, 'no payout to the regulator’s owner');
   /* The probe lands on the striker's next startTurn — seeded dice. */
   const r = makeRng(23); r();            // roll 1 picks the agency
@@ -656,6 +663,9 @@ test('GD-19 the warhead at Tuvalu reflects onto the launcher’s own board and t
   assert.equal(S.rubble.geo_missile, 1, 'the silo blows up in the backblast');
   assert.equal(S.owner.geo_missile, undefined, 'gone with no payout');
   assert.ok(S.log.some(l => l.includes('REFUSES it')), 'the table saw the reflection');
+  e.clock.advance(e.acc.PROJ_PAUSE_MS + 100); /* the warhead flies out to the island */
+  await settle();
+  e.clock.advance(e.acc.PROJ_PAUSE_MS + 100); /* the reflected warhead flies home before the event card */
   await strike;
   await settle();
   assert.equal(S.rubble.oil, 1, 'the reflected warhead took the one launcher pin');
@@ -868,4 +878,34 @@ test('GD-24 projectile fx: synced payload, nose-first rig, mirrored leftward fli
   /* The fx ring buffer still caps at 40. */
   for (let i = 0; i < 50; i++) e.f.projFx('missile', 'geo_missile', 'geo_pyoncity');
   assert.ok(S.fx.length <= 40, 'the fx cap holds under projectile spam');
+});
+
+/* ================= GD-25 — the flight plays before the popup ================= */
+test('GD-25 the launch holds the turn: the warhead and the jet fly before the next screen takes over', async t => {
+  const { e, S } = await geoGame(t);
+  S.owner.geo_missile = 0;
+  S.owner.oil = 1;
+  S.players[0].pos = 'geo_missile';
+  S.players[0].money = 20; S.players[0].intel = 3;
+  armAction(e);
+  await e.f.applyIntent(0, { act: 'missilemode' });
+  const strike = e.f.applyIntent(0, { act: 'missile', id: 'oil' });
+  await settle();
+  assert.equal(S.phase, 'action', 'the turn is held while the warhead flies');
+  assert.ok(S.fx.some(f => f.proj === 1), 'the warhead is in the air on every screen');
+  assert.equal(e.modalRec.some(m => m.title.startsWith('MARKET EVENT')), false, 'no event card during the flight');
+  e.clock.advance(e.acc.PROJ_PAUSE_MS + 100); /* the flight window elapses */
+  await strike;
+  await settle();
+  assert.ok(e.modalRec.some(m => m.title.startsWith('MARKET EVENT')), 'the market event lands only after the flight');
+  assert.equal(S.phase, 'move', 'and the turn has rolled on');
+  /* The jet, too: the landing (and the phase it opens) waits out the flight. */
+  const flight = e.f.doFly(0, 'rba');
+  await settle();
+  assert.equal(S.phase, 'move', 'the jet is still in the air — the phase holds');
+  assert.ok(S.fx.some(f => f.proj === 1 && f.img.includes('qantas')), 'the jet is in the air');
+  assert.equal(S.players[0].pos, 'rba', 'the booking is settled at takeoff');
+  e.clock.advance(e.acc.PROJ_PAUSE_MS + 100);
+  await flight;
+  assert.equal(S.phase, 'action', 'the action phase opens only after the jet lands');
 });

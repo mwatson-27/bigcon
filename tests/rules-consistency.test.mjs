@@ -169,7 +169,9 @@ test('RC-03a movement-side actions: favor 1🛈→+1 step, slip $2→+2 steps, f
   await settle();
   assert.equal(S.mode, 'fly', 'flymode needs $3 and the kangaroo');
   assert.equal(S.players[0].money, 20, 'no charge until the flight lands');
-  await engine.f.applyIntent(0, { act: 'fly', id: 'rba' });
+  const fly = engine.f.applyIntent(0, { act: 'fly', id: 'rba' });
+  engine.clock.advance(engine.acc.PROJ_PAUSE_MS + 100); /* the jet flies before the landing */
+  await fly;
   await settle();
   assert.equal(S.players[0].money, 17, 'the jet costs exactly $3');
   assert.equal(S.players[0].pos, 'rba', 'lands at the chosen node');

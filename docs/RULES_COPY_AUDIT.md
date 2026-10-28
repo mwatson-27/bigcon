@@ -310,3 +310,9 @@ The wave-2 batch changes both DLC and base-game copy; all of it is pinned by the
 - BLOCKADE is documented as a base-game Actions entry ("free, the PM, once per turn — wall off literally any node for one full rotation: nobody walks in, nobody lands, not even you") plus the albo node `sp`, the blockade-mode hint and the sidebar button tooltip. Not DLC-gated.
 - The ACCC concentration paragraph now says the regulators investigate — ASIC runs monetary-policy books as **market manipulation**, the ACCC takes every other industry (mechanics unchanged).
 - Automated validation after wave 2: 121 tests, 120 pass, 1 documented skip, 0 fail.
+
+## Geography DLC wave-3 copy status (2026-10-28)
+
+Wave 3 is pure timing, not copy: the missile-strike and Qantas-jet flights now play before the market-event card (or any other table-wide bulletin) covers the board. No strings moved — the help bullets, node `sp`, hints, tooltips and logs are unchanged from wave 2, so every wave-2 pin above still holds.
+
+- Automated validation after wave 3: 122 tests, 121 pass, 1 documented skip, 0 fail (new GD-25 pins the flight-before-popup ordering; the strike/flight suites advance the virtual clock past the new 1.3s launch pause).
