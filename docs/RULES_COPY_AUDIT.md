@@ -298,3 +298,15 @@ The Geography DLC ships with its own copy, audited against the engine as part of
 - Version/exhibit copy moved to a dual form: the sidebar brand reads `v1.9 · 80/70 exhibits` depending on `S.dlcGeo`, the help text says "On: the board deals 80 exhibits. Off: the same 70 exhibits as always", and the board stamp/`<title>`/notification/turn-alert storage key all read v1.9. The base-game "70 exhibits" pin is intact and `82 exhibits` appears nowhere (RC-01/RC-07 still enforce both).
 - Node power copy (`sp`) for the ten geo nodes matches the implemented behaviours; the lobby note names all ten nodes and states the host decides.
 - No drift found between DLC copy and behaviour; findings #11–#17 above are unaffected. Automated validation on the DLC branch: 112 tests, 111 pass, 1 documented skip, 0 fail.
+
+## Geography DLC wave-2 copy status (2026-10-28)
+
+The wave-2 batch changes both DLC and base-game copy; all of it is pinned by the GD suite:
+
+- Exhibit counts moved again: the sidebar brand reads `v1.9 · 81/70 exhibits`, the help text and the lobby note say **81 exhibits** with the DLC on (eleven geo nodes), and the init log says "11 extra island exhibits". `82 exhibits` still appears nowhere; the base "70 exhibits" pin is intact (RC-01/RC-07).
+- The silo's on-site rule is now copy everywhere: node `sp`, the missile-mode hint, the launch button tooltip and the help bullet all say you must stand on the silo to fire, with the two exemptions (Backroom Deals mid-move, owning Kim Jong Un). The help bullet also documents the REGULATOR probe (50/50 indictment, +1 Cortisol either way).
+- KIM JONG UN ($6) has a help bullet (WILD, +1 Intel per startTurn, exempts the on-site rule) and the lobby note names it; its `sp` copy matches the implemented passive.
+- TUVALU's help bullet and the lobby note mention the missile reflection (warhead returns to the launcher's holdings, silo blows up).
+- BLOCKADE is documented as a base-game Actions entry ("free, the PM, once per turn — wall off literally any node for one full rotation: nobody walks in, nobody lands, not even you") plus the albo node `sp`, the blockade-mode hint and the sidebar button tooltip. Not DLC-gated.
+- The ACCC concentration paragraph now says the regulators investigate — ASIC runs monetary-policy books as **market manipulation**, the ACCC takes every other industry (mechanics unchanged).
+- Automated validation after wave 2: 121 tests, 120 pass, 1 documented skip, 0 fail.

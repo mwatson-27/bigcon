@@ -1,7 +1,7 @@
 /*
  * 🌍 GEOGRAPHY DLC — section GD of docs/CODE_LEVEL_TEST_PLAN.md.
  *
- * Ten extra island exhibits, host-toggled in the lobby. The suite runs against
+ * Eleven extra island exhibits, host-toggled in the lobby. The suite runs against
  * the same engine contract as the base game: rebuildWorld flips the node set,
  * applyIntent gains ten actions, startTurn/income gain passives.
  *
@@ -16,7 +16,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadEngine, makeGame, makeConn, makeState, withSeed, bfs, SOURCE, repoRoot } from './helpers/harness.mjs';
+import { loadEngine, makeGame, makeConn, makeState, withSeed, withSeedAsync, makeRng, bfs, SOURCE, repoRoot } from './helpers/harness.mjs';
 
 const engineFor = t => { const e = loadEngine(); t.after(() => e.dispose()); return e; };
 async function settle() {
@@ -43,7 +43,7 @@ test('GD-01 rebuildWorld(false) mirrors the classic 70-exhibit world; (true) dea
   assert.equal(acc.HIGH_VALUE_NODE_IDS.has('geo_pillars'), false);
 
   e.f.rebuildWorld(true);
-  assert.equal(acc.NODES.length, 80, '80 exhibits with the DLC on');
+  assert.equal(acc.NODES.length, 81, '81 exhibits with the DLC on');
   assert.equal(acc.WORLD_GEO, true);
   for (const id of acc.GEO_NODE_IDS) assert.ok(acc.NMAP[id], `DLC pin dealt: ${id}`);
   for (const id of acc.GEO_HIGH_VALUE_IDS) assert.ok(acc.HIGH_VALUE_NODE_IDS.has(id), `${id} seeded far out`);
@@ -74,8 +74,8 @@ test('GD-01b every GEOGRAPHY node is structurally complete with a shipped asset'
     assert.ok(fs.existsSync(path.join(repoRoot, n.image.replace(/^\.\//, ''))), `${n.id}: ${n.image} exists on disk`);
     assert.ok(typeof n.sp === 'string' && n.sp.length > 40, `${n.id}: has power copy`);
   }
-  assert.equal(e.acc.GEO_NODES.length, 10, 'ten islands, no more, no fewer');
-  assert.equal(new Set(e.acc.GEO_NODES.map(n => n.id)).size, 10, 'and no duplicate ids');
+  assert.equal(e.acc.GEO_NODES.length, 11, 'eleven islands, no more, no fewer');
+  assert.equal(new Set(e.acc.GEO_NODES.map(n => n.id)).size, 11, 'and no duplicate ids');
 });
 
 /* ================= GD-02 — the DLC world deals a connected 80-pin board ================= */
@@ -87,14 +87,14 @@ test('GD-02 with the toggle on, initGame deals 80 pins and every seed keeps the 
     withSeed(seed, () => e.f.initGame([{ name: 'A', char: 'markwatson' }, { name: 'B', char: 'tomkins' }]));
     const S = e.acc.S;
     assert.equal(S.dlcGeo, true, 'the flag rides with the state');
-    assert.equal(e.acc.NODES.length, 80, '80 pins dealt');
+    assert.equal(e.acc.NODES.length, 81, '81 pins dealt');
     assert.equal(Object.keys(S.rubble).length, 0, 'a fresh world has no rubble');
     assert.ok(S.log.some(l => l.includes('GEOGRAPHY DLC')), 'the table is told the DLC is live');
     const reached = bfs(e.acc.ADJ, 'quik');
     for (const id of e.acc.GEO_NODE_IDS) {
       assert.ok(reached.has(id), `seed ${seed}: ${id} reachable from Quikstop`);
     }
-    assert.equal(reached.size, 80, `seed ${seed}: the whole board is walkable`);
+    assert.equal(reached.size, 81, `seed ${seed}: the whole board is walkable`);
     e.dispose();
   }
 });
@@ -103,6 +103,7 @@ test('GD-02 with the toggle on, initGame deals 80 pins and every seed keeps the 
 test('GD-03 the missile expropriates an owned node: no payout, rubble, once per turn', async t => {
   const { e, S } = await geoGame(t);
   S.owner.geo_missile = 0;
+  S.players[0].pos = 'geo_missile';      // the silo only fires from the pad
   S.owner.oil = 1;                       // the rival's prize asset
   S.players[0].money = 20; S.players[0].intel = 3;
   S.players[1].money = 40;
@@ -131,6 +132,7 @@ test('GD-03 the missile expropriates an owned node: no payout, rubble, once per 
 test('GD-04 missile guards: no self-strike, Pillars immune, no charge on refused launches', async t => {
   const { e, S } = await geoGame(t);
   S.owner.geo_missile = 0;
+  S.players[0].pos = 'geo_missile';      // the silo only fires from the pad
   S.owner.geo_pillars = 1;               // the rival ESG-shields their holdings
   S.owner.sat = 1;
   S.owner.oil = 0;                       // the actor's own node
@@ -156,6 +158,7 @@ test('GD-04 missile guards: no self-strike, Pillars immune, no charge on refused
 test('GD-05 rubble: rebuild pays list price, returns UNOWNED, and the Hotel skims $2 off every rebuild', async t => {
   const { e, S } = await geoGame(t);
   S.owner.geo_missile = 0;
+  S.players[0].pos = 'geo_missile';      // the silo only fires from the pad
   S.owner.oil = 1;                       // strike the rival's oil pit
   S.owner.geo_pyothotel = 1;             // the rival also owns the Pyongyang Hotel
   S.players[0].money = 40; S.players[0].intel = 3;
@@ -231,6 +234,12 @@ test('GD-07 Pyongyang City pays +$1 income per GEOGRAPHY node owned', t => {
   S2.owner.geo_pillars = 0;
   e.f.income(0);
   assert.equal(S2.players[0].money, 50 + 3 + (2 + 2 + 1) + 3, 'three pins held ⇒ +$3 tribute');
+  const S3 = makeState(e, { dlcGeo: true, players: [{ money: 50 }] });
+  e.acc.S = S3;
+  S3.owner.geo_pyoncity = 0;
+  S3.owner.geo_kim = 0;      // income 0 — but the Supreme Leader still counts as tribute
+  e.f.income(0);
+  assert.equal(S3.players[0].money, 50 + 3 + (2 + 0) + 2, 'kim rides the tribute: city + kim ⇒ +$2');
 });
 
 /* ================= GD-08/09 — THE CORPORATE BOEING vs QANTAS ================= */
@@ -493,7 +502,7 @@ test('GD-14 the generated 80-pin board stays a valid collage across 30 seeds', {
       assert.ok(posById.has(id), `seed ${seed}: ${id} plotted`);
     }
     const reached = bfs(e.acc.ADJ, 'quik');
-    assert.equal(reached.size, 80, `seed ${seed}: fully connected`);
+    assert.equal(reached.size, 81, `seed ${seed}: fully connected`);
     /* Geo pins never share a plot with each other. */
     for (let i = 0; i < e.acc.GEO_NODE_IDS.length; i++) {
       for (let j = i + 1; j < e.acc.GEO_NODE_IDS.length; j++) {
@@ -524,7 +533,7 @@ test('GD-15 the geo flag is host-gated in the lobby and travels with every paylo
   const guest = engineFor(t);
   assert.equal(guest.acc.NODES.length, 70, 'guests start in the base world');
   guest.f.adoptState(JSON.parse(JSON.stringify(e.f.pubState(true))));
-  assert.equal(guest.acc.NODES.length, 80, 'adopting a geo state rebuilds the guest world');
+  assert.equal(guest.acc.NODES.length, 81, 'adopting a geo state rebuilds the guest world');
   assert.equal(guest.acc.WORLD_GEO, true);
   assert.ok(guest.acc.NMAP.geo_tuvalu, 'guests see every pin');
   assert.equal(JSON.parse(JSON.stringify(guest.acc.S)).dlcGeo, true);
@@ -540,8 +549,323 @@ test('GD-15 the geo flag is host-gated in the lobby and travels with every paylo
 /* ================= GD-16 — help copy & the exhibit-count contract ================= */
 test('GD-16 the help panel explains the DLC without breaking the base-game copy pins', t => {
   assert.ok(SOURCE.includes('The Geography DLC'), 'the help section is titled');
-  assert.ok(SOURCE.includes('80 exhibits'), 'help copy says what the board becomes');
+  assert.ok(SOURCE.includes('81 exhibits'), 'help copy says what the board becomes');
   assert.ok(SOURCE.includes('v1.9'), 'the version stamp moved');
   assert.ok(SOURCE.includes('70 exhibits'), 'the base-game exhibit copy is intact (RC-01 pin)');
   assert.ok(!SOURCE.includes('82 exhibits'), 'no stale exhibit counts');
+  assert.ok(SOURCE.includes('KIM JONG UN ($6)'), 'the Supreme Leader has a help bullet');
+  assert.ok(SOURCE.includes('must stand on the silo to fire'), 'the on-site launch rule is documented');
+  assert.ok(SOURCE.includes('50/50 indictment'), 'the probe is documented');
+  assert.ok(SOURCE.includes('REFLECTED'), 'the Tuvalu reflection is documented');
+  assert.ok(SOURCE.includes('wall off literally any node'), 'the blockade is documented');
+  assert.ok(SOURCE.includes('market manipulation'), 'the ASIC rebrand is documented');
+});
+
+/* ================= GD-17 — the silo's on-site rule ================= */
+test('GD-17 the silo only fires on-site — exempted by Backroom mid-move or owning Kim Jong Un', async t => {
+  const { e, S } = await geoGame(t);
+  S.owner.geo_missile = 0;
+  S.owner.oil = 1;
+  S.players[0].money = 20; S.players[0].intel = 3;
+  /* Off-site action phase: no console. */
+  S.players[0].pos = 'quik';
+  armAction(e);
+  await e.f.applyIntent(0, { act: 'missilemode' });
+  assert.notEqual(S.mode, 'missile', 'off-site: the console refuses to arm');
+  /* On the pad: it arms. */
+  S.players[0].pos = 'geo_missile';
+  await e.f.applyIntent(0, { act: 'missilemode' });
+  assert.equal(S.mode, 'missile', 'on the pad: the console arms');
+  S.mode = null;
+  /* Kim exemption: off-site but holding the Supreme Leader. */
+  S.owner.geo_kim = 0;
+  S.players[0].pos = 'quik';
+  await e.f.applyIntent(0, { act: 'missilemode' });
+  assert.equal(S.mode, 'missile', 'owning Kim Jong Un arms the silo from anywhere');
+  S.mode = null; S.owner.geo_kim = 1;    // hand Kim away for the next leg
+  /* Backroom exemption: mid-move, Backroom Deals, 2 steps in hand. */
+  S.owner.back = 0;
+  S.cur = 0; S.phase = 'move'; S.mode = null; S.steps = 3; S.backroomAbilityUsed = false;
+  await e.f.applyIntent(0, { act: 'missilemode' });
+  assert.equal(S.mode, 'missile', 'Backroom Deals mid-move arms the silo');
+  const strike = e.f.applyIntent(0, { act: 'missile', id: 'oil' });
+  assert.equal(S.rubble.oil, 1, 'the strike lands mid-move');
+  assert.equal(S.steps, 1, 'the Backroom ability cost 2 movement steps');
+  assert.equal(S.backroomAbilityUsed, true, 'one Backroom ability per turn');
+  assert.equal(S.phase, 'move', 'a mid-move launch does not end the turn');
+  await strike;
+  await settle();
+});
+
+/* ================= GD-18 — the REGULATOR probe ================= */
+test('GD-18 striking a REGULATOR schedules a next-turn investigation: 50/50 raid, +1 Cortisol either way', async t => {
+  const { e, S } = await geoGame(t);
+  S.owner.geo_missile = 0;
+  S.players[0].pos = 'geo_missile';
+  S.owner.accc = 1;                      // the rival runs the regulator — for now
+  S.players[0].money = 20; S.players[0].intel = 3;
+  S.players[1].money = 40; S.players[1].cortisol = 0;
+  armAction(e);
+  await e.f.applyIntent(0, { act: 'missilemode' });
+  const strike = e.f.applyIntent(0, { act: 'missile', id: 'accc' });
+  assert.equal(S.missileProbe && S.missileProbe.by, 0, 'the probe is scheduled against the striker');
+  assert.equal(S.rubble.accc, 1, 'the regulator burns');
+  assert.equal(S.owner.accc, undefined, 'expropriated with no payout');
+  await strike;
+  await settle();
+  assert.equal(S.players[1].money, 40 + 2 + 3, 'no payout to the regulator’s owner');
+  /* The probe lands on the striker's next startTurn — seeded dice. */
+  const r = makeRng(23); r();            // roll 1 picks the agency
+  const indicted = r() < 0.5;            // roll 2 picks the verdict
+  S.cur = 0;
+  S.players[0].money = 20; S.players[0].intel = 3; S.players[0].cortisol = 0; S.players[0].raided = 0;
+  S.players[0].pos = 'quik';
+  S.owner.geo_missile = 0;
+  await withSeedAsync(23, () => e.f.startTurn());
+  assert.ok(S.log.some(l => l.includes('closes the investigation')), 'the investigation resolved out loud');
+  if (indicted) {
+    assert.equal(S.caution, true, 'indictment ⇒ the raid’s caution bites this same turn');
+    assert.ok(S.log.some(l => l.includes('REGULATOR RAID')), 'the full raid hit the table');
+    assert.equal(S.owner.geo_missile, undefined, 'the raid stripped the silo');
+    assert.ok(S.log.some(l => l.includes('spends the turn with the regulators')), 'no income, one step — this turn');
+    assert.equal(S.players[0].cortisol, 1, 'the raid resets Cortisol, the probe adds its +1');
+    assert.equal(S.players[0].money, 20 - 6, 'the raid fined 30% of $20 (min $5)');
+    assert.equal(S.players[0].intel, 1, 'Intel burned down to 1');
+    assert.equal(S.rubble.geo_missile, undefined, 'a raid seizes — it does not rubble');
+  } else {
+    assert.equal(S.players[0].raided, 0, 'cleared — no raid');
+    assert.equal(S.players[0].cortisol, 1, 'but +1 Cortisol either way');
+    assert.equal(S.players[0].money, 20 + 3, 'no caution — income lands normally');
+    assert.equal(S.caution, false);
+  }
+});
+
+/* ================= GD-19 — Tuvalu reflects ================= */
+test('GD-19 the warhead at Tuvalu reflects onto the launcher’s own board and the silo blows up', async t => {
+  const { e, S } = await geoGame(t);
+  S.owner.geo_missile = 0;
+  S.owner.oil = 0;                       // one launcher pin — a deterministic reflection target
+  S.owner.geo_pyoncity = 1;              // a rival pin that must survive
+  S.players[0].pos = 'geo_missile';
+  S.players[0].money = 20; S.players[0].intel = 3;
+  armAction(e);
+  await e.f.applyIntent(0, { act: 'missilemode' });
+  const strike = e.f.applyIntent(0, { act: 'missile', id: 'geo_tuvalu' });
+  assert.equal(S.rubble.geo_tuvalu, undefined, 'Tuvalu itself never burns');
+  assert.equal(S.owner.geo_tuvalu, undefined, 'nor changes hands');
+  assert.equal(S.rubble.geo_missile, 1, 'the silo blows up in the backblast');
+  assert.equal(S.owner.geo_missile, undefined, 'gone with no payout');
+  assert.ok(S.log.some(l => l.includes('REFUSES it')), 'the table saw the reflection');
+  await strike;
+  await settle();
+  assert.equal(S.rubble.oil, 1, 'the reflected warhead took the one launcher pin');
+  assert.equal(S.owner.geo_pyoncity, 1, 'rival pins are out of the reflection’s reach');
+  assert.ok(S.log.some(l => l.includes('backblast')), 'the self-destruct is on the record');
+  assert.equal(S.missileProbe, null, 'no probe cascades from the reflected strike');
+});
+
+/* ================= GD-20 — the PM's blockade ================= */
+test('GD-20 blockade: free, once per turn, one full rotation, and even the owner is locked out', async t => {
+  const { e, S } = await geoGame(t);
+  S.owner.albo = 0;
+  S.owner.oil = 1;
+  S.players[0].money = 10;
+  const preRival = S.players[1].money;
+  armAction(e);
+  await e.f.applyIntent(0, { act: 'blockmode' });
+  assert.equal(S.mode, 'blockade', 'the blockade console arms');
+  const wall = e.f.applyIntent(0, { act: 'blockade', id: 'oil' });
+  assert.equal(S.blockades.oil, S.turn + S.players.length, 'expiry is exactly one rotation out');
+  assert.equal(S.blockadeUsed, true, 'one wall per turn');
+  assert.equal(S.players[0].money, 10 + 2, 'free — only the quiet quarter lands');
+  assert.ok(S.log.some(l => l.includes('BLOCKADED for one full rotation')), 'the table saw the wall');
+  await wall;
+  await settle();
+  /* The wall blocks feet, not money: the walled pin still pays its owner. */
+  assert.equal(S.players[1].money, preRival + 2 + 3 + 8, 'income unaffected: quiet + salary + oil ($8)');
+  /* Nobody enters: walker, jet, owner. */
+  S.players[1].pos = 'citi'; S.players[1].money = 15;
+  await e.f.doMove(1, 'oil');
+  assert.equal(S.players[1].pos, 'citi', 'walking in is refused');
+  assert.equal(S.players[1].money, 15, 'no toll — refusal comes before the toll desk');
+  await e.f.doFly(1, 'oil');
+  assert.equal(S.players[1].pos, 'citi', 'landing is refused too');
+  assert.equal(S.players[1].money, 15, 'no seat fee for a refused flight');
+  S.players[0].pos = 'quik';
+  await e.f.doMove(0, 'oil');
+  assert.equal(S.players[0].pos, 'quik', 'even the wall-builder stays out');
+  /* Once per turn: the spent flag refuses a second wall the same turn (the flag
+     clears at every startTurn, so each player's own turn gets a fresh slot). */
+  assert.equal(S.blockadeUsed, false, 'the slot clears at the next startTurn');
+  S.cur = 0; S.phase = 'action'; S.mode = null; S.blockadeUsed = true;
+  await e.f.applyIntent(0, { act: 'blockmode' });
+  assert.notEqual(S.mode, 'blockade', 'one wall per turn');
+  /* The wall comes down after exactly one rotation. */
+  assert.equal(e.f.blockaded('oil'), true, 'the wall holds while the rotation runs');
+  S.blockades.oil = S.turn;              // the rotation has passed
+  assert.equal(e.f.blockaded('oil'), false, 'expired walls open the road');
+  await e.f.doMove(1, 'oil');
+  assert.equal(S.players[1].pos, 'oil', 'the road is open again');
+});
+
+test('GD-20b blockade guards: rubble refused, double walls refused, move-phase refused, Tuvalu unclaimable', async t => {
+  const { e, S } = await geoGame(t);
+  S.owner.albo = 0;
+  S.owner.oil = 0; S.rubble.oil = 1;
+  armAction(e);
+  await e.f.applyIntent(0, { act: 'blockmode' });
+  await e.f.applyIntent(0, { act: 'blockade', id: 'oil' });
+  assert.equal(S.mode, null, 'rubble cannot be walled');
+  assert.equal(S.blockades.oil, undefined, 'no wall was scheduled');
+  delete S.rubble.oil;
+  await e.f.applyIntent(0, { act: 'blockmode' });  // re-arm after the closed console
+  const wall = e.f.applyIntent(0, { act: 'blockade', id: 'oil' });
+  assert.equal(S.blockades.oil, S.turn + S.players.length, 'the standing pin is walled');
+  S.blockadeUsed = false;                // force a second wall attempt same turn
+  await e.f.applyIntent(0, { act: 'blockmode' });
+  await e.f.applyIntent(0, { act: 'blockade', id: 'oil' });
+  assert.equal(S.mode, null, 'already-walled refused');
+  assert.equal(S.blockades.oil, S.turn + S.players.length, 'the first expiry stands');
+  /* Blockades are an action-phase power: mid-move without Backroom, no wall. */
+  S.cur = 0; S.phase = 'move'; S.mode = null; S.blockadeUsed = false;
+  await e.f.applyIntent(0, { act: 'blockmode' });
+  assert.notEqual(S.mode, 'blockade', 'no walls from the move phase');
+  /* A walled Tuvalu cannot be free-claimed. */
+  const { e: e2, S: S2 } = await geoGame(t);
+  S2.owner.albo = 1;
+  S2.blockades.geo_tuvalu = S2.turn + 2;
+  S2.players[0].cortisol = 0;
+  await e2.f.doMove(0, 'geo_tuvalu');
+  assert.equal(S2.owner.geo_tuvalu, undefined, 'the wall keeps the free claim out');
+  assert.equal(S2.players[0].pos, 'quik', 'they never arrived');
+  await wall; // the first wall's promise settles the turn chain
+  await settle();
+});
+
+/* ================= GD-21 — Kim Jong Un ================= */
+test('GD-21 Kim Jong Un: a WILD pin that pays +1 Intel at every startTurn', async t => {
+  const e = engineFor(t);
+  e.f.rebuildWorld(true);
+  const kim = e.acc.NMAP.geo_kim;
+  assert.equal(kim.type, 'WILD', 'WILD like Toktimer');
+  assert.equal(kim.income, 0, 'no money — information only');
+  assert.equal(kim.cost, 6, 'list price $6');
+  assert.ok(kim.image.endsWith('nk_kimjongun.png'), 'the converted PNG is the asset');
+  assert.ok(fs.existsSync(path.join(repoRoot, 'static/GeographyDLC/nk_kimjongun.png')), 'shipped on disk');
+  const S = makeState(e, { dlcGeo: true, players: [{ money: 20, intel: 0, pos: 'geo_kim' }] });
+  e.acc.S = S;
+  S.owner.geo_kim = 0;
+  await withSeedAsync(5, () => e.f.startTurn());
+  assert.equal(S.players[0].intel, 1, '+1 Intel at the start of the turn');
+  assert.ok(S.log.some(l => l.includes('the Supreme Leader briefs you')), 'the passive is on the record');
+  assert.equal(S.players[0].money, 20 + 3, 'salary only — the pin pays no income');
+});
+
+/* ================= GD-22 — the hermit kingdom spawns clustered ================= */
+test('GD-22 the North Korea pins spawn in a tight ring around Pyongyang City across seeds', { timeout: 60000 }, t => {
+  const e = engineFor(t);
+  e.f.rebuildWorld(true);
+  const slots = e.acc.QUIK_SLOTS;
+  for (let s = 0; s < 12; s++) {
+    const seed = 5000 + s;
+    const slot = slots[s % slots.length];
+    let gen;
+    withSeed(seed, () => { gen = e.f.generateRandomBoard(slot); });
+    const posById = new Map(gen.positions.map(p => [p.id, p]));
+    const city = posById.get('geo_pyoncity');
+    assert.ok(city, `seed ${seed}: the capital is plotted`);
+    const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    for (const id of e.acc.GEO_NK_IDS) {
+      if (id === 'geo_pyoncity') continue;
+      const p = posById.get(id);
+      assert.ok(p, `seed ${seed}: ${id} plotted`);
+      const dist = d(p, city);
+      assert.ok(dist < 900, `seed ${seed}: ${id} stays in the neighbourhood (${Math.round(dist)}px)`);
+      assert.ok(p.x >= 95 && p.x <= 2305 && p.y >= 95 && p.y <= 1455, `seed ${seed}: ${id} stays on the board`);
+    }
+    /* The hermit kingdom hugs tighter than the rest of the DLC sprawls. */
+    const nk = e.acc.GEO_NK_IDS.map(id => posById.get(id));
+    let nkMax = 0;
+    for (let i = 0; i < nk.length; i++) for (let j = i + 1; j < nk.length; j++) nkMax = Math.max(nkMax, d(nk[i], nk[j]));
+    const others = e.acc.GEO_NODE_IDS.filter(id => !e.acc.GEO_NK_IDS.includes(id)).map(id => posById.get(id));
+    let otherMax = 0;
+    for (let i = 0; i < others.length; i++) for (let j = i + 1; j < others.length; j++) otherMax = Math.max(otherMax, d(others[i], others[j]));
+    assert.ok(nkMax < otherMax, `seed ${seed}: the hermit kingdom (${Math.round(nkMax)}px) hugs tighter than the rest of the DLC (${Math.round(otherMax)}px)`);
+  }
+});
+
+/* ================= GD-23 — ASIC takes the monetary book ================= */
+test('GD-23 monetary-policy concentration is an ASIC market-manipulation file, not an ACCC monopoly', async t => {
+  const e = engineFor(t);
+  e.f.rebuildWorld(true);
+  e.acc.Net.role = 'host';               // the bulletin needs a host to announce
+  const S = makeState(e, { dlcGeo: false, players: [{ money: 50, intel: 10 }, { money: 30, intel: 10 }] });
+  e.acc.S = S;
+  S.owner.mpc = 0; S.owner.rba = 0; S.owner.cash = 0; S.owner.bullock = 0; S.owner.infl = 0;
+  let fired = false;
+  for (let s = 1; s <= 80 && !fired; s++) {
+    withSeed(s, () => e.f.acccInvestigate(0));
+    fired = S.log.some(l => l.includes('MARKET MANIPULATION'));
+  }
+  assert.ok(fired, 'a seed tripped the 33% gate');
+  assert.ok(!S.log.some(l => l.includes('MONOPOLY ALERT!')), 'no ACCC monopoly branding on a monetary book');
+  assert.ok(S.log.some(l => l.includes('ASIC market-manipulation fine (20%)')), 'the cash fine names ASIC');
+  assert.ok(S.log.some(l => l.includes('pays an ASIC fine of')), 'the Intel fine names ASIC');
+  assert.ok(S.owner.mpc !== 0, 'the book was divested');
+  const card = e.modalRec.find(m => m.title === 'ASIC MARKET MANIPULATION');
+  assert.ok(card, 'the table saw ASIC’s announcement');
+  assert.ok(card.html.includes('./static/asic.png'), 'the card carries ASIC’s face');
+  assert.ok(card.html.includes('MARKET-MANIPULATION'), 'the card says the crime');
+
+  /* A plain bank book still goes to the ACCC with its own face. */
+  const e2 = engineFor(t);
+  e2.f.rebuildWorld(true);
+  e2.acc.Net.role = 'host';
+  const S2 = makeState(e2, { dlcGeo: false, players: [{ money: 50, intel: 10 }, { money: 30, intel: 10 }] });
+  e2.acc.S = S2;
+  S2.owner.citi = 0; S2.owner.commbank = 0; S2.owner.nab = 0;
+  let fired2 = false;
+  for (let s = 1; s <= 80 && !fired2; s++) {
+    withSeed(s, () => e2.f.acccInvestigate(0));
+    fired2 = S2.log.some(l => l.includes('MONOPOLY ALERT!'));
+  }
+  assert.ok(fired2, 'a seed tripped the ACCC on a bank book');
+  assert.ok(e2.modalRec.some(m => m.title === 'MONOPOLY ALERT' && m.html.includes('./static/accc.png')), 'the ACCC keeps its face');
+});
+
+/* ================= GD-24 — the flight animation payload ================= */
+test('GD-24 projectile fx: synced payload, nose-first rig, mirrored leftward flights', async t => {
+  const e = engineFor(t);
+  e.f.rebuildWorld(true);
+  e.acc.Net.role = 'host';
+  const S = makeState(e, { dlcGeo: true, players: [{}, {}] });
+  e.acc.S = S;
+  const n0 = S.fx.length;
+  e.f.projFx('missile', 'geo_missile', 'geo_pyoncity'); // a rightward hop
+  e.f.projFx('fly', 'geo_tuvalu', 'geo_venice');        // a long leftward flight
+  e.f.projFx('missile', 'geo_scs', 'geo_scs');          // same pin — no flight
+  const entries = S.fx.slice(n0).filter(f => f.proj);
+  assert.equal(entries.length, 2, 'same-pin launches emit nothing');
+  const [m, j] = entries;
+  assert.equal(m.img, './static/GeographyDLC/missile_travelling.png', 'the warhead sprite');
+  assert.equal(m.base, 45, 'the missile artwork points up-right: +45° base');
+  assert.equal(m.w, 116); assert.equal(m.h, 125);
+  assert.equal(m.x0, e.acc.NMAP.geo_missile.x, 'the flight starts at the silo');
+  assert.equal(m.y0, e.acc.NMAP.geo_missile.y - 40, 'lifted above the pin');
+  assert.equal(m.x1, e.acc.NMAP.geo_pyoncity.x);
+  assert.equal(m.x, m.x0, 'the text-renderer fallback coords ride along');
+  const dx = m.x1 - m.x0;
+  assert.ok(dx > 0, 'the chosen hop flies right');
+  assert.equal(e.f.projRig(m), 'rotate(' + (Math.atan2(m.y1 - m.y0, dx) * 180 / Math.PI + 45).toFixed(1) + ')', 'rightward flights rotate only');
+  assert.equal(j.img, './static/qantas_jet_travelling.png', 'the jet sprite');
+  assert.equal(j.base, 10, 'the jet artwork noses right with a ~10° tilt');
+  const jdx = j.x1 - j.x0;
+  assert.ok(jdx < 0, 'the chosen flight travels left');
+  assert.equal(e.f.projRig(j), 'scale(-1,1) rotate(' + (Math.atan2(j.y1 - j.y0, -jdx) * 180 / Math.PI + 10).toFixed(1) + ')', 'leftward flights mirror first, then rotate');
+  /* The payload rides the synced state so every mirror animates the same flight. */
+  const pub = JSON.parse(JSON.stringify(e.f.pubState(true)));
+  assert.ok(pub.fx.some(f => f.proj === 1), 'the flight rides pubState');
+  /* The fx ring buffer still caps at 40. */
+  for (let i = 0; i < 50; i++) e.f.projFx('missile', 'geo_missile', 'geo_pyoncity');
+  assert.ok(S.fx.length <= 40, 'the fx cap holds under projectile spam');
 });

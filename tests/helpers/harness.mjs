@@ -209,6 +209,7 @@ export function loadEngine(opts = {}) {
     get BASE_NODES(){return BASE_NODES}, set NODES(v){NODES=v},
     get GEO_NODES(){return GEO_NODES}, get GEO_EDGES(){return GEO_EDGES},
     get GEO_NODE_IDS(){return GEO_NODE_IDS}, get GEO_HIGH_VALUE_IDS(){return GEO_HIGH_VALUE_IDS},
+    get GEO_NK_IDS(){return GEO_NK_IDS},
     get OIL_IDS(){return OIL_IDS}, get WORLD_EDGES(){return WORLD_EDGES},
     get WORLD_GEO(){return WORLD_GEO},
     get REMOVED_NODE_IDS(){return REMOVED_NODE_IDS}, get ORIGINAL_LAYOUT_BY_ID(){return ORIGINAL_LAYOUT_BY_ID},
@@ -247,7 +248,7 @@ export function loadEngine(opts = {}) {
     'shuffle','esc','showRules','setMood','giveIntel','gain','payVoid','payTo','payFee','log','fxAt','fx','pname',
     'doMove','doFly','doBug','doSpin','doSeize','endMovement','maybePeek','seizeListPrice','flatSeize','takeoverCost',
     'canReach','qantasGrounded','qantasGroundedReason','abilityPhase','finishNodeAbility','startHostHeartbeat','sync','setNetStatus','toast',
-    'rebuildWorld','strikeNode','canMissileNode',
+    'rebuildWorld','strikeNode','canMissileNode','blockaded','projFx','projRig','canUseBackroomAbility',
   ];
   for (const n of fns) engine.f[n] = ctx[n];
   return engine;
@@ -326,7 +327,8 @@ export function makeState(engine, over = {}) {
     spinKind: 'press', mood: 'CALM', wire: 'all quiet on the wire… for now', fx: [], over: false, mode: null,
     log: [], chat: [], logN: 0, chatN: 0, quikSlot: 0, boardLayout: null, boardEdges: null, auditedOnce: false,
     dlcGeo: false, rubble: {}, ov: null, geoMissiled: false, geoBeach: false, geoBoeing: false,
-    geoCrash: false, geoStage5: false, geoVenice: false, qantasGroundUntil: 0, decline: null,
+    geoCrash: false, geoStage5: false, geoVenice: false, blockades: {}, blockadeUsed: false,
+    missileProbe: null, qantasGroundUntil: 0, decline: null,
   };
   /* Overriding defaults is merged always, so fixture authors only set what they care about. */
   for (const [k, v] of Object.entries(over)) if (k !== 'players') s[k] = v;

@@ -291,7 +291,17 @@ Gondola therapy: free −1 Cortisol on-site. Overtourism ($2, once/turn, *either
 THE JOIN IS FREE: the first arrival auto-claims (no action, no cost, no Cortisol) via `doMove` and `doFly`; later arrivals pay the ordinary toll; rubble is unclaimable.
 
 ### GD-15 / GD-16 — Lobby & copy
-The checkbox is host-gated (guest flips are refused and mirrored); the welcome and lobby payloads carry `dlcGeo`; adopting a geo state rebuilds the guest world. Help copy: v1.9, "80 exhibits" on / "70 exhibits" off, and the RC-01 pin that the string `82 exhibits` never appears.
+The checkbox is host-gated (guest flips are refused and mirrored); the welcome and lobby payloads carry `dlcGeo`; adopting a geo state rebuilds the guest world. Help copy: v1.9, "81 exhibits" on / "70 exhibits" off, and the RC-01 pin that the string `82 exhibits` never appears.
+
+### GD-17..GD-24 — Geography wave 2 (silo on-site rule, probe, reflection, blockade, Kim, clustering, ASIC, projectiles)
+- **GD-17** — the silo only arms on-site (`p.pos==='geo_missile'`); exemptions: Backroom Deals mid-move (spends 2 movement steps via `finishNodeAbility`, does not end the turn) or owning KIM JONG UN.
+- **GD-18** — striking a REGULATOR schedules `S.missileProbe={by}` at the strike; it resolves on the striker's NEXT `startTurn` BEFORE the caution flag is read, so a 50% indictment runs the full `raid(striker)` and its caution bites that same turn (the `p.raided=0` reset at the end of startTurn wipes the flag, by design). Either verdict adds +1 Cortisol via a direct set (bypasses `addCortisol`'s ≤1-node guard). Seeded via `makeRng`/`withSeedAsync`.
+- **GD-19** — a warhead at TUVALU reflects: Tuvalu never burns, the launcher's silo is expropriated to rubble (custom backblast log), and the warhead lands on a random launcher-owned pin (pool excludes rubble, the silo, Tuvalu; empty if the launcher holds Pillars). Reflected strikes use `strikeNode(...,{silent:true})` — no probe cascade.
+- **GD-20** — BLOCKADE (Albanese, base-game, not DLC-gated): free, once per player-turn, action phase only, consumes the turn; expiry `S.blockades[id]=S.turn+S.players.length` while `blockades[id]>S.turn` = exactly one rotation; blocks walkers, the jet and the owner; income and missiles unaffected; rubble and already-walled pins refused. A walled Tuvalu cannot be free-claimed.
+- **GD-21** — KIM JONG UN: WILD, income 0, $6, `nk_kimjongun.png` on disk; +1 Intel at each startTurn ("the Supreme Leader briefs you"), Toktimer-style.
+- **GD-22** — the five NK pins (`GEO_NK_IDS`) spawn as a ring around Pyongyang City's dealt plot (fixed per-node offsets squashed ×0.72, clamped to the collage bounds) — verified across 12 seeds; the NK max pairwise spread stays below the rest of the DLC's.
+- **GD-23** — MONETARY POLICY concentration (charts counted) is policed by ASIC as MARKET MANIPULATION: the card carries `./static/asic.png` and the ASIC titles; mechanics unchanged (33% gate, 20% cash+Intel fines, divestment). Other industries keep the ACCC face.
+- **GD-24** — projectile fx: `projFx(kind,fromId,toId)` emits `{id,proj:1,img,base,w,h,x0,y0,x1,y1,x,y}` riding `S.fx`/`pubState`; `projRig` returns `rotate(θ+base)` rightward and `scale(-1,1) rotate(atan2(dy,−dx)+base)` leftward (missile base +45°, jet base +10°); same-pin launches emit nothing; the 40-entry fx cap holds.
 
 ## CI gates and exit criteria
 
