@@ -420,7 +420,7 @@ const GEO_HIGH_VALUE_IDS=['geo_missile','geo_scs','geo_pyothotel','geo_boeing','
 /* The hermit kingdom: these pins spawn clustered in a ring around Pyongyang City. */
 const GEO_NK_IDS=['geo_missile','geo_wonsan','geo_pyoncity','geo_pyothotel','geo_kim'];
 const GEO_NODES=[
-{id:'geo_missile',image:'./static/GeographyDLC/nk_missile.jpg',name:['MISSILE COMMAND'],icon:'🚀',type:'REGULATOR',shape:'photo',income:0,cost:8,x:2140,y:1180,rot:2,sub:'strategic assets · keys under the desk',sp:'Unlocks LAUNCH A MISSILE ($4 + 1 Intel, once per turn): strike any node — but you must BE HERE to fire (spending Backroom steps mid-move, or owning KIM JONG UN, also arms the silo). An owned node is expropriated with NO payout; either way it becomes rubble — no income, no seizing. Stand on rubble in your action phase and pay the list price to rebuild it; it returns unowned, buyable from next turn. Pillars-protected nodes cannot be struck.'},
+{id:'geo_missile',image:'./static/GeographyDLC/nk_missile.jpg',name:['MISSILE COMMAND'],icon:'🚀',type:'REGULATOR',shape:'photo',income:0,cost:8,x:2140,y:1180,rot:2,sub:'strategic assets · keys under the desk',sp:'Unlocks LAUNCH A MISSILE ($4 + 1 Intel, once per turn): strike any node — but you must BE HERE to fire, during your move (the launch ends the move; your action still follows) or as your action (owning KIM JONG UN also arms the silo from anywhere). An owned node is expropriated with NO payout; either way it becomes rubble — no income, no seizing. Stand on rubble in your action phase and pay the list price to rebuild it; it returns unowned, buyable from next turn. Pillars-protected nodes cannot be struck.'},
 {id:'geo_wonsan',image:'./static/GeographyDLC/nk_wonsanresort.jpg',name:['WONSAN','RESORT'],icon:'🏖️',type:'WILD',shape:'photo',income:2,cost:5,x:2080,y:700,rot:-2,sub:'the beach town · sanctioned paradise',sp:'Stand here (once owned) for BEACH DAY: free, once per turn, −2 Cortisol. The sand is quiet. The waves are loud. Nobody is watching.'},
 {id:'geo_pyoncity',image:'./static/GeographyDLC/nk_pyongyangcity.webp',name:['PYONGYANG','CITY'],icon:'🌆',type:'BANK',shape:'photo',income:2,cost:6,x:2240,y:1000,rot:1,sub:'the capital · show windows, all lit',sp:'+$1 income per GEOGRAPHY DLC node you own (the capital collects tribute).'},
 {id:'geo_pyothotel',image:'./static/GeographyDLC/nk_pyongyanghotel.jpg',name:['PYONGYANG','HOTEL'],icon:'🏨',type:'CORPORATE',shape:'photo',income:2,cost:8,x:2200,y:830,rot:-1,sub:'106 floors · 47 in use',sp:'Gain $2 whenever ANY rubble node is REBUILT (construction kickbacks, allegedly).'},
@@ -1226,8 +1226,8 @@ async function applyIntent(pi,m){
   else if(act==='jog'&&abilityPhase(pi)&&!S.mode&&p.pos==='asics'&&S.owner.asics===pi){
    log('👟 '+pname(pi)+' jogs a lap in the circled shoe. Why is it on the board? Irrelevant.');addCortisol(pi,-1,'a cooling lap');await finishNodeAbility(pi)}
   /* ---- 🌍 GEOGRAPHY DLC ---- */
-  else if(act==='missilemode'&&abilityPhase(pi)&&S.dlcGeo&&!S.mode&&S.owner.geo_missile===pi&&p.money>=4&&p.intel>=1&&!S.geoMissiled&&(p.pos==='geo_missile'||S.owner.geo_kim===pi||canUseBackroomAbility(pi))){S.mode='missile';sync()}
-  else if(act==='missile'&&abilityPhase(pi)&&S.dlcGeo&&S.mode==='missile'){
+  else if(act==='missilemode'&&S.dlcGeo&&(S.phase==='action'||S.phase==='move')&&!S.mode&&S.owner.geo_missile===pi&&p.money>=4&&p.intel>=1&&!S.geoMissiled&&(p.pos==='geo_missile'||S.owner.geo_kim===pi)){S.mode='missile';sync()}
+  else if(act==='missile'&&S.dlcGeo&&(S.phase==='action'||S.phase==='move')&&S.mode==='missile'){
    const n=NMAP[m.id];
    if(!n||!S.rubble||S.rubble[m.id]){sysTo(pi,'Pick a target that still stands.');S.mode=null;sync();return}
    if(S.owner[m.id]===pi){sysTo(pi,'You cannot missile your own node.');S.mode=null;sync();return}
@@ -1253,11 +1253,13 @@ async function applyIntent(pi,m){
      strikeNode(pi,hit.id,{silent:true});
     }
     else log('🌊 The reflection finds nothing else of theirs to hit — the sea keeps the rest.');
-    await finishNodeAbility(pi);
+    if(S.phase==='move'){S.steps=0;await endMovement()} /* a mid-move launch ends the walk; the action phase still follows */
+    else await endOfTurn();
    }else{
     if(projFx('missile','geo_missile',m.id)){sync();await projPause()} /* the flight plays on every screen before the market event covers the board */
     strikeNode(pi,m.id);
-    await finishNodeAbility(pi);
+    if(S.phase==='move'){S.steps=0;await endMovement()} /* a mid-move launch ends the walk; the action phase still follows */
+    else await endOfTurn();
    }
   }
   else if(act==='rebuild'&&S.phase==='action'&&S.dlcGeo&&!S.mode&&S.rubble[p.pos]){
@@ -1604,7 +1606,7 @@ function showRules(){
  +'<h4>ACCC concentration</h4><p>Charts are exempt from the six type-based industries; the custom MONETARY POLICY industry also counts the CASH-RATE and INFLATION charts. If you hold <b>more than two</b> properties in the same tracked industry — banking, regulators, corporates, coal, commodities, media, oil, education, JTPortal, Jim Chalmers, Big Bessent, or monetary policy — then at the start of <b>your turn</b> there is a <b>33% chance</b> the regulators investigate: <b>ASIC</b> runs monetary-policy books as <b>market manipulation</b>, the <b>ACCC</b> takes every other industry. You pay a <b>20% fine on both cash and Intel</b>; divested nodes are randomly redistributed to other players (maximum one node per player), with any remainder returned to the market. Owning <b>Mark Watson</b> exempts your holdings in the COAL industry from ACCC monopoly investigations.</p>'
  +'<h4>MADE (???)</h4><p>Nobody knows what the purple graphic is, but it moves money: at the <b>start of every player\'s turn</b> there is a <b>33% chance</b> MADE pays out — <b>+$10 and +1 Intel</b> to its owner. Every other player with <b>more than two nodes and at least $50</b> pays 15% of their cash to the void. Seizing MADE always costs list price — it never inflates after a takeover. You may also force MADE to divest from any rival for <b>5 Intel</b>, paying the former owner <b>$7 compensation</b>.</p>'
  +'<h4>🌍 The Geography DLC — the board expands over the water</h4><p>Host-toggled in the lobby (look for <b>ENABLE THE GEOGRAPHY DLC</b>). <b>On: the board deals 81 exhibits.</b> Off: the same 70 exhibits as always.</p>'
- +'<ul><li><b>MISSILE COMMAND ($8)</b> — LAUNCH A MISSILE ($4 + 1 🛈, once per turn): strike any node that still stands — <b>but you must stand on the silo to fire</b> (spending Backroom steps mid-move, or owning KIM JONG UN, arms it from anywhere). An <b>owned node is expropriated with NO payout</b> to its former owner; either way the pin becomes <b>RUBBLE</b> — no income, nothing to seize. Stand on rubble in your action phase and pay its <b>list price to rebuild</b>: it returns unowned, buyable from any player’s next turn. The <b>PILLARS</b> shield their owner’s nodes. Strike a <b>REGULATOR</b> and an investigation opens — <b>ASIC or the ACCC</b> comes for you on your next turn: a 50/50 indictment, and <b>+1 Cortisol</b> whether it lands or not.</li>'
+ +'<ul><li><b>MISSILE COMMAND ($8)</b> — LAUNCH A MISSILE ($4 + 1 🛈, once per turn): strike any node that still stands — <b>but you must stand on the silo to fire</b>, during your move (the launch ends the move; your action still follows) or as your action (owning KIM JONG UN arms it from anywhere). An <b>owned node is expropriated with NO payout</b> to its former owner; either way the pin becomes <b>RUBBLE</b> — no income, nothing to seize. Stand on rubble in your action phase and pay its <b>list price to rebuild</b>: it returns unowned, buyable from any player’s next turn. The <b>PILLARS</b> shield their owner’s nodes. Strike a <b>REGULATOR</b> and an investigation opens — <b>ASIC or the ACCC</b> comes for you on your next turn: a 50/50 indictment, and <b>+1 Cortisol</b> whether it lands or not.</li>'
  +'<li><b>PYONGYANG CITY ($6)</b> — +$1 income per Geography node you own. The capital collects tribute.</li>'
  +'<li><b>PYONGYANG HOTEL ($8)</b> — collects <b>$2</b> whenever anyone rebuilds rubble. Construction kickbacks, allegedly.</li>'
  +'<li><b>WONSAN RESORT ($5)</b> — stand there (owned) for <b>BEACH DAY</b>: free, once per turn, <b>−2 Cortisol</b>.</li>'
@@ -1710,7 +1712,7 @@ function bugTargetable(n){
 }
 function missileTargetable(n){
  const me=Net.myIdx;
- return S&&S.phase==='action'&&S.mode==='missile'&&S.cur===me&&S.dlcGeo
+ return S&&(S.phase==='action'||S.phase==='move')&&S.mode==='missile'&&S.cur===me&&S.dlcGeo
   &&canMissileNode(me,n.id);
 }
 function overtourTargetable(n){
@@ -1775,7 +1777,7 @@ function renderBoard(){
   let cls='';
   if(S&&!S.over){
    if(S.mode==='fly')cls=canReach(n.id)?'click':'';
-   else if(S.phase==='move'&&S.cur===Net.myIdx&&S.steps>0&&(ADJ[curpos]||[]).includes(n.id)&&canReach(n.id))cls='click reach';
+   else if(S.mode!=='missile'&&S.phase==='move'&&S.cur===Net.myIdx&&S.steps>0&&(ADJ[curpos]||[]).includes(n.id)&&canReach(n.id))cls='click reach';
    else if(bugTargetable(n))cls='click target';
    else if(missileTargetable(n))cls='click target';
    else if(overtourTargetable(n))cls='click target';
@@ -1845,6 +1847,7 @@ function renderSide(){
   const maxSteps=S.caution?1:3+(S.owner.coal===me?1:0)+((S.owner.train===me||S.owner.bullet===me)?1:0)+(S.owner.asics===me?1:0)+(S.extraStep?1:0)+(S.slipped?2:0);
   const dots='●'.repeat(Math.max(0,S.steps))+'○'.repeat(Math.max(0,maxSteps-S.steps));
   if(S.mode==='fly'){phaseHtml='<div class="phlabel">PHASE 1 · MOVE — FLYING</div><p><b>FLYING:</b> click <b>any node</b> on the board to land there ($3).</p><button class="act" data-act="cancel">Cancel flight</button>'}
+  else if(S.mode==='missile'){phaseHtml='<div class="phlabel">🚀 MISSILE AWAY — $4 + 1 🛈</div><p><b>LAUNCHING:</b> click <b>any node</b> on the board to strike it. The launch <b>ends your move</b>, and your action phase still follows.</p><button class="act" data-act="cancel">Abort the launch</button>'}
   else{
    phaseHtml='<div class="phlabel">PHASE 1 · MOVE</div>'
     +'<p>Click a <b>highlighted node</b> to move along the red threads (3 steps now — the board is wider). Tolls: <b>$1</b> entering a rival’s node (<b>$2</b> if they hold ALBANESE, <b>free</b> if you hold JAMES BOND).</p>'
@@ -1852,7 +1855,8 @@ function renderSide(){
     +'<button class="act" data-act="endmove">Stay put — end movement</button>'
     +((!S.extraStep&&p.intel>=1)?'<button class="act" data-act="favor">🛈 Burn a favor — 1 🛈 (+1 step this turn)</button>':'')
     +((S.owner.qantas===me)?'<button class="act" data-act="flymode"'+(p.money>=3?'':' disabled')+'>✈️ Fly the Qantas jet — $3 (anywhere)</button>':'')
-    +((S.owner.f1===me&&!S.slipped)?'<button class="act" data-act="slip"'+(p.money>=2?'':' disabled')+'>🏎️ Slipstream — $2 (+2 steps, $2 off next seizure)</button>':'');
+    +((S.owner.f1===me&&!S.slipped)?'<button class="act" data-act="slip"'+(p.money>=2?'':' disabled')+'>🏎️ Slipstream — $2 (+2 steps, $2 off next seizure)</button>':'')
+    +((S.dlcGeo&&S.owner.geo_missile===me&&(p.pos==='geo_missile'||S.owner.geo_kim===me))?'<button class="act" data-act="missilemode"'+((p.money>=4&&p.intel>=1&&!S.geoMissiled)?'':' disabled')+' title="From the silo (anywhere with Kim Jong Un): strike any node that still stands — the launch ends your move; your action still follows ($4 + 1 Intel, once per turn)">🚀 Launch a missile — $4 + 1🛈 (ends the move)</button>':'');
     if(S.owner.back===me&&!S.backroomAbilityUsed){
      phaseHtml+='<div class="sublabel">BACKROOM DEALS · ONE NODE ABILITY · COSTS 2 MOVEMENT STEPS</div><div class="btns">';
      const backroomStepLock=S.steps<2?' disabled':'';
@@ -1865,7 +1869,6 @@ function renderSide(){
      if(S.owner.fox===me)phaseHtml+='<button class="act" data-act="spin" data-kind="fox"'+((p.money>=2?'':' disabled')+backroomStepLock)+'>🦊 Fox spin — $2 · 2 steps</button>';
      if(S.owner.sisy===me&&p.pos==='sisy')phaseHtml+='<button class="act" data-act="push"'+backroomStepLock+'>🪨 Push the boulder — +$'+(S.sisyPayout||10)+' · 2 steps</button>';
      if(S.owner.asics===me&&p.pos==='asics')phaseHtml+='<button class="act" data-act="jog"'+backroomStepLock+'>👟 Jog a lap — −1 🔥 · 2 steps</button>';
-     if(S.dlcGeo&&S.owner.geo_missile===me)phaseHtml+='<button class="act" data-act="missilemode"'+((p.money>=4&&p.intel>=1&&!S.geoMissiled?'':' disabled')+backroomStepLock)+'>🚀 Missile — $4 + 1🛈 · 2 steps</button>';
      if(S.dlcGeo&&S.owner.geo_boeing===me)phaseHtml+='<button class="act" data-act="qantasdown"'+((p.money>=4&&!S.geoBoeing?'':' disabled')+backroomStepLock)+'>🛩️ Ground Qantas — $4 · 2 steps</button>';
      if(S.dlcGeo&&S.owner.geo_scs===me)phaseHtml+='<button class="act" data-act="oilcrash"'+((p.money>=3&&!S.geoCrash?'':' disabled')+backroomStepLock)+'>🌊 Oil crash — $3 · 2 steps</button>';
      if(S.dlcGeo&&S.owner.geo_stage5===me)phaseHtml+='<button class="act" data-act="stage5"'+((p.intel>=2&&!S.geoStage5?'':' disabled')+backroomStepLock)+'>📉 Stage 5 — 2🛈 · 2 steps</button>';
@@ -2036,6 +2039,7 @@ function handleNodeTap(t){
  const id=g.dataset.id;
  if(S.phase==='move'){
   if(S.mode==='fly'){dispatch({act:'fly',id});return}
+  if(S.mode==='missile'){dispatch({act:'missile',id});return}
   if(S.steps<=0)return;
   if(!canReach(id)){toast(qantasGroundedReason()+'.');return}
   if((ADJ[S.players[Net.myIdx].pos]||[]).includes(id))dispatch({act:'move',id});
@@ -2087,6 +2091,7 @@ function handleNodeTap(t){
    case 'stage5':dispatch({act:'stage5'});break;
    case 'overmode':dispatch({act:'overmode'});break;
    case 'venicecool':dispatch({act:'venicecool'});break;
+   case 'blockmode':dispatch({act:'blockmode'});break;
   case 'spin':dispatch({act:'spin',kind:b.dataset.kind});break;
   case 'cook':dispatch({act:'cook'});break;
   case 'budget':dispatch({act:'budget'});break;

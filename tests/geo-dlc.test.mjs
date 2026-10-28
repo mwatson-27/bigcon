@@ -567,7 +567,7 @@ test('GD-16 the help panel explains the DLC without breaking the base-game copy 
 });
 
 /* ================= GD-17 — the silo's on-site rule ================= */
-test('GD-17 the silo only fires on-site — exempted by Backroom mid-move or owning Kim Jong Un', async t => {
+test('GD-17 the silo fires on-site only — a mid-move launch ends the walk, Kim arms it from anywhere, Backroom no longer touches the missile', async t => {
   const { e, S } = await geoGame(t);
   S.owner.geo_missile = 0;
   S.owner.oil = 1;
@@ -588,19 +588,31 @@ test('GD-17 the silo only fires on-site — exempted by Backroom mid-move or own
   await e.f.applyIntent(0, { act: 'missilemode' });
   assert.equal(S.mode, 'missile', 'owning Kim Jong Un arms the silo from anywhere');
   S.mode = null; S.owner.geo_kim = 1;    // hand Kim away for the next leg
-  /* Backroom exemption: mid-move, Backroom Deals, 2 steps in hand. */
+  /* Backroom no longer arms the missile: mid-move off-site, even with 2 steps in
+     hand, the console refuses. */
   S.owner.back = 0;
   S.cur = 0; S.phase = 'move'; S.mode = null; S.steps = 3; S.backroomAbilityUsed = false;
+  S.players[0].pos = 'quik';
   await e.f.applyIntent(0, { act: 'missilemode' });
-  assert.equal(S.mode, 'missile', 'Backroom Deals mid-move arms the silo');
+  assert.notEqual(S.mode, 'missile', 'Backroom Deals is out of the missile business');
+  /* The missile is a normal option during the turn: on the pad mid-move it arms,
+     the strike ends the walk (steps burn), and the action phase still follows. */
+  S.players[0].pos = 'geo_missile';
+  await e.f.applyIntent(0, { act: 'missilemode' });
+  assert.equal(S.mode, 'missile', 'on the pad mid-move: the console arms');
   const strike = e.f.applyIntent(0, { act: 'missile', id: 'oil' });
   e.clock.advance(e.acc.PROJ_PAUSE_MS + 100); /* the flight plays, then the impact lands mid-move */
   await strike;
   await settle();
   assert.equal(S.rubble.oil, 1, 'the strike lands mid-move');
-  assert.equal(S.steps, 1, 'the Backroom ability cost 2 movement steps');
-  assert.equal(S.backroomAbilityUsed, true, 'one Backroom ability per turn');
-  assert.equal(S.phase, 'move', 'a mid-move launch does not end the turn');
+  assert.equal(S.steps, 0, 'the launch ends the move — remaining steps burn');
+  assert.equal(S.phase, 'action', 'the action phase still follows the mid-move launch');
+  assert.equal(S.backroomAbilityUsed, false, 'no Backroom slot was spent');
+  assert.equal(S.turn, 1, 'the turn has not rolled — the event card waits for the action');
+  /* The interface pins: the missile is out of the Backroom subpanel and the
+     move-phase launch button warns that it ends the move. */
+  assert.ok(!SOURCE.includes('🚀 Missile — $4 + 1🛈 · 2 steps'), 'the missile left the Backroom subpanel');
+  assert.ok(SOURCE.includes('(ends the move)'), 'the move-phase launch button warns the launch ends the move');
 });
 
 /* ================= GD-18 — the REGULATOR probe ================= */
@@ -750,6 +762,7 @@ test('GD-20b blockade guards: rubble refused, double walls refused, move-phase r
   assert.equal(S2.players[0].pos, 'quik', 'they never arrived');
   await wall; // the first wall's promise settles the turn chain
   await settle();
+  assert.ok(SOURCE.includes("case 'blockmode'"), 'the sidebar switch dispatches the blockade console — the button cannot dead-end again');
 });
 
 /* ================= GD-21 — Kim Jong Un ================= */
