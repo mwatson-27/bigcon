@@ -252,7 +252,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = 'bc7a524';
+const BUILD_COMMIT = 'aa732c9';
 const $=id=>document.getElementById(id);
 $('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('splashLogo');if(!img)return;let done=false;const swap=()=>{if(done)return;done=true;img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};setTimeout(swap,5000)})();
 
@@ -1758,7 +1758,7 @@ function renderBoard(){
  s+='<rect width="2400" height="1560" fill="'+md.tint+'" pointer-events="none"/>';
  s+='<rect x="7" y="7" width="2386" height="1546" rx="0" fill="none" stroke="#168388" stroke-width="3" opacity=".7"/>';
  EDGES.forEach((e,i)=>{
-  if(S&&S.fogOfWar){const me=S.players[Net.myIdx],seen=me&&me.visited||{},pos=me&&me.pos,knownA=!!seen[e[0]],knownB=!!seen[e[1]],frontier=(e[0]===pos&&knownB)||(e[1]===pos&&knownA);if(!(knownA&&knownB)&&!frontier)return;}
+  if(S&&S.fogOfWar){const me=S.players[Net.myIdx],seen=me&&me.visited||{},pos=me&&me.pos,knownA=!!seen[e[0]],knownB=!!seen[e[1]],frontier=(e[0]===pos&&!knownB)||(e[1]===pos&&!knownA);if(!(knownA&&knownB)&&!frontier)return;}
   const A=NMAP[e[0]],B=NMAP[e[1]];
   if(!A||!B)return;
   const dx=B.x-A.x,dy=B.y-A.y,len=Math.hypot(dx,dy)||1;
