@@ -13,7 +13,7 @@ test('Fog of War starts each player knowing only Quikstop and reveals movement d
   const e = loadEngine();
   t.after(() => e.dispose());
   e.acc.Net.fogOfWar = true;
-  const S = await makeGame(e, 2, { seeds: [40, 41, 42, 43, 44, 45] });
+  const S = await makeGame(e, 2);
   assert.equal(S.fogOfWar, true);
   for (const p of S.players) {
     assert.deepEqual(Object.keys(p.visited).sort(), ['quik']);
