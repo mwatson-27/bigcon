@@ -31,7 +31,7 @@ test('Fog of War starts each player knowing only Quikstop and reveals movement d
 
 test('Fog of War masks unexplored map nodes, hides unseen edges and rival tokens', t => {
   assert.match(SOURCE, /class="node fog-node/);
-  assert.match(SOURCE, /if\(!seen\[e\[0\]\]&&!seen\[e\[1\]\]\)return/);
+  assert.match(SOURCE, /if\(!\(knownA&&knownB\)&&!frontier\)return/);
   assert.match(SOURCE, /S\.fogOfWar&&pi!==Net\.myIdx/);
   assert.match(SOURCE, /stroke-dasharray="7 6"/);
 });
