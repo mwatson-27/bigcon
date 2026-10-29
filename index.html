@@ -252,7 +252,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = '3f0f683';
+const BUILD_COMMIT = '3100128';
 const $=id=>document.getElementById(id);
 $('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('splashLogo');if(!img)return;let done=false;const swap=()=>{if(done)return;done=true;img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};setTimeout(swap,5000)})();
 
@@ -1646,9 +1646,11 @@ function nodeSVG(n,cls){
  const me=S&&S.players[Net.myIdx];
  const discovered=!S||!S.fogOfWar||(me&&me.visited&&me.visited[n.id]);
  if(!discovered){
+  /* Unknown destinations are hinted only when they are directly reachable.
+     Other unseen locations leave no marker, so the hidden map cannot be read. */
+  if(cls.indexOf('reach')<0)return '';
   const box=nodeBox(n),w=box[0],h=box[1];
-  const canExplore=cls.indexOf('reach')>=0||(S&&S.mode==='fly'&&cls.indexOf('click')>=0);
-  return '<g class="node fog-node '+(canExplore?'click reach':'')+'" transform="translate('+n.x+','+n.y+')" data-id="'+n.id+'" opacity=".94"><rect x="'+(-w/2)+'" y="'+(-h/2)+'" width="'+w+'" height="'+h+'" fill="#101716" stroke="'+(canExplore?'#7ff6fb':'#315052')+'" stroke-width="'+(canExplore?'3':'2')+'" stroke-dasharray="7 6"/><text text-anchor="middle" y="5" font-size="18" font-weight="900" fill="'+(canExplore?'#7ff6fb':'#476466')+'">?</text></g>';
+  return '<g class="node fog-node click reach" transform="translate('+n.x+','+n.y+')" data-id="'+n.id+'" opacity=".94"><rect x="'+(-w/2)+'" y="'+(-h/2)+'" width="'+w+'" height="'+h+'" fill="#101716" stroke="#7ff6fb" stroke-width="3" stroke-dasharray="7 6"/><text text-anchor="middle" y="5" font-size="18" font-weight="900" fill="#7ff6fb">?</text></g>';
  }
  const o=S?S.owner[n.id]:null;
  const ownr=o!=null;
@@ -1756,7 +1758,7 @@ function renderBoard(){
  s+='<rect width="2400" height="1560" fill="'+md.tint+'" pointer-events="none"/>';
  s+='<rect x="7" y="7" width="2386" height="1546" rx="0" fill="none" stroke="#168388" stroke-width="3" opacity=".7"/>';
  EDGES.forEach((e,i)=>{
-  if(S&&S.fogOfWar){const me=S.players[Net.myIdx],seen=me&&me.visited||{};if(!seen[e[0]]&&!seen[e[1]])return;}
+  if(S&&S.fogOfWar){const me=S.players[Net.myIdx],seen=me&&me.visited||{},pos=me&&me.pos,knownA=!!seen[e[0]],knownB=!!seen[e[1]],frontier=(e[0]===pos&&knownB)||(e[1]===pos&&knownA);if(!(knownA&&knownB)&&!frontier)return;}
   const A=NMAP[e[0]],B=NMAP[e[1]];
   if(!A||!B)return;
   const dx=B.x-A.x,dy=B.y-A.y,len=Math.hypot(dx,dy)||1;
