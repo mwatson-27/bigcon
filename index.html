@@ -1278,7 +1278,7 @@ async function applyIntent(pi,m){
   else if(act==='qantasdown'&&abilityPhase(pi)&&S.dlcGeo&&!S.mode&&S.owner.geo_boeing===pi&&p.money>=4&&!S.geoBoeing){
    if(S.owner.qantas===pi){sysTo(pi,'You own the kangaroo — you cannot shut down your own airline.');return}
    p.money-=4;fxAt(pi,'−$4','#ff6b5e');S.geoBoeing=true;
-   S.qantasGroundUntil=S.turn+3;
+   S.qantasGroundUntil=S.turn+2;
    const qn=NMAP.qantas;fx(qn.x,qn.y-70,'🛫 GROUNDED','#ff6b5e');
    log('🛩️ '+pname(pi)+' parks THE CORPORATE BOEING on the runway — QANTAS is grounded for two full turns: no jet for anyone, no income for its owner.');
    await finishNodeAbility(pi);
@@ -1324,7 +1324,7 @@ async function applyIntent(pi,m){
   else if(act==='blockade'&&S.phase==='action'&&S.mode==='blockade'){
    const n=NMAP[m.id];
    if(!n||S.rubble[m.id]||blockaded(m.id)){sysTo(pi,'That node is rubble or already walled off.');S.mode=null;sync();return}
-   S.blockades[m.id]=S.turn+S.players.length;S.blockadeUsed=true;S.mode=null;
+   S.blockades[m.id]=S.turn+2;S.blockadeUsed=true;S.mode=null;
    fx(n.x,n.y-64,'🚧 BLOCKADED','#f5c542');
    log('🚧 '+pname(pi)+' walls off '+n.name.join(' ')+' — BLOCKADED for one full rotation: nobody walks in, nobody lands, not even '+pname(pi)+'.');
    await finishNodeAbility(pi);
