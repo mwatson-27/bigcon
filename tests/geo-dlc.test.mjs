@@ -274,7 +274,7 @@ test('GD-08 shutting down Qantas parks it for two full turns: no jet, no Qantas 
   armAction(e);
   const down = e.f.applyIntent(0, { act: 'qantasdown' });
   assert.equal(S.players[0].money, 30 - 4 + 2, '−$4 grounding fee, + the quiet quarter already in');
-  assert.equal(S.qantasGroundUntil, S.turn + 3, 'grounded through the current and the next two turns');
+  assert.equal(S.qantasGroundUntil, S.turn + 2, 'grounded through the current and next full turn');
   assert.equal(S.geoBoeing, true, 'once per turn');
   assert.ok(e.f.qantasGrounded(), 'the kangaroo is parked');
   assert.ok(S.log.some(l => l.includes('grounded for two full turns')), 'the table saw the grounding');
@@ -296,10 +296,7 @@ test('GD-08 shutting down Qantas parks it for two full turns: no jet, no Qantas 
   e.f.income(1);
   assert.equal(S.players[1].money, pre + 3, 'QANTAS still pays nothing on turn 2');
   S.turn = 3;
-  assert.ok(e.f.qantasGrounded(), 'turn 3: still parked');
-  /* Two full turns pass — the engines come back. */
-  S.turn = 4;
-  assert.equal(e.f.qantasGrounded(), false, 'the Boeing leaves on turn 4');
+  assert.equal(e.f.qantasGrounded(), false, 'the Boeing leaves at the start of turn 3 after two full turns');
   assert.equal(e.f.canReach('qantas'), true, 'the runway is open again');
   const pre2 = S.players[1].money;
   e.f.income(1);
@@ -718,7 +715,7 @@ test('GD-20 blockade: free, once per turn, one full rotation, and even the owner
   await e.f.applyIntent(0, { act: 'blockmode' });
   assert.equal(S.mode, 'blockade', 'the blockade console arms');
   const wall = e.f.applyIntent(0, { act: 'blockade', id: 'oil' });
-  assert.equal(S.blockades.oil, S.turn + S.players.length, 'expiry is exactly one rotation out');
+  assert.equal(S.blockades.oil, S.turn + 2, 'expiry is one full rotation after placement');
   assert.equal(S.blockadeUsed, true, 'one wall per turn');
   assert.equal(S.players[0].money, 10 + 2, 'free — only the quiet quarter lands');
   assert.ok(S.log.some(l => l.includes('BLOCKADED for one full rotation')), 'the table saw the wall');
@@ -763,12 +760,12 @@ test('GD-20b blockade guards: rubble refused, double walls refused, move-phase r
   delete S.rubble.oil;
   await e.f.applyIntent(0, { act: 'blockmode' });  // re-arm after the closed console
   const wall = e.f.applyIntent(0, { act: 'blockade', id: 'oil' });
-  assert.equal(S.blockades.oil, S.turn + S.players.length, 'the standing pin is walled');
+  assert.equal(S.blockades.oil, S.turn + 2, 'the standing pin is walled for one full rotation');
   S.blockadeUsed = false;                // force a second wall attempt same turn
   await e.f.applyIntent(0, { act: 'blockmode' });
   await e.f.applyIntent(0, { act: 'blockade', id: 'oil' });
   assert.equal(S.mode, null, 'already-walled refused');
-  assert.equal(S.blockades.oil, S.turn + S.players.length, 'the first expiry stands');
+  assert.equal(S.blockades.oil, S.turn + 2, 'the first expiry stands');
   /* Blockades are an action-phase power: mid-move without Backroom, no wall. */
   S.cur = 0; S.phase = 'move'; S.mode = null; S.blockadeUsed = false;
   await e.f.applyIntent(0, { act: 'blockmode' });

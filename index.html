@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>THE BIG CON v1.9</title>
+<title>THE BIG CON v1.12</title>
 <link rel="icon" href="favicon.ico">
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
@@ -169,7 +169,7 @@ button.mini:hover{background:#168388}
 .pface{width:28px;height:28px;border-radius:50%;object-fit:cover;border:2px solid var(--pc,#168388);flex:0 0 28px;background:#000}
 #board text{font-family:system-ui,Segoe UI,Helvetica,Arial,sans-serif}
 
-/* v1.9 UI: the map is a fixed, full-height left viewport; only the sidebar scrolls. */
+/* v1.12 UI: the map is a fixed, full-height left viewport; only the sidebar scrolls. */
 body.game-open{overflow:hidden}
 #app{display:none;flex-wrap:nowrap;gap:0;padding:0;align-items:stretch;width:100vw;height:100vh;height:100dvh;overflow:hidden}
 #boardWrap{flex:1 1 auto;min-width:0;height:100%;position:relative;overflow:hidden;background:#1d201f}
@@ -215,6 +215,7 @@ body.game-open{overflow:hidden}
    </div>
    <div class="goalrow">
     <div class="goalctl"><label style="display:flex;align-items:center;gap:10px;font:inherit;cursor:pointer"><input id="geoToggle" type="checkbox" style="width:20px;height:20px;accent-color:#168388;cursor:pointer"><span style="white-space:nowrap">ENABLE THE GEOGRAPHY DLC</span></label></div>
+    <div class="goalctl"><label style="display:flex;align-items:center;gap:10px;font:inherit;cursor:pointer"><input id="fogToggle" type="checkbox" style="width:20px;height:20px;accent-color:#168388;cursor:pointer"><span>FOG OF WAR</span></label></div>
    </div>
    <div class="lobbychat">
     <div class="cl">THE WIRE — LOBBY CHAT</div>
@@ -251,7 +252,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = 'd8df189';
+const BUILD_COMMIT = 'fcb01aa';
 const $=id=>document.getElementById(id);
 $('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('splashLogo');if(!img)return;let done=false;const swap=()=>{if(done)return;done=true;img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};setTimeout(swap,5000)})();
 
@@ -655,7 +656,7 @@ const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);
 /* ================= STATE, NET & HELPERS ================= */
 let S=null;
 const GOAL_MIN=20,GOAL_MAX=999,GOAL_DEF=100;
-const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,roomLabel:null,lobbyChat:[],lobbyPlayers:[],started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,dlcGeo:false,hbTimer:null,lastSeen:0};
+const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,roomLabel:null,lobbyChat:[],lobbyPlayers:[],started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,dlcGeo:false,fogOfWar:false,hbTimer:null,lastSeen:0};
 function clampGoal(v){const n=Math.round(Number(v)||0);if(!n)return GOAL_DEF;return Math.max(GOAL_MIN,Math.min(GOAL_MAX,n))}
 let fxSeq=0;
 const shownFx=new Set();
@@ -1010,7 +1011,7 @@ function initGame(defs){
   Net.myIdx=order.indexOf(hostWas);
  }
  const goal=clampGoal(Net.goal);
- S={backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:(charMeta(d.char)||{}).color||PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',dc:false})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null,dlcGeo:!!Net.dlcGeo,rubble:{},ov:null,geoMissiled:false,geoBeach:false,geoBoeing:false,geoCrash:false,geoStage5:false,geoVenice:false,blockades:{},blockadeUsed:false,missileProbe:null,qantasGroundUntil:0,decline:null};
+ S={backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:(charMeta(d.char)||{}).color||PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',visited:{quik:true},dc:false})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null,dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,rubble:{},ov:null,geoMissiled:false,geoBeach:false,geoBoeing:false,geoCrash:false,geoStage5:false,geoVenice:false,blockades:{},blockadeUsed:false,missileProbe:null,qantasGroundUntil:0,decline:null};
  const slot=QUIK_SLOTS[quikSlot];
  const generated=generateRandomBoard(slot);S.boardLayout=generated.positions;S.boardEdges=generated.edges;
  applyLayoutFromState();
@@ -1032,7 +1033,7 @@ function initGame(defs){
 /* ================= LOCAL DESKTOP TURN ALERTS =================
    Alerts are opt-out and default on. Permission is requested only from a
    user gesture; the preference is local to this browser/device. */
-const TURN_ALERTS_KEY='bigcon-v1.9-turn-alerts';
+const TURN_ALERTS_KEY='bigcon-v1.12-turn-alerts';
 let lastTurnAlertKey='',lastDeliveredTurnAlertKey='';
 function turnAlertsEnabled(){try{return localStorage.getItem(TURN_ALERTS_KEY)!=='off'}catch(_){return true}}
 function requestTurnNotificationPermission(){
@@ -1049,7 +1050,7 @@ function notifyCurrentTurn(force){
  lastTurnAlertKey=key;
  if(lastDeliveredTurnAlertKey===key||typeof Notification==='undefined'||Notification.permission!=='granted')return;
  try{
-  const p=S.players[S.cur];const n=new Notification('THE BIG CON v1.9 — Your turn',{body:(p&&p.name?p.name+' — ':'')+'It is your move. Open the game to make your play.',tag:'bigcon-turn-'+key,renotify:false});
+  const p=S.players[S.cur];const n=new Notification('THE BIG CON v1.12 — Your turn',{body:(p&&p.name?p.name+' — ':'')+'It is your move. Open the game to make your play.',tag:'bigcon-turn-'+key,renotify:false});
   lastDeliveredTurnAlertKey=key;
   n.onclick=()=>{try{window.focus()}catch(_){}try{n.close()}catch(_){}};
  }catch(_){}
@@ -1290,7 +1291,7 @@ async function applyIntent(pi,m){
   else if(act==='qantasdown'&&abilityPhase(pi)&&S.dlcGeo&&!S.mode&&S.owner.geo_boeing===pi&&p.money>=4&&!S.geoBoeing){
    if(S.owner.qantas===pi){sysTo(pi,'You own the kangaroo — you cannot shut down your own airline.');return}
    p.money-=4;fxAt(pi,'−$4','#ff6b5e');S.geoBoeing=true;
-   S.qantasGroundUntil=S.turn+3;
+   S.qantasGroundUntil=S.turn+2;
    const qn=NMAP.qantas;fx(qn.x,qn.y-70,'🛫 GROUNDED','#ff6b5e');
    log('🛩️ '+pname(pi)+' parks THE CORPORATE BOEING on the runway — QANTAS is grounded for two full turns: no jet for anyone, no income for its owner.');
    await finishNodeAbility(pi);
@@ -1336,7 +1337,7 @@ async function applyIntent(pi,m){
   else if(act==='blockade'&&S.phase==='action'&&S.mode==='blockade'){
    const n=NMAP[m.id];
    if(!n||S.rubble[m.id]||blockaded(m.id)){sysTo(pi,'That node is rubble or already walled off.');S.mode=null;sync();return}
-   S.blockades[m.id]=S.turn+S.players.length;S.blockadeUsed=true;S.mode=null;
+   S.blockades[m.id]=S.turn+2;S.blockadeUsed=true;S.mode=null;
    fx(n.x,n.y-64,'🚧 BLOCKADED','#f5c542');
    log('🚧 '+pname(pi)+' walls off '+n.name.join(' ')+' — BLOCKADED for one full rotation: nobody walks in, nobody lands, not even '+pname(pi)+'.');
    await finishNodeAbility(pi);
@@ -1469,6 +1470,7 @@ async function doMove(pi,id){
   fx(n.x,n.y-64,'🏝️ CLAIMED','#7fe08d');
   log('🏝️ '+pname(pi)+' lands in TUVALU — THE JOIN IS FREE. First arrival claims it: no action, no cost, no Cortisol.');
  }
+ if(!S.players[pi].visited)S.players[pi].visited={};S.players[pi].visited[id]=true;
  if(prevPos==='sisy'&&id!=='sisy'&&S.owner.back!==pi)S.sisyPayout=10;
  log('→ '+pname(pi)+' moves to '+NMAP[id].name.join(' ')+'.');
  if(S.steps<=0)await endMovement();else sync();
@@ -1486,6 +1488,7 @@ async function doFly(pi,id){
   fx(n.x,n.y-64,'🏝️ CLAIMED','#7fe08d');
   log('🏝️ '+pname(pi)+' jets into TUVALU — THE JOIN IS FREE. First arrival claims it: no action, no cost, no Cortisol.');
  }
+ if(!p.visited)p.visited={};p.visited[id]=true;
  if(prevFlyPos==='sisy'&&id!=='sisy'&&S.owner.back!==pi)S.sisyPayout=10;
  log('✈️ '+pname(pi)+' takes the Qantas jet straight to '+NMAP[id].name.join(' ')+'.');
  if(flew){sync();await projPause()} /* the jet flies before the landing opens the next phase */
@@ -1667,6 +1670,15 @@ function moodBoost(n){
  return 0;
 }
 function nodeSVG(n,cls){
+ const me=S&&S.players[Net.myIdx];
+ const discovered=!S||!S.fogOfWar||(me&&me.visited&&me.visited[n.id]);
+ if(!discovered){
+  /* Unknown destinations are hinted only when they are directly reachable.
+     Other unseen locations leave no marker, so the hidden map cannot be read. */
+  if(cls.indexOf('reach')<0)return '';
+  const box=nodeBox(n),w=box[0],h=box[1];
+  return '<g class="node fog-node click reach" transform="translate('+n.x+','+n.y+')" data-id="'+n.id+'" opacity=".94"><rect x="'+(-w/2)+'" y="'+(-h/2)+'" width="'+w+'" height="'+h+'" fill="#101716" stroke="#7ff6fb" stroke-width="3" stroke-dasharray="7 6"/><text text-anchor="middle" y="5" font-size="18" font-weight="900" fill="#7ff6fb">?</text></g>';
+ }
  const o=S?S.owner[n.id]:null;
  const ownr=o!=null;
  const oc=ownr?S.players[o].color:'#8a7a5f';
@@ -1714,7 +1726,7 @@ function tokenLayer(){
  Object.keys(byPos).forEach(nid=>{
   const n=NMAP[nid];const idxs=byPos[nid];
   idxs.forEach((pi,k)=>{
-   const p=S.players[pi];const off=SLOTS[k%SLOTS.length];
+   const p=S.players[pi];if(S.fogOfWar&&pi!==Net.myIdx&&!(S.players[Net.myIdx]&&S.players[Net.myIdx].visited&&S.players[Net.myIdx].visited[nid]))return;const off=SLOTS[k%SLOTS.length];
    const src=charSrc(p.char);
    s+='<g transform="translate('+(n.x+off[0])+','+(n.y+off[1])+')">'
     +(pi===S.cur?'<circle class="ringp" r="19" fill="none" stroke="'+p.color+'" stroke-width="2.5" stroke-dasharray="4 5"/>':'')
@@ -1773,6 +1785,7 @@ function renderBoard(){
  s+='<rect width="2400" height="1560" fill="'+md.tint+'" pointer-events="none"/>';
  s+='<rect x="7" y="7" width="2386" height="1546" rx="0" fill="none" stroke="#168388" stroke-width="3" opacity=".7"/>';
  EDGES.forEach((e,i)=>{
+  if(S&&S.fogOfWar){const me=S.players[Net.myIdx],seen=me&&me.visited||{},pos=me&&me.pos,knownA=!!seen[e[0]],knownB=!!seen[e[1]],frontier=(e[0]===pos&&!knownB)||(e[1]===pos&&!knownA);if(!(knownA&&knownB)&&!frontier)return;}
   const A=NMAP[e[0]],B=NMAP[e[1]];
   if(!A||!B)return;
   const dx=B.x-A.x,dy=B.y-A.y,len=Math.hypot(dx,dy)||1;
@@ -1788,7 +1801,7 @@ function renderBoard(){
  s+=scribble(1830,860,100,64,4)+scribble(1150,540,95,72,-3)+scribble(1000,1380,92,62,5)+scribble(1630,930,96,62,-4)+scribble(1500,470,98,62,3)+scribble(2020,185,92,66,-5)+scribble(390,1200,102,68,3);
  s+=redArrow(2090,330,1140,310)+redArrow(1965,235,1580,440)+redArrow(1080,585,480,1140)+redArrow(1130,1170,420,640);
  s+=scribText(1930,392,-4,'CASH RATE ↑')+scribText(1150,390,3,'“BOND…”')+scribText(1715,448,-6,'WTI +12%')+scribText(455,295,2,'TOO BIG TO FAIL')+scribText(1930,745,-3,'GOLD ↑')+scribText(1050,1150,4,'RATES ON HOLD')+scribText(640,810,-5,'INSIDER TRADING?');
- s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="268" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.9</text></g>';
+ s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="268" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.12</text></g>';
  /* the market wire — the mood, live */
  s+='<g transform="translate(1230,30)"><rect x="-700" y="-13" width="1400" height="26" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-682" cy="0" r="5" fill="'+md.color+'"/><text x="-668" y="4" font-size="11" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="-20" y="4" text-anchor="middle" font-size="10.5" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,88))+'</text><text x="688" y="4" text-anchor="end" font-size="10" font-weight="800" fill="#9ad">1🛈=$'+md.rate+'</text></g>';
  let lx=560;
@@ -6629,7 +6642,7 @@ Presence.menu();
  const chatVal=(window.__chatDraft)||'';
  side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomLabel||Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':'SEAT '+(Net.myIdx+1))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
   +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
-  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.9 · '+(S.dlcGeo?'81':'70')+' exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
+  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.12 · '+(S.dlcGeo?'81':'70')+' exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
   +'<div class="turncard" style="border-color:'+p.color+'"><div class="turnlab">TURN '+S.turn+'</div><div class="turnname" style="color:'+p.color+'">'+esc(p.name)+(isTurn?' — that’s you':'')+'</div>'
   +'<div class="resline">$ '+p.money+' &nbsp;·&nbsp; 🛈 '+p.intel+' &nbsp;·&nbsp; 🔥 '+p.cortisol+(p.cortisol>=6?' <span class="danger">RAID AT 9</span>':'')+'</div>'
   +'<div class="holds" title="holdings of '+esc(p.name)+'">'+(isTurn?ownedIcons:'<span style="opacity:.5;font-size:12px">'+NODES.filter(n=>S.owner[n.id]===S.cur).length+' holdings</span>')+'</div></div>'
@@ -7058,7 +7071,7 @@ function handleHello(c,name,playerId){
   if(old&&old.open){c.send({t:'kick',reason:'This player is already connected in this room. Close the other tab before joining again.'});setTimeout(()=>{try{c.close()}catch(e){}},800);return;}
   Net.roster[existing].conn=c;Net.conns[existing]=c;c.__bigconClosed=false;c.__lastSeen=Date.now();
   if(Net.started&&S){S.players[existing].dc=false;clearTimeout(Net.autoT);log('🔔 '+name+' reconnected to their existing seat.');c.send({t:'welcome',idx:existing,s:pubState(true)});sync(true);return;}
-  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,chat:Net.lobbyChat.slice(-40)});broadcastLobby();return;
+  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,chat:Net.lobbyChat.slice(-40)});broadcastLobby();return;
  }
  if(Net.started&&S){
   const idx=S.players.findIndex(pl=>pl.dc&&pl.name.toLowerCase()===name.toLowerCase());
@@ -7078,7 +7091,7 @@ function handleHello(c,name,playerId){
  Net.roster.push({name,playerId:playerId||crypto.randomUUID(),conn:c,char:null});
  Net.conns=Net.roster.map(e=>e.conn);
  c.__lastSeen=Date.now();
- c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,chat:Net.lobbyChat.slice(-40)});
+ c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,chat:Net.lobbyChat.slice(-40)});
  broadcastLobby();
 }
 function onHostClose(c){
@@ -7112,7 +7125,7 @@ function onHostClose(c){
  }
 }
 function broadcastLobby(){
- sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,chat:Net.lobbyChat.slice(-40)});
+ sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,chat:Net.lobbyChat.slice(-40)});
  renderLobbyList();renderLobbyChat();
  const n=Net.roster.length;
  const ready=n>=1&&Net.roster.every(e=>e.char);
@@ -7260,6 +7273,7 @@ function onGuestData(d){
    if(d.chat)Net.lobbyChat=d.chat;
    if(d.goal)setGoalUI(d.goal);
    if(d.dlcGeo!==undefined)setGeoUI(!!d.dlcGeo);
+   if(d.fogOfWar!==undefined)setFogUI(!!d.fogOfWar);
    if(d.s){S=null;adoptState(d.s);Net.begun=true;enterGame()}
    else showLobby(false);
    break;
@@ -7269,6 +7283,7 @@ function onGuestData(d){
    renderLobbyChat();
    if(d.goal)setGoalUI(d.goal);
    if(d.dlcGeo!==undefined)setGeoUI(!!d.dlcGeo);
+   if(d.fogOfWar!==undefined)setFogUI(!!d.fogOfWar);
    renderLobbyList();
    break;
   case 'begin':S=null;adoptState(d.s);if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
@@ -7299,6 +7314,11 @@ function setGoalUI(v){
 function setGeoUI(v){
  Net.dlcGeo=!!v;
  const t=$('geoToggle');
+ if(t)t.checked=!!v;
+}
+function setFogUI(v){
+ Net.fogOfWar=!!v;
+ const t=$('fogToggle');
  if(t)t.checked=!!v;
 }
 function showLobby(asHost){
@@ -7351,8 +7371,9 @@ function showLobby(asHost){
 })();
 (function(){
  const gt=$('geoToggle');
- if(!gt)return;
- gt.onchange=()=>{if(Net.role!=='host'){gt.checked=Net.dlcGeo;toast('The host decides whether the Geography DLC is played.');return}setGeoUI(gt.checked);broadcastLobby()};
+ if(gt)gt.onchange=()=>{if(Net.role!=='host'){gt.checked=Net.dlcGeo;toast('The host decides whether the Geography DLC is played.');return}setGeoUI(gt.checked);broadcastLobby()};
+ const ft=$('fogToggle');
+ if(ft)ft.onchange=()=>{if(Net.role!=='host'){ft.checked=Net.fogOfWar;toast('The host decides whether Fog of War is enabled.');return}setFogUI(ft.checked);broadcastLobby()};
 })();
  $('btnCopy').onclick=()=>{
  const code=Net.roomLabel||Net.roomCode||'';
