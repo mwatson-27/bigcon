@@ -1972,7 +1972,7 @@ function renderSide(){
    }
    btns.push('<button class="act" data-act="sellall"'+(p.intel>0?'':' disabled')+' title="Exchange all your Intel at the current market rate in one action">💰 Sell ALL '+p.intel+' 🛈 → $'+(p.intel*md.rate)+'</button>');
    btns.push('<button class="act" data-act="masscortisol"'+(p.intel>=30&&S.players.length>1?'':' disabled')+' title="Choose a rival to receive +6 Cortisol for 30 Intel">🔥 Add 6 Cortisol to a rival — 30 🛈</button>');
-   if(S.owner.bond===me&&p.pos==='bond'&&!S.bondStormUsed)btns.push('<button class="act" data-act="bondstorm"'+(S.players.some((pl,i)=>i!==me&&NODES.some(n=>n.type===\'CHART\'&&S.owner[n.id]===i))?'':' disabled')+' title="Launch four missiles at the rival with the most charts">💥 BONDMAGEDDON: 4 missile barrage</button>');
+   if(S.owner.bond===me&&p.pos==='bond'&&!S.bondStormUsed)btns.push('<button class="act" data-act="bondstorm"'+(S.players.some((pl,i)=>i!==me&&NODES.some(n=>n.type==='CHART'&&S.owner[n.id]===i))?'':' disabled')+' title="Launch four missiles at the rival with the most charts">💥 BONDMAGEDDON: 4 missile barrage</button>');
    btns.push('<button class="act" data-act="laylowcash">Lay low — pocket $1</button>');
    btns.push('<button class="act" data-act="laylowcool">Lay low — cool 2 🔥</button>');
    phaseHtml='<div class="phlabel">PHASE 2 · ONE ACTION</div>'+powline+'<div class="btns">'+btns.join('')+'</div>';
