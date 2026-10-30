@@ -2087,7 +2087,7 @@ function handleNodeTap(t){
  const row=e.target.closest('.prow[data-rival]');
  if(row&&(S.phase==='action'||(S.phase==='move'&&S.owner.back===Net.myIdx&&!S.backroomAbilityUsed))&&S.cur===Net.myIdx){
   const ri=+row.dataset.rival;if(ri===Net.myIdx)return;
-  if(S.mode&&['leak','audit','tweet','roast'].includes(S.mode)){dispatch({act:S.mode,target:ri});return}
+  if(S.mode&&['leak','audit','tweet','roast','masscortisol'].includes(S.mode)){dispatch({act:S.mode,target:ri});return}
  }
  const b=e.target.closest('button[data-act]');
  if(!b||b.disabled)return;
@@ -2131,6 +2131,9 @@ function handleNodeTap(t){
   case 'masspanic':dispatch({act:'masspanic'});break;
   case 'divestmade':dispatch({act:'divestmade'});break;
   case 'sell':dispatch({act:'sell',n:+b.dataset.n});break;
+  case 'sellall':dispatch({act:'sellall'});break;
+  case 'masscortisol':dispatch({act:'masscortisol'});break;
+  case 'bondstorm':dispatch({act:'bondstorm'});break;
   case 'cancel':dispatch({act:'cancel'});break;
   case 'laylowcash':dispatch({act:'laylow',choice:'cash'});break;
   case 'laylowcool':dispatch({act:'laylow',choice:'cool'});break;
