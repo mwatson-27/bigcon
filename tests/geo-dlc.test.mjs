@@ -802,36 +802,32 @@ test('GD-21 Kim Jong Un: a WILD pin that pays +1 Intel at every startTurn', asyn
   assert.equal(S.players[0].money, 20 + 3, 'salary only — the pin pays no income');
 });
 
-/* ================= GD-22 — the hermit kingdom spawns clustered ================= */
-test('GD-22 the North Korea pins spawn in a tight ring around Pyongyang City across seeds', { timeout: 60000 }, t => {
+/* ================= GD-22 — strategic synergies spawn far apart ================= */
+test('GD-22 cortisol relief and strategic drone synergies spawn far apart across seeds', { timeout: 60000 }, t => {
   const e = engineFor(t);
   e.f.rebuildWorld(true);
   const slots = e.acc.QUIK_SLOTS;
+  const strategic = ['geo_missile', 'geo_shahed', 'geo_kim', 'geo_wonsan', 'geo_pillars', 'gold', 'sat', 'asics', 'rba'];
   for (let s = 0; s < 12; s++) {
     const seed = 5000 + s;
     const slot = slots[s % slots.length];
     let gen;
     withSeed(seed, () => { gen = e.f.generateRandomBoard(slot); });
     const posById = new Map(gen.positions.map(p => [p.id, p]));
-    const city = posById.get('geo_pyoncity');
-    assert.ok(city, `seed ${seed}: the capital is plotted`);
     const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-    for (const id of e.acc.GEO_NK_IDS) {
-      if (id === 'geo_pyoncity') continue;
+    for (const id of strategic) assert.ok(posById.has(id), `seed ${seed}: ${id} is plotted`);
+    let closest = Infinity, closestPair = '';
+    for (let i = 0; i < strategic.length; i++) {
+      for (let j = i + 1; j < strategic.length; j++) {
+        const distance = d(posById.get(strategic[i]), posById.get(strategic[j]));
+        if (distance < closest) { closest = distance; closestPair = strategic[i] + ' / ' + strategic[j]; }
+      }
+    }
+    assert.ok(closest > 150, `seed ${seed}: key synergies are spread apart (closest: ${closestPair}, ${Math.round(closest)}px)`);
+    for (const id of strategic) {
       const p = posById.get(id);
-      assert.ok(p, `seed ${seed}: ${id} plotted`);
-      const dist = d(p, city);
-      assert.ok(dist < 900, `seed ${seed}: ${id} stays in the neighbourhood (${Math.round(dist)}px)`);
       assert.ok(p.x >= 95 && p.x <= 2305 && p.y >= 95 && p.y <= 1455, `seed ${seed}: ${id} stays on the board`);
     }
-    /* The hermit kingdom hugs tighter than the rest of the DLC sprawls. */
-    const nk = e.acc.GEO_NK_IDS.map(id => posById.get(id));
-    let nkMax = 0;
-    for (let i = 0; i < nk.length; i++) for (let j = i + 1; j < nk.length; j++) nkMax = Math.max(nkMax, d(nk[i], nk[j]));
-    const others = e.acc.GEO_NODE_IDS.filter(id => !e.acc.GEO_NK_IDS.includes(id)).map(id => posById.get(id));
-    let otherMax = 0;
-    for (let i = 0; i < others.length; i++) for (let j = i + 1; j < others.length; j++) otherMax = Math.max(otherMax, d(others[i], others[j]));
-    assert.ok(nkMax < otherMax, `seed ${seed}: the hermit kingdom (${Math.round(nkMax)}px) hugs tighter than the rest of the DLC (${Math.round(otherMax)}px)`);
   }
 });
 
