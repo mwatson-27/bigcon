@@ -1238,7 +1238,7 @@ async function applyIntent(pi,m){
   else if(act==='jog'&&abilityPhase(pi)&&!S.mode&&p.pos==='asics'&&S.owner.asics===pi){
    log('👟 '+pname(pi)+' jogs a lap in the circled shoe. Why is it on the board? Irrelevant.');addCortisol(pi,-1,'a cooling lap');await finishNodeAbility(pi)}
   /* ---- 🌍 GEOGRAPHY DLC ---- */
-  else if(act==='missilemode'&&S.dlcGeo&&(S.phase==='action'||S.phase==='move')&&!S.mode&&S.owner.geo_missile===pi&&p.money>=4&&p.intel>=1&&!S.geoMissiled&&(p.pos==='geo_missile'||S.owner.geo_kim===pi)){S.mode='missile';sync()}
+  else if(act==='missilemode'&&S.dlcGeo&&(S.phase==='action'||S.phase==='move')&&!S.mode&&(S.owner.geo_missile===pi||S.owner.geo_shahed===pi)&&p.money>=4&&p.intel>=1&&!S.geoMissiled&&(p.pos==='geo_missile'||p.pos==='geo_shahed'||S.owner.geo_kim===pi)){S.mode='missile';sync()}
   else if(act==='missile'&&S.dlcGeo&&(S.phase==='action'||S.phase==='move')&&S.mode==='missile'){
    const n=NMAP[m.id];
    if(!n||!S.rubble||S.rubble[m.id]){sysTo(pi,'Pick a target that still stands.');S.mode=null;sync();return}
@@ -1869,7 +1869,7 @@ function renderSide(){
     +((!S.extraStep&&p.intel>=1)?'<button class="act" data-act="favor">🛈 Burn a favor — 1 🛈 (+1 step this turn)</button>':'')
     +((S.owner.qantas===me)?'<button class="act" data-act="flymode"'+(p.money>=3?'':' disabled')+'>✈️ Fly the Qantas jet — $3 (anywhere)</button>':'')
     +((S.owner.f1===me&&!S.slipped)?'<button class="act" data-act="slip"'+(p.money>=2?'':' disabled')+'>🏎️ Slipstream — $2 (+2 steps, $2 off next seizure)</button>':'')
-    +((S.dlcGeo&&S.owner.geo_missile===me&&(p.pos==='geo_missile'||S.owner.geo_kim===me))?'<button class="act" data-act="missilemode"'+((p.money>=4&&p.intel>=1&&!S.geoMissiled)?'':' disabled')+' title="From the silo (anywhere with Kim Jong Un): strike any node that still stands — the launch ends your move; your action still follows ($4 + 1 Intel, once per turn)">🚀 Launch a missile — $4 + 1🛈 (ends the move)</button>':'');
+    +((S.dlcGeo&&(S.owner.geo_missile===me||S.owner.geo_shahed===me)&&(p.pos==='geo_missile'||p.pos==='geo_shahed'||S.owner.geo_kim===me))?'<button class="act" data-act="missilemode"'+((p.money>=4&&p.intel>=1&&!S.geoMissiled)?'':' disabled')+' title="From either strategic drone site (anywhere with Kim Jong Un): strike any node that still stands — the launch ends your move; your action still follows ($4 + 1 Intel, once per turn)">🚀 Launch a missile — $4 + 1🛈 (ends the move)</button>':'');
     if(S.owner.back===me&&!S.backroomAbilityUsed){
      phaseHtml+='<div class="sublabel">BACKROOM DEALS · ONE NODE ABILITY · COSTS 2 MOVEMENT STEPS</div><div class="btns">';
      const backroomStepLock=S.steps<2?' disabled':'';
