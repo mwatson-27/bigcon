@@ -525,7 +525,7 @@ test('GD-14 the generated 80-pin board stays a valid collage across 30 seeds', {
       assert.ok(posById.has(id), `seed ${seed}: ${id} plotted`);
     }
     const reached = bfs(e.acc.ADJ, 'quik');
-    assert.equal(reached.size, 81, `seed ${seed}: fully connected`);
+    assert.equal(reached.size, 82, `seed ${seed}: fully connected`);
     /* Geo pins never share a plot with each other. */
     for (let i = 0; i < e.acc.GEO_NODE_IDS.length; i++) {
       for (let j = i + 1; j < e.acc.GEO_NODE_IDS.length; j++) {
