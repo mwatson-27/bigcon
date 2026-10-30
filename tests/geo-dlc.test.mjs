@@ -442,7 +442,10 @@ test('GD-12b Overtourism: +1 Cortisol per owner-turn while Venice stays owned', 
   assert.equal(S.mode, 'overtour', 'the cruise board arms');
   const tour = e.f.applyIntent(0, { act: 'overtour', id: 'westpac' });
   assert.equal(S.players[0].money, 30 - 2 + 2, '−$2 fare, + the quiet quarter already in');
-  assert.equal(JSON.stringify(S.ov), JSON.stringify({ nid: 'westpac', by: 0 }), 'the ships are booked');
+  assert.equal(S.ov.nid, 'westpac', 'the ships are booked against the selected node');
+  assert.equal(S.ov.by, 0, 'the Venetian player owns the effect');
+  assert.equal(S.ov.targetOwner, 1, 'the effect tracks the original node owner');
+  assert.equal(S.ov.expiresAt, S.turn * S.players.length + S.cur + S.players.length, 'the effect lasts one full turn cycle');
   assert.ok(S.log.some(l => l.includes('OVERTOURISM')), 'the table saw the ships');
   await tour;
   await settle();
