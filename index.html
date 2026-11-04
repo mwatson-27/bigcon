@@ -252,7 +252,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = '2006575';
+const BUILD_COMMIT = '0a4ce80';
 const IS_DISCORD_ACTIVITY = new URLSearchParams(location.search).get('discord') === '1' || location.hostname.endsWith('.discordsays.com') || new URLSearchParams(location.search).has('instance_id');
 if(IS_DISCORD_ACTIVITY)window.__BIGCON_DISCORD_ACTIVITY__=true;
 const $=id=>document.getElementById(id);
@@ -1756,7 +1756,10 @@ async function winCheck(){
  const charHtml=wc?'<div style="margin:10px 0 14px;text-align:center"><img src="'+charSrc(w.char)+'" alt="'+esc(wc.name)+'" style="width:96px;height:96px;object-fit:contain;border-radius:12px;border:2px solid '+w.color+';background:#111;padding:4px"><div style="font-weight:800;margin-top:5px">'+esc(wc.name)+'</div></div>':'';
  const board=S.players.map((pl,i)=>{const c=charMeta(pl.char);return esc(pl.name)+' ('+(c?esc(c.name):'No character')+') — $'+pl.money}).join(' · ');
  await revealAll('🏆 THE BIG CON PAYS OUT','<div class="winname" style="color:'+w.color+'">'+esc(w.name)+'</div>'+charHtml+'<p>walks away with <b>$'+w.money+'</b>, past the table’s target of <b>$'+goal+'</b>, holding one of every node type — '+WIN_TYPES.join(' · ')+'. The market was rigged. It was rigged by <b>them</b>.</p><div class="winlist">'+board+'</div>');
- sendAll({t:'reload'});setTimeout(()=>location.reload(),400);return true;
+ /* The table stays put after the payout — nobody is kicked out. The room, the
+    connections and the record all survive; the host deals the next con from
+    the lobby (or LEAVE ends the night deliberately). */
+ return true;
 }
 function addChat(pi,text){
  if(!S)return;
@@ -2025,7 +2028,12 @@ function renderSide(){
  const ownedIcons=NODES.filter(n=>S.owner[n.id]===me).map(n=>'<span title="'+n.name.join(' ')+'">'+(n.icon||({BANK:'🏦',COMMODITY:'🛢️',MEDIA:'🗞️',CORPORATE:'🏢',REGULATOR:'⚖️',CHART:'📈',WILD:'🎭'}[n.type]||'◆'))+'</span>').join('')||'<span style="opacity:.4">—</span>';
  const curN=NMAP[p.pos];
  let phaseHtml='';
- if(!isTurn){
+ if(S.phase==='over'){
+  phaseHtml='<div class="phlabel">GAME OVER</div><p>The con is complete. Check the record below.</p>'
+   +(Net.role==='host'
+    ?'<button class="act primary" data-act="tolobby">🃏 BACK TO THE LOBBY — same room, deal the next con</button><p class="fine" style="margin-top:8px">Nobody is going anywhere — the table keeps the room, the record and the chat. LEAVE is the only button that ends the night.</p>'
+    :'<p class="fine">Stick around — the host can deal the next con. Nobody has to leave.</p>');
+ } else if(!isTurn){
   if(S.phase==='event')phaseHtml='<div class="phlabel">MARKET EVENT</div><p>The market moves whether anyone likes it or not…</p>';
   else phaseHtml='<div class="phlabel">STANDBY</div><p>⏳ Waiting for <b style="color:'+p.color+'">'+esc(p.name)+'</b>'+(p.dc?' <i>(away — auto-playing)</i>':'')+'…</p><p>Scheme in the chat. Hover exhibits to study their powers.</p>';
  } else if(S.phase==='move'){
@@ -2135,8 +2143,6 @@ function renderSide(){
   }
  } else if(S.phase==='event'){
   phaseHtml='<div class="phlabel">PHASE 3 · MARKET EVENT</div><p>Resolve the event… and watch the mood.</p>';
- } else if(S.phase==='over'){
-  phaseHtml='<div class="phlabel">GAME OVER</div><p>The con is complete. Check the record below.</p>';
  }
  const prows=S.players.map((pl,i)=>{
   const nodes=NODES.filter(nn=>S.owner[nn.id]===i).length;
@@ -2242,6 +2248,53 @@ function handleNodeTap(t){
  $('zin').onclick=()=>zoomAt(0.8,innerWidth/2,innerHeight/2);
  $('zout').onclick=()=>zoomAt(1.25,innerWidth/2,innerHeight/2);
  $('zreset').onclick=()=>{VB={x:0,y:0,w:2400,h:1560};applyVB()};
+/* The syndicate hover card: hold the cursor over a rival's row and the table
+   shows exactly which pins they hold and which win types they still need. */
+(function(){
+ let card=null;
+ function ensure(){
+  if(card)return;
+  card=document.createElement('div');card.id='nodecard';
+  card.style.cssText='position:fixed;display:none;pointer-events:none;z-index:9999;max-width:360px;background:#101418;border:1px solid #2a4a55;border-radius:10px;padding:10px 12px;font:12px/1.55 Inconsolata,monospace;color:#cfe6ee;box-shadow:0 8px 30px rgba(0,0,0,.55);white-space:normal';
+  document.body.appendChild(card);
+ }
+ function hide(){if(card)card.style.display='none'}
+ function move(e){
+  if(!card||card.style.display!=='block')return;
+  const pad=14,r=card.getBoundingClientRect();
+  let x=e.clientX+pad,y=e.clientY+pad;
+  if(x+r.width>innerWidth-8)x=e.clientX-r.width-pad;
+  if(y+r.height>innerHeight-8)y=e.clientY-r.height-pad;
+  card.style.left=Math.max(8,x)+'px';card.style.top=Math.max(8,y)+'px';
+ }
+ function show(e){
+  const row=e.target&&e.target.closest?e.target.closest('.prow[data-rival]'):null;
+  if(!row||!S){hide();return}
+  const i=+row.dataset.rival,pl=S.players[i];
+  if(!pl){hide();return}
+  ensure();
+  const owned=NODES.filter(n=>S.owner[n.id]===i);
+  const byType={};for(const n of owned){(byType[n.type]=byType[n.type]||[]).push(n.name.join(' '))}
+  const missing=missingTypes(i);
+  let h='<b style="color:'+pl.color+';font-size:13px">'+esc(pl.name)+'</b> <span style="opacity:.7">$'+pl.money+' · 🛈'+pl.intel+' · 🔥'+pl.cortisol+'</span>';
+  h+='<div style="margin-top:6px;letter-spacing:.12em;color:#7fa7b3">HOLDS '+(owned.length||'NOTHING')+'</div>';
+  if(owned.length)h+=WIN_TYPES.filter(t=>byType[t]).map(t=>'<div><span style="color:#7fe08d">✔ '+t+'</span><span style="opacity:.85"> — '+byType[t].join(', ')+'</span></div>').join('');
+  else h+='<div style="opacity:.5">no pins on the board yet</div>';
+  h+='<div style="margin-top:6px;letter-spacing:.12em;color:#7fa7b3">'+(missing.length?'STILL NEEDS':'FULL SET HELD')+'</div>';
+  h+=missing.length?missing.map(t=>'<span style="color:#ff6b5e;margin-right:10px">✘ '+t+'</span>').join(''):'<span style="color:#7fe08d">✔ every type — now it is just the cash</span>';
+  card.innerHTML=h;card.style.display='block';
+  move(e);
+ }
+ document.addEventListener('mouseover',show);
+ document.addEventListener('mousemove',e=>{
+  const row=e.target&&e.target.closest?e.target.closest('.prow[data-rival]'):null;
+  if(row)show(e);else hide();
+ });
+ document.addEventListener('mouseout',e=>{
+  const row=e.target&&e.target.closest?e.target.closest('.prow[data-rival]'):null;
+  if(row&&(!e.relatedTarget||!row.contains(e.relatedTarget)))hide();
+ });
+})();
  $('side').addEventListener('click',async e=>{
  if(!S)return;
  const row=e.target.closest('.prow[data-rival]');
@@ -2254,6 +2307,7 @@ function handleNodeTap(t){
  const act=b.dataset.act;
  if(act==='rules'){showRules();return}
  if(act==='notifications'){toggleTurnAlerts();return}
+ if(act==='tolobby'){if(Net.role==='host')backToLobby();return}
  if(act==='leave'){
   if(Net.role==='host'){const v=await modal({title:'END THE GAME?',body:'This will disconnect everyone and return all players to the lobby screen. Proceed?',options:[{label:'Yes — end it',v:1},{label:'Keep scheming',v:0}]});if(v){sendAll({t:'reload'});setTimeout(()=>location.reload(),300)}}
   else{const v=await modal({title:'LEAVE THE TABLE?',body:'Your seat will be held — rejoin later with the same name and room code.',options:[{label:'Yes — leave',v:1},{label:'Stay',v:0}]});if(v)location.reload()}
@@ -2847,6 +2901,7 @@ function onGuestData(d){
   case 'state':adoptState(d.s);scheduleRender();break;
   case 'prompt':modal({title:d.title,html:d.html,body:d.body,options:d.options}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'answer',pid:d.pid,v})});break;
   case 'event':modal({title:d.title,html:d.html,options:[{label:'Continue',v:1}]});break;
+  case 'tolobby':S=null;Net.begun=false;if(d.idx!=null)Net.myIdx=d.idx;showLobby(false);break;
   case 'sys':toast(d.msg);break;
   case 'reload':location.reload();break;
   case 'kick':guestReconnectStopped=true;clearGuestReconnect();stopGuestHeartbeat();showFatal(d.reason||'Kicked from room.');break;
@@ -2878,9 +2933,25 @@ function setFogUI(v){
  const t=$('fogToggle');
  if(t)t.checked=!!v;
 }
+/* After the payout the table keeps its room: everyone is walked back to the
+   lobby with the same code, roster and faces — no reload, no rejoin. The
+   roster sits in shuffled seating order after initGame, so each guest is told
+   their own row index for the "YOU" marker. */
+function backToLobby(){
+ if(Net.role!=='host'||!S||!S.over)return;
+ Net.started=false;Net.begun=false;S=null;
+ for(let i=0;i<Net.roster.length;i++){
+  if(i===Net.myIdx)continue;
+  const c=Net.conns[i];if(c&&c.open)sendTo(i,{t:'tolobby',idx:i});
+ }
+ showLobby(true);
+ setNetStatus('Back in the lobby — same room, same faces. Deal the next con when ready.');
+ broadcastLobby();
+}
 function showLobby(asHost){
  $('hostForm').classList.remove('show');$('joinForm').classList.remove('show');
  $('lobbyView').style.display='block';
+ $('app').style.display='none';document.body.classList.remove('game-open');
  $('roomCodeBig').textContent=Net.roomLabel||Net.roomCode||'·····';
  $('btnStart').style.display=asHost?'block':'none';
  $('btnCopy').style.display=asHost?'inline-block':'none';

@@ -39,7 +39,12 @@
   };
   try { window.BigConBots = B; } catch (e) { /* non-window realm */ }
   const isTest = (typeof window !== 'undefined' && window.__BIGCON_TEST__ === true);
-  if (!isTest) B.paceMs = 650;
+  /* 650 made a ~1k-intent game take 18+ minutes; 150 keeps it human (~4 min)
+     without feeling robotic. Background tabs clamp timers to ~1s — pace()
+     detects the clamp and drops to one beat per turn so the con still ends. */
+  if (!isTest) B.paceMs = 150;
+  B.throttle = false;  /* a measured timer clamp this session */
+  B.pacedTurn = {};    /* per-seat "already beat once this turn" flags */
 
   /* ---------- deterministic randomness ---------- */
   function r32(pi) {
@@ -54,9 +59,27 @@
   function botSeed(pi) { B.streams[pi] = ((B.seed + pi * 7919 + B.turnStamp * 104729) >>> 0) || 1; }
   function sleep(ms) {
     if (!ms) return Promise.resolve();
-    return new Promise(res => { try { setTimeout(res, ms); } catch (e) { res(); } });
+    return new Promise(res => {
+      const t0 = Date.now();
+      try {
+        setTimeout(() => {
+          /* a background tab answers a 150ms timer a second or a minute late;
+             remember the clamp so pace() stops paying it once per intent */
+          if (Date.now() - t0 > ms + 700) B.throttle = true;
+          res();
+        }, ms);
+      } catch (e) { res(); }
+    });
   }
-  function pace(pi) { return B.paceMs ? sleep(B.paceMs + r32(pi) * B.paceMs) : Promise.resolve(); }
+  function pace(pi) {
+    if (!B.paceMs) return Promise.resolve();
+    if (B.throttle) {
+      /* throttled table: one beat per turn, not one per intent */
+      if (B.pacedTurn[pi]) return Promise.resolve();
+      B.pacedTurn[pi] = true;
+    }
+    return sleep(B.paceMs + r32(pi) * B.paceMs);
+  }
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
   /* ================= EXACT EVENT-CARD EV =================
@@ -282,6 +305,61 @@
   };
   function hazardFire(cur) { const c = clamp(cur, 0, 9); return W.fire * c * c; }
 
+  /* ================= PER-CHARACTER STRATEGIES =================
+     Every face plays its own con: `nodes`/`types` are the industries the
+     character pursues (bought at a premium via nodeOwnValue), `aggr` scales
+     hostile actions, `risk` divides the seat's own cortisol fear (above 1 is
+     braver), `cash` scales pure cash plays (sisyphus pushes, intel sales).
+     Unknown faces fall back to the all-rounder below. */
+  const STRATEGIES = {
+    markwatson:       { label: 'coal baron',     nodes: ['coal', 'watson', 'train', 'port', 'bhp', 'tanker', 'forklift'], types: ['COMMODITY', 'CORPORATE'], nodeBoost: 1.5, typeBoost: 1.25, aggr: 1.15, risk: 1.25, cash: 1.2 },
+    tomkins:          { label: 'servo empire',   nodes: ['quik', 'market', 'sisy', 'f1'],                               types: ['CORPORATE'],  nodeBoost: 1.3,  typeBoost: 1.1,  aggr: 0.9,  risk: 1.0,  cash: 1.6 },
+    jimchalmers:      { label: 'the treasurer',  nodes: ['chalmers', 'jim', 'gov', 'herald', 'rba'],                     types: ['REGULATOR', 'MEDIA'], nodeBoost: 1.3, typeBoost: 1.15, aggr: 0.95, risk: 0.9, cash: 1 },
+    bessock:          { label: 'the RBA',        nodes: ['rba', 'bullock', 'bond', 'cash', 'tenyear'],                   types: ['REGULATOR', 'CHART'], nodeBoost: 1.45, typeBoost: 1.2, aggr: 0.8, risk: 0.85, cash: 1 },
+    calvinathanasius: { label: 'old money',      nodes: ['citi', 'golf', 'bond007', 'hedge'],                            types: ['BANK'],       nodeBoost: 1.35, typeBoost: 1.15, aggr: 0.95, risk: 1.0,  cash: 1 },
+    denialswan:       { label: 'chart watcher',  nodes: ['tenyear', 'us', 'japan', 'uk', 'aus', 'stock', 'ib', 'term'],  types: ['CHART'],      nodeBoost: 1.45, typeBoost: 1.2,  aggr: 0.8,  risk: 0.85, cash: 1 },
+    japsnchen:        { label: 'the leak',       nodes: ['leak', 'insider', 'news', 'wef', 'photo'],                     types: ['MEDIA'],      nodeBoost: 1.3,  typeBoost: 1.15, aggr: 1.15, risk: 1.0,  cash: 1 },
+    thousandyardwax:  { label: 'the sniper',     nodes: ['trump', 'term', 'whistle'],                                    types: [],             nodeBoost: 1.2,  typeBoost: 1.0,  aggr: 1.5,  risk: 1.35, cash: 1 },
+    Alexander_Lane:   { label: 'toktimer',       nodes: ['toktimer', 'iface', 'term', 'school', 'mpc'],                  types: ['WILD'],       nodeBoost: 1.3,  typeBoost: 1.15, aggr: 0.9,  risk: 0.95, cash: 1 },
+    DJT:              { label: 'tariff man',     nodes: ['trump', 'fox', 'press', 'oil'],                                types: ['MEDIA'],      nodeBoost: 1.3,  typeBoost: 1.15, aggr: 1.6,  risk: 1.4,  cash: 1 },
+    thebigag:         { label: 'big agriculture', nodes: ['bhp', 'barrels', 'forklift', 'oil', 'gold'],                  types: ['COMMODITY'],  nodeBoost: 1.35, typeBoost: 1.2,  aggr: 1.2,  risk: 1.1,  cash: 1 },
+    thebigwegrzyn:    { label: 'the banker',     nodes: ['bessent', 'brad', 'bigshort', 'nab', 'commbank'],              types: ['BANK'],       nodeBoost: 1.35, typeBoost: 1.15, aggr: 1.0,  risk: 1.0,  cash: 1 },
+  };
+  const FALLBACK_STRAT = { label: 'wilder', nodes: [], types: [], nodeBoost: 1, typeBoost: 1, aggr: 1, risk: 1, cash: 1 };
+  function strategyOf(v, seat) {
+    const p = v.players && v.players[seat];
+    return (p && STRATEGIES[p.char]) || FALLBACK_STRAT;
+  }
+
+  /* Simulation variants — scale every profile uniformly so a race can tell a
+     plan-first table from an aggression-first one. The 40-game race in
+     tests/sim-races.mjs picked 'affinity' (fast games, most balanced field:
+     every archetype viable) and it is baked in as the shipped baseline;
+     'stock' preserves the pre-tuning temperament for repro. */
+  const VARIANTS = {
+    baseline: { nodeBoost: 1.6, typeBoost: 1.45, aggr: 1, risk: 1, cash: 1 },
+    stock: { nodeBoost: 1, typeBoost: 1, aggr: 1, risk: 1, cash: 1 },
+    aggro: { nodeBoost: 1, typeBoost: 1, aggr: 1.7, risk: 1.25, cash: 1 },
+    turtle: { nodeBoost: 1, typeBoost: 1.2, aggr: 0.45, risk: 0.7, cash: 0.8 },
+    sprint: { nodeBoost: 1, typeBoost: 1, aggr: 1, risk: 1, cash: 2.2 },
+  };
+  let variant = VARIANTS.baseline;
+  B.variant = variant;
+  B.setVariant = name => { variant = VARIANTS[name] || VARIANTS.baseline; B.variant = variant; return variant; };
+  function strOf(v, seat) {
+    const s = strategyOf(v, seat);
+    return {
+      nodes: s.nodes, types: s.types,
+      nodeBoost: s.nodeBoost * variant.nodeBoost,
+      typeBoost: s.typeBoost * variant.typeBoost,
+      aggr: s.aggr * variant.aggr,
+      risk: s.risk * variant.risk,
+      cash: s.cash * variant.cash,
+    };
+  }
+  /* a seat's own fear of the raid threshold, through its risk tolerance */
+  function fireOf(v, seat, cur) { return hazardFire(cur) / (strOf(v, seat).risk || 1); }
+
   function myNodes(v, seat) {
     const out = [];
     for (const id in v.owner) if (v.owner[id] === seat) out.push(id);
@@ -345,7 +423,7 @@
     for (const t of missing) setB += (t === 'REGULATOR' ? W.setBonus + W.regScarcity : W.setBonus) * 0.22;
     const deck = deckEV(v, seat);
     return {
-      score: p.money * W.money + inc * W.incomeTurns - hazardFire(p.cortisol)
+      score: p.money * W.money + inc * W.incomeTurns - fireOf(v, seat, p.cortisol)
         + setB + p.intel * W.intel * 4 + deck.money * 3 - deck.fire * 6,
       income: inc, missing,
     };
@@ -439,6 +517,11 @@
     if (['whistle', 'bullock', 'jt', 'mpc', 'geo_kim'].indexOf(nid) >= 0) v2 += W.intelNode;
     const t = n.type;
     if (v.missingTypes(seat).indexOf(t) >= 0) v2 += (t === 'REGULATOR' ? W.setBonus + W.regScarcity : W.setBonus);
+    /* the character's own plan: loved nodes and loved industries pay a premium
+       (also read for rival seats — it measures what the node means to THEM) */
+    const str = strOf(v, seat);
+    if (str.nodes.indexOf(nid) >= 0) v2 = v2 * str.nodeBoost + 8;
+    else if (str.types.indexOf(t) >= 0) v2 = v2 * str.typeBoost;
     /* ACCC exposure: a third holding in one tracked industry invites the fine */
     const myCount = {};
     for (const id of mine) { const n2 = v.nmap[id]; if (n2) myCount[n2.type] = (myCount[n2.type] || 0) + 1; }
@@ -461,7 +544,7 @@
     if (p.money + backCover < cost) return null;
     const cort = isTake ? 2 : 1;
     if (p.cortisol + cort >= 9) return null; /* never raid myself on purpose */
-    const heat = hazardFire(p.cortisol + cort) - hazardFire(p.cortisol);
+    const heat = fireOf(v, seat, p.cortisol + cort) - fireOf(v, seat, p.cortisol);
     let val = nodeOwnValue(v, seat, nid) - heat;
     if (!isTake) {
       val -= base * W.money;
@@ -494,6 +577,7 @@
     B.stats.turns++;
     B.turnStamp = view.turn;
     botSeed(pi);
+    B.pacedTurn[pi] = false; /* the throttle beat refreshes each turn */
     try {
       maybeChat(pi, view, api);
       if (view.phase === 'move') {
@@ -598,11 +682,13 @@
     const seize = seizeCandidate(v, pi, nid);
     if (seize) val += seize.val;
     if (v.owner[nid] === pi) {
-      if (nid === 'sisy') val += (v.sisyPayout || 10) * W.money;
-      if (nid === 'asics' && me.cortisol >= 3) val += hazardFire(me.cortisol) - hazardFire(me.cortisol - 1);
-      if (v.geo && nid === 'geo_wonsan' && me.cortisol >= 4) val += hazardFire(me.cortisol) - hazardFire(me.cortisol - 2);
-      if (v.geo && nid === 'geo_venice' && me.cortisol >= 4) val += hazardFire(me.cortisol) - hazardFire(me.cortisol - 1);
+      if (nid === 'sisy') val += (v.sisyPayout || 10) * W.money * strOf(v, pi).cash;
+      if (nid === 'asics' && me.cortisol >= 3) val += fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 1);
+      if (v.geo && nid === 'geo_wonsan' && me.cortisol >= 4) val += fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 2);
+      if (v.geo && nid === 'geo_venice' && me.cortisol >= 4) val += fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 1);
     }
+    /* the cash rush walks to the boulder: $4 to own, then pushes double forever */
+    if (nid === 'sisy' && v.owner[nid] == null && me.money >= v.goal * 0.72 && v.turn >= 30) val += 14;
     /* positioning support: stand where a bug or a missile becomes available */
     if (me.intel >= 1) {
       const A = buildAdj(v);
@@ -709,6 +795,34 @@
       'the regulators sent their regards. and a fine.',
       'rebuilding. emotionally and financially.',
     ],
+    panic: [
+      'PANIC? I call it a buying opportunity with extra steps',
+      'the wire says panic. my book says discount.',
+      'everyone stay calm. I am already calm. I AM CALM.',
+      'markets are down. I am up. coincidence? yes.',
+    ],
+    hype: [
+      'the frenzy is a lifestyle. I am simply on trend.',
+      'front page or nothing, baby',
+      'trending. unspecified on what.',
+      'my brand manager says strike while the mood is FRENZY',
+    ],
+    bs: [
+      'just saw a dog in a suit outside. anyway. buying charts.',
+      'thinking about the boulder again',
+      'my horoscope said seize. who am I to argue.',
+      'does anyone else hear the yield curve whispering',
+      'I do not have a plan. I have VISION. and also a plan.',
+      'putting everything in blue barrels and faith',
+      'the servo pie is still warm. financially speaking.',
+      'big if true. small if false. medium if uncertain.',
+      'I am not locked in here with you. you are locked in here with ME.',
+      'someone moved my terminal. was it you. it was you.',
+      'cortisol is just spicy confidence',
+      'not to be dramatic but the board is my entire personality',
+      'every node I seize is a node that believed in me',
+      'reading the deck like a diary. it is MY diary.',
+    ],
   };
   function pickLine(v, pi, bucket) {
     const arr = CHAT[bucket];
@@ -721,13 +835,18 @@
     const p = v.players[pi];
     /* forced reactions: a raid needs a word about it */
     if (p.raided && gap >= 3) { B.lastChat[pi] = v.turn; api.chat(pi, pickLine(v, pi, 'raid')); return; }
-    /* one voluntary line per ~turns: 7% of turns after a short quiet gap */
-    if (gap < 4 || r32(pi) >= 0.07) return;
+    /* voluntary lines: the table runs about one line per turn total, split
+       across the seats, after a short quiet gap — chatty but never spammy */
+    const rate = 0.9 / Math.max(2, v.players.length);
+    if (gap < 2 || r32(pi) >= rate) return;
     let bucket = 'flavor';
     if (p.cortisol >= 6) bucket = 'stress';
     else if (p.money < 5) bucket = 'broke';
     else if (p.money >= v.goal * 0.8) bucket = 'rich';
     else if (strongestSeat(v, pi) >= 0 && evalSeat(v, pi).score > evalSeat(v, strongestSeat(v, pi)).score + 60) bucket = 'taunt';
+    else if (v.mood === 'PANIC') bucket = 'panic';
+    else if (v.mood === 'FRENZY') bucket = 'hype';
+    if (bucket === 'flavor' && r32(pi) < 0.45) bucket = 'bs';
     B.lastChat[pi] = v.turn;
     api.chat(pi, pickLine(v, pi, bucket));
   }
@@ -745,12 +864,27 @@
   function pickAction(v, pi) {
     const me = v.players[pi];
     const list = [];
+    /* ---- convergence pressure: the con has to END ----
+       A game only finishes when a seat holds cash >= goal AND the full set of
+       node types. So past the mid-game the whole table ramps hostility (+2%/turn),
+       a rival inside the home stretch is hunted 1.7x harder, and a seat in its
+       own home stretch chases raw cash — sisyphus pushes and intel sales — over
+       vanity buys (spending down delays the win). Gated at turn 30 so staged
+       micro-rigs and opening books stay deterministic and calm. */
+    const late = v.turn >= 30;
+    const nearGoal = late && me.money >= v.goal * 0.72;
+    const leader = strongestSeat(v, pi);
+    const leaderNear = late && leader >= 0 && v.players[leader].money >= v.goal * 0.75;
+    const str = strOf(v, pi);
+    const ramp = late ? 1 + Math.max(0, v.turn - 45) * 0.02 : 1;
+    const urg = str.aggr * ramp * (leaderNear ? 1.7 : 1) * (nearGoal ? 0.6 : 1);
+    const cashRush = str.cash * (nearGoal ? 2.2 : 1);
     const sz = seizeCandidate(v, pi, me.pos);
     if (sz) list.push(sz);
     /* lay low — the always-legal pass; cooling is worth a lot at high cortisol */
     list.push({
       kind: 'laylow',
-      val: me.cortisol >= 4 ? (hazardFire(me.cortisol) - hazardFire(me.cortisol - 2)) * 0.5 : 0.5,
+      val: me.cortisol >= 4 ? (fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 2)) * 0.5 : 0.5,
       choice: me.cortisol >= 4 ? 'cool' : 'cash',
     });
     /* sell intel: the market pays most when the mood is worst */
@@ -779,17 +913,17 @@
       }
     }
     if (v.owner['rock'] === pi && me.cortisol >= 3 && me.money >= 3 && !v.cooked) {
-      list.push({ kind: 'cook', val: hazardFire(me.cortisol) - hazardFire(me.cortisol - 3) - 3 * W.money });
+      list.push({ kind: 'cook', val: fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 3) - 3 * W.money });
     }
     /* free-ish self-care at owned cooling nodes */
     if (me.pos === 'asics' && v.owner['asics'] === pi && me.cortisol >= 2) {
-      list.push({ kind: 'jog', val: hazardFire(me.cortisol) - hazardFire(me.cortisol - 1) });
+      list.push({ kind: 'jog', val: fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 1) });
     }
     if (v.geo && me.pos === 'geo_wonsan' && v.owner['geo_wonsan'] === pi && me.cortisol >= 3 && !v.geoBeach) {
-      list.push({ kind: 'beach', val: hazardFire(me.cortisol) - hazardFire(me.cortisol - 2) });
+      list.push({ kind: 'beach', val: fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 2) });
     }
     if (v.geo && me.pos === 'geo_venice' && v.owner['geo_venice'] === pi && me.cortisol >= 2 && !v.geoVenice) {
-      list.push({ kind: 'venicecool', val: hazardFire(me.cortisol) - hazardFire(me.cortisol - 1) });
+      list.push({ kind: 'venicecool', val: fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 1) });
     }
     if (v.owner['gov'] === pi && me.money >= 4 && !v.budgeted) {
       list.push({ kind: 'budget', val: (v.players.length - 1) * W.money + 6 - 3 * W.money });
@@ -901,6 +1035,15 @@
       if (take && take.cost - take.base >= 3) {
         list.push({ kind: 'dossier', val: (take.cost - take.base) * W.money - 3 * W.intel * 2 + 2, continuing: true });
       }
+    }
+    /* apply the character's temperament: hostility through urg, cash plays
+       through cashRush (see the convergence block at the top) */
+    const ATTACK = { leak: 1, audit: 1, tweet: 1, roast: 1, targetpanic: 1, masspanic: 1, bondmageddon: 1, pressure: 1, stage5: 1, qantasdown: 1, oilcrash: 1, missile: 1, overtour: 1, divestmade: 1, blockade: 1 };
+    for (const c of list) {
+      if (ATTACK[c.kind]) c.val *= urg;
+      else if (c.kind === 'bug') c.val *= 1 + (urg - 1) * 0.5;
+      else if (c.kind === 'push' || c.kind === 'sell') c.val *= cashRush;
+      else if (c.kind === 'laylow' && c.choice === 'cash' && nearGoal) c.val *= cashRush;
     }
     let best = null;
     for (const c of list) if (!best || c.val > best.val) best = c;
@@ -1144,6 +1287,8 @@
     B.known = {};
     B.lastChat = {};
     B.turnStamp = 1;
+    B.throttle = false;
+    B.pacedTurn = {};
   }
 
   /* exports */
@@ -1154,4 +1299,7 @@
   B.takeTurn = takeTurn;
   B.answerPrompt = answerPrompt;
   B.resetForGame = resetForGame;
+  B.STRATEGIES = STRATEGIES;
+  B.VARIANTS = VARIANTS;
+  B.strategyOf = strategyOf;
 })();

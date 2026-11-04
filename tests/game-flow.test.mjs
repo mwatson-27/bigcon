@@ -420,7 +420,7 @@ test('CF-08b a harmless event applies its effect exactly once', async t => {
 });
 
 /* ================= CF-09 — win condition through the flow ================= */
-test('CF-09 completing the con announces the winner to every seat and reloads the table', async t => {
+test('CF-09 completing the con announces the winner to every seat and keeps the table up', async t => {
   const engine = engineFor(t);
   const S = await makeGame(engine, 2);
   const goal = S.goal;
@@ -434,12 +434,16 @@ test('CF-09 completing the con announces the winner to every seat and reloads th
   assert.equal(S.over, true, 'the game is over');
   assert.equal(S.phase, 'over');
   assert.ok(engine.modalRec.some(m => m.title.startsWith('🏆')), 'the winner modal was queued');
+  // Nobody is kicked out after the payout: the old reload fan-out is gone and
+  // the room stays armed for a rematch from the lobby.
+  engine.clock.advance(600);
+  assert.equal(engine.location.reloadCount, 0, 'no seat was told to reload anything');
   for (let i = 0; i < 2; i++) {
     if (i === engine.acc.Net.myIdx) continue;
-    assert.ok(engine.acc.Net.conns[i].sent.some(m => m.t === 'reload'), `seat ${i} was told to reload`);
+    assert.ok(!engine.acc.Net.conns[i].sent.some(m => m.t === 'reload'), `seat ${i} was not shown the door`);
   }
-  engine.clock.advance(500);
-  assert.equal(engine.location.reloadCount, 1, 'the host page reloads');
+  assert.equal(engine.acc.Net.started, true, 'the room is still alive after the payout');
+  assert.ok(engine.acc.Net.roster.length === 2 && engine.acc.Net.roster.every(e => e.char), 'the roster keeps every face');
   const winLine = S.log.find(l => l.startsWith('🏆') && l.includes('banks $'));
   assert.ok(winLine && winLine.includes('The con is complete'), `the wire logs the payout: ${winLine}`);
 });

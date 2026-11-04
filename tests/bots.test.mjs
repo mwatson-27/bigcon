@@ -421,3 +421,97 @@ test('BT-08 the host can spectate: a lobby of only bots starts and plays', async
   const errs = engine.consoleOut.error.filter(l => String(l).includes('bot turn error'));
   assert.equal(errs.length, 0, 'no bot turn crashed, including the host seat: ' + String(errs[0] || '').slice(0, 200));
 });
+
+test('BT-09 every face plays its own con — per-character strategy profiles', t => {
+  const engine = botEngine(t);
+  const bots = engine.ctx.window.BigConBots;
+  const IDS = ['markwatson', 'tomkins', 'jimchalmers', 'bessock', 'calvinathanasius', 'denialswan',
+    'japsnchen', 'thousandyardwax', 'Alexander_Lane', 'DJT', 'thebigag', 'thebigwegrzyn'];
+  for (const id of IDS) {
+    const s = bots.STRATEGIES[id];
+    assert.ok(s, id + ' has a strategy profile');
+    assert.ok(s.label && Array.isArray(s.nodes) && Array.isArray(s.types), id + "'s profile is shaped right");
+    assert.ok(s.aggr > 0 && s.risk > 0 && s.cash > 0, id + "'s temperament knobs are positive");
+  }
+  /* the flavour matches the face */
+  assert.ok(bots.STRATEGIES.markwatson.nodes.indexOf('coal') >= 0, 'mark watson pursues the coal industry');
+  assert.ok(bots.STRATEGIES.markwatson.nodes.indexOf('watson') >= 0, 'mark watson keeps his own face on the board');
+  assert.ok(bots.STRATEGIES.bessock.nodes.indexOf('rba') >= 0 && bots.STRATEGIES.bessock.types.indexOf('REGULATOR') >= 0, 'bessock goes for the RBA');
+  assert.ok(bots.STRATEGIES.DJT.nodes.indexOf('trump') >= 0 && bots.STRATEGIES.DJT.nodes.indexOf('fox') >= 0, 'the tariff man buys the megaphone');
+  assert.ok(bots.STRATEGIES.DJT.aggr > bots.STRATEGIES.bessock.aggr, 'DJT is angrier than the central banker');
+  assert.ok(bots.STRATEGIES.tomkins.cash > 1, 'tomkins chases raw cash (the boulder)');
+  assert.ok(bots.STRATEGIES.thousandyardwax.risk > 1, 'the sniper does not fear the raid threshold');
+  /* lookup through a live view, including the unknown-face fallback */
+  const prof = id => bots.strategyOf({ players: [{ char: id }] }, 0);
+  assert.equal(prof('DJT'), bots.STRATEGIES.DJT, 'a seated DJT resolves to his profile');
+  const fb = prof('nobody');
+  assert.ok(fb && fb !== bots.STRATEGIES.DJT && fb.aggr === 1 && Array.isArray(fb.nodes), 'unknown faces fall back to the all-rounder');
+  /* variants rescale every profile and switch back cleanly */
+  bots.setVariant('aggro');
+  assert.ok(engine.ctx.window.BigConBots.variant.aggr > 1, 'the aggro variant turns the table hostile');
+  bots.setVariant('baseline');
+  assert.equal(engine.ctx.window.BigConBots.variant.aggr, 1, 'the baseline variant restores stock temperament');
+  assert.equal(prof('DJT'), bots.STRATEGIES.DJT, 'profiles survive variant churn');
+});
+
+test('BT-10 a non-baseline variant still finishes the con deterministically', async t => {
+  const engine = botEngine(t, 777);
+  engine.ctx.window.BigConBots.setVariant('turtle');
+  const S = await makeGame(engine, 2, { bots: [0, 1], goal: 60, seeds: [41, 42, 43, 44, 45] });
+  await driveToOver(engine, S);
+  assert.equal(S.over, true, 'the turtle table still reaches a winner');
+});
+
+test('BT-11 the payout does not kick the table out — the lobby re-arms for a rematch', async t => {
+  const engine = botEngine(t);
+  const S = await makeGame(engine, 3, { bots: [0, 1, 2], goal: 100, seeds: [41] });
+  const Net = engine.acc.Net;
+  await driveToOver(engine, S);
+  assert.equal(S.over, true, 'the con finished');
+
+  /* the old behavior scheduled a page reload 400ms after the payout — dead now */
+  await pump(4); engine.clock.advance(600);
+  assert.equal(engine.location.reloadCount, 0, 'nobody was reloaded after the payout');
+  assert.equal(Net.started, true, 'the room is still alive');
+  assert.equal(Net.roster.length, 3, 'the roster is still seated');
+  assert.ok(Net.conns.every(c => c == null || c.open), 'every connection is still open');
+
+  /* the host's GAME OVER card offers the lobby, not the door */
+  engine.ctx.renderSide();
+  assert.ok(String(engine.elems.get('side').innerHTML).indexOf('BACK TO THE LOBBY') >= 0, 'the host sees the walk-back button');
+
+  /* walking back keeps every face and re-arms the room; each open seat is
+     told its own roster row for the lobby's YOU marker */
+  const sent = [];
+  Net.conns = Net.conns.map((c, i) => i === Net.myIdx ? null : { open: true, send: m => sent.push({ i, m }) });
+  engine.ctx.backToLobby();
+  assert.equal(Net.started, false, 'the lobby re-arms');
+  assert.equal(Net.begun, false, 'the finished game is forgotten');
+  assert.equal(engine.acc.S, null, 'the old game is released');
+  assert.equal(Net.roster.length, 3, 'the roster survives — same faces, same room');
+  assert.ok(Net.roster.every(e => e.char), 'every face is still picked');
+  const told = sent.filter(x => x.m && x.m.t === 'tolobby');
+  assert.equal(told.length, Net.conns.filter(c => c).length, 'every open seat was walked back');
+  assert.ok(told.every(x => x.m.idx === x.i), 'each seat was told its own roster row');
+
+  /* the next con deals straight from the re-armed lobby */
+  const seats = Net.roster.map(e => ({ name: e.name, char: e.char, bot: !!e.bot }));
+  await withSeedAsync(77, () => engine.f.initGame(seats));
+  assert.equal(Net.started, true, 'the rematch started');
+  assert.equal(engine.acc.S.over, false, 'the new game is live');
+  await driveToOver(engine, engine.acc.S);
+  assert.equal(engine.acc.S.over, true, 'the rematch also reaches a winner');
+});
+
+test('BT-12 a guest walked back from the payout lands in the lobby on their own row', t => {
+  const engine = loadEngine();
+  t.after(() => engine.dispose());
+  const Net = engine.acc.Net;
+  Net.role = 'guest'; Net.begun = true; Net.myIdx = 4;
+  engine.ctx.onGuestData({ t: 'tolobby', idx: 2 });
+  assert.equal(Net.begun, false, 'the guest left game mode');
+  assert.equal(Net.myIdx, 2, 'the guest was told their roster row');
+  assert.equal(engine.elems.get('lobbyView').style.display, 'block', 'the guest sees the lobby');
+  assert.equal(engine.elems.get('app').style.display, 'none', 'the game screen is hidden');
+  assert.equal(engine.elems.get('btnStart').style.display, 'none', 'the guest does not see START');
+});
