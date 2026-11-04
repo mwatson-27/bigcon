@@ -118,7 +118,7 @@ main{max-width:1240px;margin:0 auto;padding:10px 14px 40px}
  </div>
 </header>
 
-<details id="dHouse" class="house-top"><summary>HOUSE RULES — HOW MONEY, INTEL & CORTISOL FLOW (v1.12)</summary><div class="dinner" id="houseBody"></div></details>
+<details id="dHouse" class="house-top"><summary>HOUSE RULES — HOW MONEY, INTEL & CORTISOL FLOW (v1.13)</summary><div class="dinner" id="houseBody"></div></details>
 
 <main id="grid"></main>
 
@@ -132,7 +132,7 @@ main{max-width:1240px;margin:0 auto;padding:10px 14px 40px}
 
 <script>
 /* ============================================================
-   THE EXHIBITS — data mirrored from THE BIG CON v1.12 (index.html)
+   THE EXHIBITS — data mirrored from THE BIG CON v1.13 (index.html)
    Type palette, incomes, costs and mechanics match the engine.
    ============================================================ */
 const TYPE_META={
@@ -451,16 +451,16 @@ function buildEventDigest(){
   +'<div class="fine">The deck is 24 cards; it reshuffles through the discard pile. Click any of them above or in a node’s “ON THE DECK” chips to open the full brief.</div>';
 }
 function buildFineDigest(){
- $('fineBody').innerHTML='<h4>The fine print (verified against the v1.12 engine)</h4>'
+ $('fineBody').innerHTML='<h4>The fine print (verified against the v1.13 engine)</h4>'
  +'<ul style="margin:4px 0 12px;padding-left:16px">'
  +'<li><b>A seize with $0 cash</b> is possible — the four <b>$2 bond-yield charts</b> (<span class="xref" data-id="us">US</span>/<span class="xref" data-id="japan">JAPAN</span>/<span class="xref" data-id="uk">UK</span>/<span class="xref" data-id="aus">AUS</span>) at full NAB+GOLF discounts — and seize-Cortisol is skipped while you hold <i>one</i> pin, so early grabbing is oddly clean.</li>'
  +'<li><b>Tweet math:</b> the rival loses <b>min(ℓ, max(3, ⌈ℓ/2⌉))</b> Intel ($2 to fire) — capped at their stack. Unlike every roast, the tweet leaves <b>Cortisol untouched</b>: it burns the docket, not the nerves.</li>'
  +'<li><b>Retired pins, live jobs:</b> the engine still books payouts for pins that no longer deal — <b>notes</b> (GOLD RUSH second-place +$2), <b>spend</b> (BUDGET “spending graphic” +$3), <b>timeline</b> (its own TERMINAL-style peek) and <b>econ</b> ($1-off chart seizures like NAB). They never appear on any board, so these lines are decorative — the kind of anomalous leads the wall keeps circled anyway.</li>'
  +'<li><b>Sisyphus at the edge:</b> passing THROUGH the boulder in a walk to a later pin resets the payout; ending there and pushing as your action keeps the streak. Backroom Deals remembers your push history even when you wander off.</li>'
  +'<li><b>Speaking order:</b> <span class="erev" data-e="besspeak">BIG BESSENT SPEAKS</span> pays BESSENT +$3 — but “BIG BESSENT” BREAKING (the sticker) gets no part of it; the graphic only reacts on BONDMAGEDDON and RATES.</li>'
- +'<li><b>The Qantas myth:</b> the game copy claims the jet “cannot be reached on turn 1” — the v1.12 engine lets the owner fly it from the first turn. The $4 SHUT DOWN QANTAS, meanwhile, also freezes its $2/turn income (not the $3 jet fare).</li>'
+ +'<li><b>The Qantas myth:</b> the game copy claims the jet “cannot be reached on turn 1” — the v1.13 engine lets the owner fly it from the first turn. The $4 SHUT DOWN QANTAS, meanwhile, also freezes its $2/turn income (not the $3 jet fare).</li>'
  +'<li><b>OIL CRASH self-harm:</b> a judge closing the sea with the SOUTH CHINA SEA while holding their own oil positions bleeds the <b>$2-per-oil-node</b> with everyone else — and the money goes to <i>nobody</i> (the void pockets it). A Pillars-holding oil owner sits the crash out entirely.</li>'
- +'<li><b>CANON counts:</b> 82 pins minted in v1.12 (70 base + 12 Geography DLC), 24 event cards, 7 win types. HIGH-VALUE pins here marked ⤢ are the “high-value seed” set — the dealing engine scatters the base prizes and all GEO pins (except free TUVALU) well away from Quikstop via max-min spacing.</li>'
+ +'<li><b>CANON counts:</b> 82 pins minted in v1.13 (70 base + 12 Geography DLC), 24 event cards, 7 win types. HIGH-VALUE pins here marked ⤢ are the “high-value seed” set — the dealing engine scatters the base prizes and all GEO pins (except free TUVALU) well away from Quikstop via max-min spacing.</li>'
  +'</ul>';
 }
 $('dDeck').addEventListener('toggle',()=>{if($('deckBody').firstChild)return;buildEventDigest()});

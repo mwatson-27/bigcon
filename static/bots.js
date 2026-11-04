@@ -1,0 +1,1157 @@
+/*
+ * THE BIG CON — bot seat policy (planner + lookahead + exact event EV).
+ *
+ * Loaded as a classic script AFTER the inline game script, so every top-level
+ * binding of the engine exists by the time these functions run. The module
+ * NEVER touches engine state directly: the engine hands it a redacted per-seat
+ * VIEW (a JSON snapshot carrying nothing the wire wouldn't carry — the event
+ * deck order is excluded) plus a curated API of engine helpers and the one
+ * mutating entrypoint, applyIntent, which is the same gate human guests
+ * propose actions through.
+ *
+ * Determinism: all policy randomness flows through per-seat xorshift streams
+ * seeded at game start (the engine calls BigConBots.resetForGame from
+ * initGame), so a seeded game replays identically. Math.random is never read
+ * here at decision time.
+ *
+ * Fairness: the policy reasons over table-visible state only (ownership,
+ * positions, cash, intel, cortisol, moods, bugs, discards). Hidden information
+ * (the deck) is only accessed through the same channels a human seat uses —
+ * the JTPortal briefing and bought peeks — and every private prompt the engine
+ * delivers to a bot seat is answered through BigConBots.answerPrompt.
+ *
+ * Fallback: if this file fails to load, bot seats play it quiet — the same
+ * away-seat path the engine already runs (see the startTurn branch).
+ */
+(function () {
+  'use strict';
+
+  const B = {
+    enabled: true,
+    paceMs: 0,        /* human-ish pacing between intents; 0 under test */
+    mode: 'smart',    /* 'smart' | 'random' — random is the uplift control */
+    stats: { turns: 0, intents: 0, answers: 0, replans: 0 },
+    known: {},        /* seat -> {card, at} — deck knowledge bought fairly */
+    streams: {},      /* seat -> xorshift32 state, re-seeded per game */
+    lastChat: {},     /* seat -> last turn this bot said something */
+    seed: 1,
+    turnStamp: 1,
+  };
+  try { window.BigConBots = B; } catch (e) { /* non-window realm */ }
+  const isTest = (typeof window !== 'undefined' && window.__BIGCON_TEST__ === true);
+  if (!isTest) B.paceMs = 650;
+
+  /* ---------- deterministic randomness ---------- */
+  function r32(pi) {
+    let st = B.streams[pi];
+    if (st === undefined) { st = (B.seed + ((pi + 2) * 0x9E3779B9)) >>> 0 || 1; }
+    st ^= st << 13; st >>>= 0;
+    st ^= st >>> 17;
+    st ^= st << 5; st >>>= 0;
+    B.streams[pi] = st;
+    return st / 4294967296;
+  }
+  function botSeed(pi) { B.streams[pi] = ((B.seed + pi * 7919 + B.turnStamp * 104729) >>> 0) || 1; }
+  function sleep(ms) {
+    if (!ms) return Promise.resolve();
+    return new Promise(res => { try { setTimeout(res, ms); } catch (e) { res(); } });
+  }
+  function pace(pi) { return B.paceMs ? sleep(B.paceMs + r32(pi) * B.paceMs) : Promise.resolve(); }
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+
+  /* ================= EXACT EVENT-CARD EV =================
+     Hand-derived from CARDS[].run() sources; returns MY delta for a seat.
+     Each entry: (view, seat) -> {money, fire, intel, mood, tool?} */
+  const OWN = (v, id) => v.owner[id];
+  function ownersOf(v, pred) {
+    const out = [];
+    for (const id in v.owner) {
+      const o = v.owner[id];
+      if (typeof o !== 'number') continue;
+      const n = v.nmap[id];
+      if (n && pred(n)) out.push({ id, owner: o });
+    }
+    return out;
+  }
+  const mineWhere = (v, seat, pred) => ownersOf(v, pred).filter(x => x.owner === seat).map(x => x.id);
+  const chartsOwned = (v, s) => mineWhere(v, s, n => n.type === 'CHART').length;
+  const banksOwned = (v, s) => mineWhere(v, s, n => n.type === 'BANK').length;
+  const nodeCount = (v, s) => mineWhere(v, s, () => true).length;
+  function isMaxFire(v, seat) {
+    let mx = 0; for (const p of v.players) if (p.cortisol > mx) mx = p.cortisol;
+    return mx > 0 && v.players[seat].cortisol === mx;
+  }
+  function isMaxNodes(v, seat) {
+    let mx = 0; for (let i = 0; i < v.players.length; i++) mx = Math.max(mx, nodeCount(v, i));
+    return mx > 0 && nodeCount(v, seat) === mx;
+  }
+
+  const CARD_EV = {
+    oilspike: (v, s) => {
+      const has = n => OWN(v, n) === s;
+      let d = 0;
+      if (has('oil')) d += 6;
+      if (has('oilgraph')) d += 2;
+      if (has('tanker')) d += 3;
+      if (has('petronas')) d += 3;
+      if (has('barrels')) d += 2;
+      const q = OWN(v, 'quik');
+      if (q == null) d -= 1;                       /* nobody minds the till */
+      else if (q !== s) d -= 1;                    /* fuel costs → QuikStop */
+      else d += v.players.length - 1;              /* I own the pump */
+      return { money: d, fire: 0, intel: 0, mood: 'BOOM' };
+    },
+    coalrush: (v, s) => {
+      const has = n => OWN(v, n) === s;
+      let d = 0;
+      if (has('port')) d += 4;
+      if (has('train')) d += 2;
+      if (has('tanker')) d += 3;
+      if (has('coal')) d += 2;
+      if (has('forklift')) d += 1;
+      if (has('bhp')) d += 3;
+      return { money: d, fire: 0, intel: 0, mood: 'BOOM' };
+    },
+    rates: (v, s) => {
+      let d = 0;
+      if (OWN(v, 'rba') !== s && OWN(v, 'bullock') !== s) d -= 2;
+      if (OWN(v, 'cash') === s) d += 2;
+      if (OWN(v, 'jim') === s) d += 2;
+      if (OWN(v, 'bess') === s) d += 2;
+      if (OWN(v, 'herald') === s) d += 2;
+      return { money: d, fire: 0, intel: 0, mood: 'CALM' };
+    },
+    bondrevolt: (v, s) => {
+      const b = banksOwned(v, s);
+      const bd = OWN(v, 'bond');
+      let d = -2 * b;
+      if (bd === s) { for (let i = 0; i < v.players.length; i++) if (i !== s) d += 2 * banksOwned(v, i); }
+      for (const c of v.country) if (OWN(v, c) === s) d += (c === 'japan' ? 3 : 1);
+      if (OWN(v, 'tenyear') === s) d += 2;
+      if (OWN(v, 'bess') === s) d += 2;
+      if (OWN(v, 'brad') === s) d += 2;
+      if (OWN(v, 'bigshort') === s) d += 3;
+      if (OWN(v, 'leak') === s) d += 2;
+      return { money: d, fire: 0, intel: 0, mood: 'PANIC' };
+    },
+    ceophoto: (v, s) => {
+      if (OWN(v, 'coal') !== s) return { money: 0, fire: 0, intel: 0, mood: 'FRENZY' };
+      if (OWN(v, 'watson') === s) return { money: 0, fire: 0, intel: 0, mood: 'FRENZY' };
+      if (OWN(v, 'port') === s) return { money: 5, fire: 0, intel: 0, mood: 'FRENZY' };
+      if (OWN(v, 'press') === s || OWN(v, 'fox') === s) return { money: 3, fire: 0, intel: 0, mood: 'FRENZY' };
+      return { money: 0, fire: 3, intel: 0, mood: 'FRENZY' };
+    },
+    tariffs: (v, s) => {
+      const oilChain = ['oil', 'oilgraph', 'barrels', 'tanker', 'petronas'];
+      const coalChain = ['coal', 'train', 'port', 'watson', 'forklift', 'bhp'];
+      const chainVal = list => list.reduce((a, n) => a + (OWN(v, n) === s ? 3 : 0), 0) + (OWN(v, 'us') === s ? 2 : 0);
+      const oilWin = chainVal(oilChain), coalWin = chainVal(coalChain);
+      const best = Math.max(oilWin, coalWin);
+      const t = OWN(v, 'trump');
+      /* my pick when I hold trump; a rival's pick is a coin flip to me */
+      const ex = t === s ? best : (oilWin + coalWin) / 2;
+      const winner = t === s ? ex > 0 : ex >= 2; /* winners skip the $1 tariff bill */
+      return { money: ex - (winner ? 0 : 1), fire: 0, intel: 0, mood: 'PANIC' };
+    },
+    besspeak: (v, s) => {
+      let d = 0;
+      if (OWN(v, 'bessent') === s) d += 3;
+      if (OWN(v, 'bond') === s) d += 2;
+      if (OWN(v, 'tenyear') === s) d += 2;
+      if (OWN(v, 'brad') === s) d += 2;
+      return { money: d, fire: 0, intel: 0, mood: 'CALM' };
+    },
+    budget: (v, s) => {
+      let d = 0, holder = false;
+      if (OWN(v, 'chalmers') === s) { d += 2; holder = true; }
+      if (OWN(v, 'jim') === s) { d += 2; holder = true; }
+      if (OWN(v, 'herald') === s) { d += 2; holder = true; }
+      if (OWN(v, 'albo') === s) { d += 1; holder = true; }
+      return { money: holder ? d : -1, fire: 0, intel: 0, mood: 'CALM' };
+    },
+    mpcfinals: (v, s) => {
+      const has = n => OWN(v, n) === s;
+      let money = 0, intel = 0;
+      if (has('mpc')) { money += 4; intel += 1; }
+      if (has('school')) money += 2;
+      if (has('ib')) money += 2;
+      if (has('jt')) intel += 1;
+      return { money, fire: 0, intel, mood: 'BOOM' };
+    },
+    sisyroll: (v, s) => {
+      if (OWN(v, 'sisy') === s) return { money: 0, fire: 0, intel: 0, mood: 'CALM' };
+      return isMaxNodes(v, s) ? { money: -2, fire: 0, intel: 0, mood: 'CALM' } : { money: 0, fire: 0, intel: 0, mood: 'CALM' };
+    },
+    goldrush: (v, s) => {
+      let money = 0;
+      if (OWN(v, 'gold') === s) money += 5;
+      if (OWN(v, 'bhp') === s) money += 3;
+      if (money === 0) money -= 1;
+      return { money, fire: 0, intel: 0, mood: 'BOOM' };
+    },
+    rockcooks: (v, s) => (OWN(v, 'rock') === s
+      ? { money: 3, fire: -1, intel: 0, mood: 'CALM' }
+      : { money: 0, fire: 0, intel: 0, mood: 'CALM' }),
+    davos: (v, s) => {
+      let money = 0;
+      if (OWN(v, 'wef') === s) money += 3;
+      if (OWN(v, 'bessent') === s) money += 2;
+      for (const nid in v.bugs) if (v.bugs[nid] === s) money += 1;
+      return { money, fire: 0, intel: 0, mood: 'FRENZY' };
+    },
+    quikrob: (v, s) => {
+      let money = 0;
+      const q = OWN(v, 'quik');
+      if (q == null) money -= 1;
+      else if (q === s) money -= 2;
+      if (OWN(v, 'bond007') === s) money += 2;
+      return { money, fire: 0, intel: 0, mood: 'CALM' };
+    },
+    ibexams: (v, s) => {
+      let intel = 0;
+      if (OWN(v, 'ib') === s) intel += 2;
+      if (OWN(v, 'school') === s) intel += 1;
+      const held = intel > 0;
+      if (!held && chartsOwned(v, s) === 0 && v.players[s].intel > 0) intel -= 1;
+      return { money: 0, fire: 0, intel, mood: 'CALM' };
+    },
+    profit: (v, s) => ({ money: OWN(v, 'quik') === s ? 4 : 0, fire: 0, intel: 0, mood: 'CALM' }),
+    quiet: () => ({ money: 2, fire: 0, intel: 0, mood: 'CALM' }),
+    snoop: (v, s) => (isMaxFire(v, s) ? { money: 0, fire: 1, intel: 0, mood: 'CALM' } : { money: 0, fire: 0, intel: 0, mood: 'CALM' }),
+    tip: () => ({ money: 0, fire: 0, intel: 1, mood: 'CALM' }),
+    frenzy: (v, s) => {
+      const p = OWN(v, 'press');
+      if (p === s) return { money: 0, fire: 0, intel: 0, mood: 'FRENZY', tool: 'frenzy' };
+      if (p != null && v.players.length > 1) return { money: 0, fire: 2 / (v.players.length - 1), intel: 0, mood: 'FRENZY' };
+      return { money: 0, fire: 0, intel: 0, mood: 'FRENZY' };
+    },
+    crackdown: (v, s) => {
+      const bs = OWN(v, 'bigshort') === s ? 3 : 0;
+      if (isMaxFire(v, s)) return { money: -4 + bs, fire: 0, intel: 0, mood: 'PANIC' };
+      return { money: bs, fire: 0, intel: 0, mood: 'PANIC' };
+    },
+    tapes: (v, s) => {
+      let intel = 0;
+      if (OWN(v, 'whistle') === s || OWN(v, 'jt') === s) intel += 2;
+      else if (v.players[s].intel > 0) intel -= 1;
+      return { money: 0, fire: 0, intel, mood: 'CALM' };
+    },
+    bigscreen: (v, s) => {
+      let money = 0;
+      if (OWN(v, 'bigshort') === s) money += 3;
+      if (OWN(v, 'brad') === s) money += 2;
+      if (OWN(v, 'hedge') === s) money += 2;
+      return { money, fire: 0, intel: 0, mood: 'FRENZY' };
+    },
+    madeout: () => ({ money: 0, fire: 0, intel: 0, mood: null, made: true }),
+  };
+
+  function cardEV(cardId, view, seat) {
+    const f = CARD_EV[cardId];
+    if (!f) return { money: 0, fire: 0, intel: 0, mood: null };
+    try { return f(view, seat); } catch (e) { return { money: 0, fire: 0, intel: 0, mood: null }; }
+  }
+
+  /* Expected next draw: uniform over the unseen multiset — what the wire
+     legitimately exposes (deckCount plus the public discard pile). */
+  function deckEV(view, seat) {
+    const counts = {};
+    for (const id of view.cardIds) counts[id] = (counts[id] || 0) + 1;
+    const discard = view.discardIds || [];
+    const unseen = view.cardIds.filter(id => (counts[id] || 0) - discard.filter(d => d === id).length > 0);
+    let money = 0, fire = 0, intel = 0;
+    for (const id of unseen) {
+      const ev = cardEV(id, view, seat);
+      money += ev.money; fire += ev.fire; intel += ev.intel;
+    }
+    const n = Math.max(1, unseen.length);
+    return { money: money / n, fire: fire / n, intel: intel / n, n: unseen.length };
+  }
+
+  /* ================= WEIGHTS & EVALUATION ================= */
+  const W = {
+    money: 1,
+    intel: 1.1,
+    incomeTurns: 26,       /* $1/turn of income is worth ~26 to the win race */
+    fire: 0.55,            /* hazard per cortisol² — ramps hard near 9 */
+    setBonus: 24,          /* first node of a missing win type */
+    regScarcity: 12,       /* extra premium: only four REGULATORS exist */
+    stepNode: 8,           /* movement-power nodes */
+    intelNode: 30,        /* +1🛈 at start of turn */
+    raidWall: 150,         /* never step into raid range on purpose */
+  };
+  function hazardFire(cur) { const c = clamp(cur, 0, 9); return W.fire * c * c; }
+
+  function myNodes(v, seat) {
+    const out = [];
+    for (const id in v.owner) if (v.owner[id] === seat) out.push(id);
+    return out;
+  }
+  function vulnerable(v, seat) { return myNodes(v, seat).length >= 2; } /* addCortisol's ≤1-node quirk */
+
+  /* Income projection — a faithful mirror of the engine's income() for the
+     deterministic parts (salary + holdings + synergies + mood), with the MADE
+     1-in-3 gate modeled as expectation. Bug skim is private-timed and ignored. */
+  function projectIncome(v, seat) {
+    const p = v.players[seat];
+    const own = id => v.owner[id] === seat;
+    const me = myNodes(v, seat);
+    const cnt = t => me.filter(id => v.nmap[id] && v.nmap[id].type === t).length;
+    let salary = own('infl') ? 4 : 3;
+    let holds = 0;
+    for (const id of me) {
+      const n = v.nmap[id];
+      if (!n) continue;
+      let inc = n.income;
+      if (n.type === 'CHART' && own('ib')) inc *= 2;
+      if (id === 'qantas' && v.geo && v.geo.qantasGrounded) inc = 0;
+      holds += inc;
+    }
+    const corp = cnt('CORPORATE'), bank = cnt('BANK'), chart = cnt('CHART'),
+      comm = cnt('COMMODITY'), reg = cnt('REGULATOR'), med = cnt('MEDIA');
+    let syn = 0;
+    if (own('citi') && corp) syn += corp;
+    if (own('commbank') && bank > 1) syn += 2;
+    if (own('westpac') && reg) syn += reg;
+    if (own('anz') && chart) syn += chart;
+    if (own('bhp') && own('train')) syn += 1;
+    if (own('tenyear') && chart > 1) syn += 3 * (chart - 1);
+    for (const c of v.country) if (own(c) && own('tenyear')) syn += 1;
+    if (own('mpc') && own('school') && own('ib')) syn += 2;
+    if (own('stock') && (own('term') || own('fox'))) syn += 1;
+    if (own('notes') && bank) syn += bank; /* dead node — kept for parity */
+    if (own('barrels') && own('forklift')) syn += 1;
+    if (own('forklift') && comm) syn += comm;
+    if (own('market') && own('quik')) syn += 2;
+    if (own('rock')) syn += new Set(me.map(id => v.nmap[id].type)).size;
+    if (own('bessent') && bank) syn += bank;
+    if (own('chalmers') && reg) syn += reg;
+    if (own('watson') && own('coal')) syn += 2;
+    if (own('mpc') && chart) syn += chart;
+    if (v.geo && own('geo_pyoncity')) syn += me.filter(id => id.indexOf('geo_') === 0 && id !== 'geo_pyoncity').length;
+    if (v.mood === 'BOOM' && comm > 0) syn += comm;
+    if (v.mood === 'FRENZY' && med > 0) syn += med;
+    if (v.mood === 'PANIC' && bank > 0) syn -= bank;
+    const madeGain = own('made') ? (10 + 4) / 3 : 0;
+    const madeCut = (me.length > 2 && p.money >= 50) ? Math.floor(p.money * 0.15) / 3 : 0;
+    return salary + holds + syn + madeGain - madeCut;
+  }
+
+  function evalSeat(v, seat) {
+    const p = v.players[seat];
+    const inc = projectIncome(v, seat);
+    const missing = v.missingTypes(seat);
+    let setB = 0;
+    for (const t of missing) setB += (t === 'REGULATOR' ? W.setBonus + W.regScarcity : W.setBonus) * 0.22;
+    const deck = deckEV(v, seat);
+    return {
+      score: p.money * W.money + inc * W.incomeTurns - hazardFire(p.cortisol)
+        + setB + p.intel * W.intel * 4 + deck.money * 3 - deck.fire * 6,
+      income: inc, missing,
+    };
+  }
+  function progressTowardWin(v, seat) { return v.players[seat].money - v.goal * 0.9; }
+  function strongestSeat(v, exclude) {
+    let top = -1, topSc = -Infinity;
+    for (let i = 0; i < v.players.length; i++) {
+      if (i === exclude || !vulnerable(v, i)) continue;
+      const s = evalSeat(v, i).score;
+      if (s > topSc) { topSc = s; top = i; }
+    }
+    return top;
+  }
+
+  /* ================= MOVEMENT PLANNING ================= */
+  function buildAdj(v) {
+    const A = {};
+    for (const e of v.edges) {
+      if (!e || e.length < 2) continue;
+      const a = e[0], b = e[1];
+      (A[a] || (A[a] = [])).push(b);
+      (A[b] || (A[b] = [])).push(a);
+    }
+    return A;
+  }
+  function tollFor(v, seat, nid) {
+    const o = v.owner[nid];
+    if (o == null || o === seat) return 0;
+    if (v.owner['bond007'] === seat) return 0; /* 007 is on the payroll */
+    return v.owner['albo'] === o ? 2 : 1;
+  }
+  function passable(v, nid) {
+    if (v.rubble && v.rubble[nid]) return false;               /* rebuild first */
+    if (v.blockades && v.blockades[nid] > v.turn) return false; /* walled off */
+    if (nid === 'qantas' && v.geo && v.geo.qantasGrounded) return false;
+    return true;
+  }
+  /* Dijkstra over (toll cost, hop) within the movement budget. */
+  function planGraph(v, seat, budget) {
+    const A = buildAdj(v);
+    const start = v.players[seat].pos;
+    const best = { [start]: { cost: 0, hops: 0, path: [] } };
+    let frontier = [{ id: start, cost: 0, hops: 0, path: [] }];
+    while (frontier.length) {
+      const next = [];
+      for (const f of frontier) {
+        for (const nb of (A[f.id] || [])) {
+          if (!passable(v, nb)) continue;
+          if (f.hops + 1 > budget) continue;
+          const toll = tollFor(v, seat, nb);
+          const cost = f.cost + toll;
+          if (cost > v.players[seat].money) continue;
+          const prev = best[nb];
+          if (prev && (prev.cost < cost || (prev.cost === cost && prev.hops <= f.hops + 1))) continue;
+          const rec = { cost, hops: f.hops + 1, path: f.path.concat(nb) };
+          best[nb] = rec;
+          next.push({ id: nb, cost, hops: rec.hops, path: rec.path });
+        }
+      }
+      frontier = next;
+    }
+    return best;
+  }
+
+  /* ================= NODE & SEIZURE VALUE ================= */
+  function nodeOwnValue(v, seat, nid) {
+    const n = v.nmap[nid];
+    if (!n) return 0;
+    const mine = myNodes(v, seat);
+    const cnt = ty => mine.concat([nid]).filter(id => v.nmap[id] && v.nmap[id].type === ty).length;
+    let v2 = n.income * W.incomeTurns;
+    const own = id => v.owner[id] === seat || id === nid;
+    let syn = 0;
+    if (nid === 'citi') syn += cnt('CORPORATE');
+    if (nid === 'commbank' && cnt('BANK') > 1) syn += 2;
+    if (nid === 'westpac') syn += cnt('REGULATOR');
+    if (nid === 'anz') syn += cnt('CHART');
+    if (nid === 'bhp' && own('train')) syn += 1;
+    if (nid === 'tenyear' && cnt('CHART') > 1) syn += 3 * (cnt('CHART') - 1);
+    if (nid === 'rock') syn += new Set(mine.map(id => v.nmap[id].type).concat([n.type])).size - 1;
+    if (nid === 'bessent') syn += cnt('BANK');
+    if (nid === 'chalmers') syn += cnt('REGULATOR');
+    if (nid === 'watson' && own('coal')) syn += 2;
+    if (nid === 'mpc') syn += cnt('CHART');
+    if (nid === 'barrels' && own('forklift')) syn += 1;
+    if (nid === 'forklift') syn += cnt('COMMODITY');
+    if (nid === 'market' && own('quik')) syn += 2;
+    v2 += syn * W.incomeTurns;
+    if (['coal', 'train', 'bullet', 'asics'].indexOf(nid) >= 0) v2 += W.stepNode * W.incomeTurns * 0.25;
+    if (['whistle', 'bullock', 'jt', 'mpc', 'geo_kim'].indexOf(nid) >= 0) v2 += W.intelNode;
+    const t = n.type;
+    if (v.missingTypes(seat).indexOf(t) >= 0) v2 += (t === 'REGULATOR' ? W.setBonus + W.regScarcity : W.setBonus);
+    /* ACCC exposure: a third holding in one tracked industry invites the fine */
+    const myCount = {};
+    for (const id of mine) { const n2 = v.nmap[id]; if (n2) myCount[n2.type] = (myCount[n2.type] || 0) + 1; }
+    myCount[t] = (myCount[t] || 0) + 1;
+    if (myCount[t] > 2) v2 -= 9 * (myCount[t] - 2);
+    return v2;
+  }
+  function seizeCandidate(v, seat, nid) {
+    const n = v.nmap[nid];
+    if (!n || v.rubble[nid]) return null;
+    const prev = v.owner[nid];
+    if (prev === seat) return null;
+    if (v.geo && ((nid === 'geo_shahed' && v.owner['geo_missile'] === seat) || (nid === 'geo_missile' && v.owner['geo_shahed'] === seat))) return null;
+    const base = v.seizePrice(seat, nid);
+    const isTake = prev != null;
+    let cost = isTake ? v.takePrice(seat, nid, base) : base;
+    if (v.slipped && v.owner['f1'] === seat) cost = Math.max(1, cost - 2);
+    const p = v.players[seat];
+    const backCover = v.owner['back'] === seat ? Math.min(3, p.intel) : 0;
+    if (p.money + backCover < cost) return null;
+    const cort = isTake ? 2 : 1;
+    if (p.cortisol + cort >= 9) return null; /* never raid myself on purpose */
+    const heat = hazardFire(p.cortisol + cort) - hazardFire(p.cortisol);
+    let val = nodeOwnValue(v, seat, nid) - heat;
+    if (!isTake) {
+      val -= base * W.money;
+    } else {
+      /* hostile: the inflation premium burns, the victim pockets list price */
+      val -= (cost - base) * W.money;
+      if (v.owner['accc'] === prev) val -= 2;
+      val -= base * 0.4;                            /* their refund funds their race */
+      val += nodeOwnValue(v, prev, nid) * 0.5;      /* denial: what it hurts them */
+      /* raid-window victims: pushing them to 9 hands their book to the table */
+      if (p.cortisol + cort >= 9) val += 60;
+    }
+    /* intel cover spends armory intel — price it */
+    if (p.money < cost) val -= (cost - p.money) * W.intel * 2 + 2;
+    /* the dossier prelude: taking at list beats paying the doubling */
+    if (isTake && !v.dossier && !v.flatSeize(nid) && p.intel >= 3) {
+      const saved = cost - base;
+      if (saved >= 3) val += saved * W.money - 3 * W.intel * 2 + 4;
+    }
+    return { kind: 'seize', nid, cost, base, isTake, val };
+  }
+
+  /* ================= TURN DRIVER ================= */
+  function knowledge(v) {
+    const k = B.known[v.pi];
+    return (k && k.at === v.turn) ? k.card : null;
+  }
+
+  async function takeTurn(pi, view, api) {
+    B.stats.turns++;
+    B.turnStamp = view.turn;
+    botSeed(pi);
+    try {
+      maybeChat(pi, view, api);
+      if (view.phase === 'move') {
+        const best = B.mode === 'random' ? randomMovement(view, pi) : pickMovement(view, pi);
+        if (best && best.flyTo) {
+          await tryIntent(api, pi, { act: 'flymode' });
+          await tryIntent(api, pi, { act: 'fly', id: best.flyTo });
+        } else if (best && best.rec) {
+          await walkPath(pi, best, api);
+        } else {
+          await tryIntent(api, pi, { act: 'endmove' });
+        }
+        /* movement leftovers can never linger */
+        let v2 = api.viewOf(pi);
+        if (v2 && !v2.over && v2.curSeat === pi && v2.phase === 'move') await tryIntent(api, pi, { act: 'endmove' });
+      }
+      /* ---- action phase ---- */
+      let v = api.viewOf(pi);
+      let guard = 0;
+      while (v && !v.over && v.curSeat === pi && v.phase === 'action' && guard < 10) {
+        const pick = B.mode === 'random' ? pickRandomAction(v, pi) : pickAction(v, pi);
+        if (!pick) break;
+        await dispatchAction(v, pi, pick, api);
+        guard++;
+        v = api.viewOf(pi);
+        /* most actions ended the turn inside the engine (phase left 'action');
+           free ops (spy/dossier) come back with the phase still ours — repick */
+      }
+      /* last-chance pass so a drifted decision can never hang the table */
+      const fv = api.viewOf(pi);
+      if (fv && !fv.over && fv.curSeat === pi && (fv.phase === 'move' || fv.phase === 'action')) {
+        if (fv.phase === 'move') await tryIntent(api, pi, { act: 'endmove' });
+        const av = api.viewOf(pi);
+        if (av && av.phase === 'action') {
+          await tryIntent(api, pi, { act: 'laylow', choice: av.players[pi].cortisol >= 4 ? 'cool' : 'cash' });
+        }
+      }
+    } catch (err) {
+      /* the engine's runBotTurn wrapper owns the quiet fallback */
+      throw err;
+    }
+  }
+
+  function computeBudgets(v, pi) {
+    const me = v.players[pi];
+    return {
+      steps: v.steps,
+      favor: !v.extraStep && me.intel >= 1,
+      slip: v.owner['f1'] === pi && me.money >= 2 && !v.slipped,
+      fly: v.owner['qantas'] === pi && me.money >= 3 && !(v.geo && v.geo.qantasGrounded),
+    };
+  }
+
+  function pickMovement(v, pi) {
+    const budgets = computeBudgets(v, pi);
+    let best = { val: -Infinity, rec: null, flyTo: null, variant: null };
+    const variants = [{ budget: budgets.steps, cost: 0, useFavor: false, useSlip: false }];
+    if (budgets.favor && budgets.steps < 9) variants.push({ budget: budgets.steps + 1, cost: W.intel * 4, useFavor: true, useSlip: false });
+    if (budgets.slip) variants.push({ budget: budgets.steps + 2, cost: 2 * W.money, useFavor: false, useSlip: true });
+    if (budgets.favor && budgets.slip && budgets.steps < 8) variants.push({ budget: budgets.steps + 3, cost: W.intel * 4 + 2 * W.money, useFavor: true, useSlip: true });
+    for (const variant of variants) {
+      const reach = planGraph(v, pi, variant.budget);
+      for (const nid in reach) {
+        const cand = scoreStanding(v, pi, nid);
+        if (!cand) continue;
+        const rec = reach[nid];
+        let val = cand.val - rec.cost * 1.4 - variant.cost;
+        if (rec.hops > 0) val += 0.3; /* a gentle bias to actually move */
+        if (val > best.val) best = { val, rec, flyTo: null, variant };
+      }
+    }
+    if (budgets.fly) {
+      for (const n of v.nodes) {
+        if (n.id === v.players[pi].pos) continue;
+        if (!passable(v, n.id)) continue;
+        const cand = scoreStanding(v, pi, n.id);
+        if (!cand) continue;
+        const val = cand.val - 3 * W.money - 1.5;
+        if (val > best.val + 2) best = { val: val - 2, rec: null, flyTo: n.id, variant: null };
+      }
+    }
+    return best.val === -Infinity ? null : best;
+  }
+
+  function randomMovement(v, pi) {
+    const budgets = computeBudgets(v, pi);
+    const reach = planGraph(v, pi, budgets.steps);
+    const keys = Object.keys(reach);
+    const pick = keys[Math.floor(r32(pi) * keys.length)];
+    if (r32(pi) < 0.3 && budgets.fly) {
+      const nodes = v.nodes.filter(n => passable(v, n.id) && n.id !== v.players[pi].pos);
+      if (nodes.length) return { val: 0, rec: null, flyTo: nodes[Math.floor(r32(pi) * nodes.length)].id, variant: null };
+    }
+    return { val: 0, rec: reach[pick], flyTo: null, variant: { useFavor: false, useSlip: false } };
+  }
+
+  function scoreStanding(v, pi, nid) {
+    const me = v.players[pi];
+    const n = v.nmap[nid];
+    if (!n) return null;
+    let val = 0;
+    const seize = seizeCandidate(v, pi, nid);
+    if (seize) val += seize.val;
+    if (v.owner[nid] === pi) {
+      if (nid === 'sisy') val += (v.sisyPayout || 10) * W.money;
+      if (nid === 'asics' && me.cortisol >= 3) val += hazardFire(me.cortisol) - hazardFire(me.cortisol - 1);
+      if (v.geo && nid === 'geo_wonsan' && me.cortisol >= 4) val += hazardFire(me.cortisol) - hazardFire(me.cortisol - 2);
+      if (v.geo && nid === 'geo_venice' && me.cortisol >= 4) val += hazardFire(me.cortisol) - hazardFire(me.cortisol - 1);
+    }
+    /* positioning support: stand where a bug or a missile becomes available */
+    if (me.intel >= 1) {
+      const A = buildAdj(v);
+      for (const nb of (A[nid] || [])) {
+        const o = v.owner[nb];
+        if (o != null && o !== pi && v.bugs[nb] == null && !v.rubble[nb]) { val += 2.2; break; }
+      }
+    }
+    if (canFireFromPos(v, pi, nid) && !canFireFromPos(v, pi, me.pos) && !v.geoMissiled
+      && me.money >= 4 && me.intel >= 1) val += 3.5;
+    return { val };
+  }
+  /* the engine's canFireMissileFrom, mirrored in view terms */
+  function canFireFromPos(v, pi, pos) {
+    if (!v.geo) return false;
+    if (pos === 'geo_missile' && v.owner['geo_missile'] === pi) return true;
+    if (pos === 'geo_shahed' && v.owner['geo_shahed'] === pi) return true;
+    return v.owner['geo_kim'] === pi;
+  }
+
+  async function walkPath(pi, best, api) {
+    if (best.variant && best.variant.useFavor) await tryIntent(api, pi, { act: 'favor' });
+    if (best.variant && best.variant.useSlip) await tryIntent(api, pi, { act: 'slip' });
+    let v = api.viewOf(pi);
+    if (!v || v.over || v.curSeat !== pi || v.phase !== 'move') return;
+    const plan = best.rec ? best.rec.path.slice() : [];
+    for (const nid of plan) {
+      v = api.viewOf(pi);
+      if (!v || v.over || v.curSeat !== pi || v.phase !== 'move') return;
+      if (v.steps <= 0) break;
+      if (v.players[pi].pos === nid) continue;
+      const before = v.players[pi].pos;
+      await tryIntent(api, pi, { act: 'move', id: nid });
+      v = api.viewOf(pi);
+      if (!v || v.players[pi].pos === before) { await replanOrEnd(api, pi); return; }
+    }
+    v = api.viewOf(pi);
+    if (v && !v.over && v.curSeat === pi && v.phase === 'move') await tryIntent(api, pi, { act: 'endmove' });
+  }
+
+  async function replanOrEnd(api, pi) {
+    B.stats.replans++;
+    const v = api.viewOf(pi);
+    if (!v || v.over || v.curSeat !== pi || v.phase !== 'move') return;
+    if (v.steps <= 0) { await tryIntent(api, pi, { act: 'endmove' }); return; }
+    const best = B.mode === 'random' ? randomMovement(v, pi) : pickMovement(v, pi);
+    if (best && best.rec) await walkPath(pi, best, api);
+    else {
+      const v2 = api.viewOf(pi);
+      if (v2 && !v2.over && v2.curSeat === pi && v2.phase === 'move') await tryIntent(api, pi, { act: 'endmove' });
+    }
+  }
+
+  async function tryIntent(api, pi, m) {
+    B.stats.intents++;
+    await pace(pi);
+    try { await api.applyIntent(pi, m); } catch (e) { /* the engine's own gates reject */ }
+  }
+
+  /* ================= TABLE BANTER =================
+     One line at most per turn, ~7% of turns plus rare event reactions — dry,
+     state-driven, drawn from the same deterministic stream as the play. */
+  const CHAT = {
+    flavor: [
+      'quite frankly, this board is a scam and I am the scam',
+      'anyone else smell that? regulators. everywhere.',
+      'i am not saying I planned this. I planned this.',
+      'the boulder pays. just saying.',
+      'cot Report: my cortisol and my portfolio disagree',
+      'who built this collage. be honest.',
+      'buy low, seize lower',
+      'the wire says quiet. the wire lies.',
+      'i miss the servo already',
+      'red threads everywhere. not walking them.',
+    ],
+    rich: [
+      'i could buy the whole board but where is the fun in that',
+      'the number in my sidebar is doing great things for my skin',
+      'money can’t buy happiness but it can buy CHARTS',
+      'someone stop me. no? noted.',
+    ],
+    broke: [
+      'my net worth is vibes at this point',
+      'living paycheck to paycheck like a public servant',
+      'if anyone needs me I will be at the servo',
+      'the boulder is my only income stream',
+    ],
+    stress: [
+      'i am FINE. the cortisol is FINE.',
+      'nine is just a number. a raid is just a lifestyle.',
+      'whoever is leaking dirt on me: jokes are legal now',
+      'my brand manager has resigned',
+    ],
+    taunt: [
+      'nice portfolio. would be a shame if someone leaked on it',
+      'i have a missile and a dream',
+      'the ACCC loves my paperwork. keep an eye on YOURS.',
+      'collecting regulators like stamps, cheers',
+      'you lot are renting. I am EXPROPRIATING.',
+    ],
+    raid: [
+      'a raid builds CHARACTER. and rubble.',
+      'my two best nodes died doing what they loved',
+      'the regulators sent their regards. and a fine.',
+      'rebuilding. emotionally and financially.',
+    ],
+  };
+  function pickLine(v, pi, bucket) {
+    const arr = CHAT[bucket];
+    return arr[Math.floor(r32(pi) * arr.length)];
+  }
+  function maybeChat(pi, v, api) {
+    if (!api || !api.chat) return;
+    const last = B.lastChat[pi] | 0;
+    const gap = v.turn - last;
+    const p = v.players[pi];
+    /* forced reactions: a raid needs a word about it */
+    if (p.raided && gap >= 3) { B.lastChat[pi] = v.turn; api.chat(pi, pickLine(v, pi, 'raid')); return; }
+    /* one voluntary line per ~turns: 7% of turns after a short quiet gap */
+    if (gap < 4 || r32(pi) >= 0.07) return;
+    let bucket = 'flavor';
+    if (p.cortisol >= 6) bucket = 'stress';
+    else if (p.money < 5) bucket = 'broke';
+    else if (p.money >= v.goal * 0.8) bucket = 'rich';
+    else if (strongestSeat(v, pi) >= 0 && evalSeat(v, pi).score > evalSeat(v, strongestSeat(v, pi)).score + 60) bucket = 'taunt';
+    B.lastChat[pi] = v.turn;
+    api.chat(pi, pickLine(v, pi, bucket));
+  }
+
+
+  /* ================= ACTION PLANNING ================= */
+  function victimValue(v, me, victim, fire) {
+    if (!vulnerable(v, victim)) return -2; /* the ≤1-node immunity eats it */
+    const p = v.players[victim];
+    if (p.cortisol + fire >= 9) return 120; /* pushes them into the raid */
+    const near = progressTowardWin(v, victim) > -12 ? 1.6 : 1;
+    return (hazardFire(p.cortisol + fire) - hazardFire(p.cortisol)) * near * 2.2;
+  }
+
+  function pickAction(v, pi) {
+    const me = v.players[pi];
+    const list = [];
+    const sz = seizeCandidate(v, pi, me.pos);
+    if (sz) list.push(sz);
+    /* lay low — the always-legal pass; cooling is worth a lot at high cortisol */
+    list.push({
+      kind: 'laylow',
+      val: me.cortisol >= 4 ? (hazardFire(me.cortisol) - hazardFire(me.cortisol - 2)) * 0.5 : 0.5,
+      choice: me.cortisol >= 4 ? 'cool' : 'cash',
+    });
+    /* sell intel: the market pays most when the mood is worst */
+    const rate = v.moodRate;
+    if (me.intel >= 3 && rate >= 3) list.push({ kind: 'sell', n: Math.min(3, me.intel), val: rate * Math.min(3, me.intel) * 0.9 });
+    else if (me.intel >= 6) list.push({ kind: 'sell', n: Math.min(6, me.intel), val: rate * Math.min(6, me.intel) * 0.72 });
+    /* bought knowledge (spy) — once per turn while it is still unknown */
+    if (me.intel >= 2 && !knowledge(v)) list.push({ kind: 'spy', val: 2.4, continuing: true });
+    /* attacks — only at victims the cortisol quirk lets us touch */
+    if (victimsOf(v, pi).length) {
+      const top = strongestSeat(v, pi);
+      if (top >= 0) {
+        if (me.intel >= 2) list.push({ kind: 'leak', target: top, val: victimValue(v, pi, top, 2) - 2 * W.intel * 2 });
+        if (v.owner['asic'] === pi && me.money >= 4 && !v.audited) {
+          list.push({ kind: 'audit', target: top, val: victimValue(v, pi, top, 1) - 4 * W.money });
+        }
+        const tv = v.players[top];
+        if (v.owner['trump'] === pi && me.money >= 2 && tv.intel >= 4) {
+          const loss = Math.min(tv.intel, Math.max(3, Math.ceil(tv.intel * 0.5)));
+          list.push({ kind: 'tweet', target: top, val: loss * W.intel * 2 - 2 * W.money });
+        }
+        const spinKind = v.owner['fox'] === pi ? 'fox' : (v.owner['press'] === pi ? 'press' : null);
+        if (spinKind && !v.spun && me.money >= (spinKind === 'fox' ? 2 : 3)) {
+          list.push({ kind: 'roast', target: top, val: victimValue(v, pi, top, 1) - (spinKind === 'fox' ? 2 : 3) * W.money });
+        }
+      }
+    }
+    if (v.owner['rock'] === pi && me.cortisol >= 3 && me.money >= 3 && !v.cooked) {
+      list.push({ kind: 'cook', val: hazardFire(me.cortisol) - hazardFire(me.cortisol - 3) - 3 * W.money });
+    }
+    /* free-ish self-care at owned cooling nodes */
+    if (me.pos === 'asics' && v.owner['asics'] === pi && me.cortisol >= 2) {
+      list.push({ kind: 'jog', val: hazardFire(me.cortisol) - hazardFire(me.cortisol - 1) });
+    }
+    if (v.geo && me.pos === 'geo_wonsan' && v.owner['geo_wonsan'] === pi && me.cortisol >= 3 && !v.geoBeach) {
+      list.push({ kind: 'beach', val: hazardFire(me.cortisol) - hazardFire(me.cortisol - 2) });
+    }
+    if (v.geo && me.pos === 'geo_venice' && v.owner['geo_venice'] === pi && me.cortisol >= 2 && !v.geoVenice) {
+      list.push({ kind: 'venicecool', val: hazardFire(me.cortisol) - hazardFire(me.cortisol - 1) });
+    }
+    if (v.owner['gov'] === pi && me.money >= 4 && !v.budgeted) {
+      list.push({ kind: 'budget', val: (v.players.length - 1) * W.money + 6 - 3 * W.money });
+    }
+    if (me.pos === 'sisy' && v.owner['sisy'] === pi) {
+      list.push({ kind: 'push', val: (v.sisyPayout || 10) * W.money });
+    }
+    if (me.intel >= 5 && me.cortisol <= 2 && v.players.some((pl, i) => i !== pi && pl.cortisol >= 6 && vulnerable(v, i))) {
+      list.push({ kind: 'masspanic', val: 18 });
+    }
+    if (me.intel >= 5 && me.money >= 7 && v.owner['made'] != null && v.owner['made'] !== pi) {
+      list.push({ kind: 'divestmade', val: progressTowardWin(v, v.owner['made']) > 0 ? 16 : 4 });
+    }
+    /* plant a bug — $1/turn skim (2 with the WEF) for as long as it survives */
+    if (me.intel >= 1) {
+      const A = buildAdj(v);
+      let bb = null;
+      for (const nid of (A[me.pos] || [])) {
+        const o = v.owner[nid];
+        if (o == null || o === pi) continue;
+        if (v.bugs[nid] != null || v.rubble[nid]) continue;
+        const skim = v.owner['wef'] === pi ? 2 : 1;
+        const val = 9 * skim * W.money - (v.owner['insider'] === pi ? 0 : 1) * W.intel * 2
+          + nodeOwnValue(v, o, nid) * 0.12;
+        if (!bb || val > bb.val) bb = { kind: 'bug', nid, val };
+      }
+      if (bb) list.push(bb);
+    }
+    /* CORTISOL OVERLOAD — 30 Intel, bypasses the one-node immunity */
+    if (me.intel >= 30) {
+      let top = -1, topSc = -Infinity;
+      for (let j = 0; j < v.players.length; j++) {
+        if (j === pi) continue;
+        const s = evalSeat(v, j).score;
+        if (s > topSc) { topSc = s; top = j; }
+      }
+      if (top >= 0) {
+        const near = v.players[top].cortisol + 6 >= 9;
+        const val = near ? 120 : victimValue(v, pi, top, 6) - 30 * W.intel * 2;
+        if (near || progressTowardWin(v, top) > -10) list.push({ kind: 'targetpanic', target: top, val });
+      }
+    }
+    if (v.owner['bond'] === pi && v.owner['leak'] === pi && me.money >= 16 && me.intel >= 4 && !v.bondmageddonUsed) {
+      const leader = strongestSeat(v, pi);
+      if (leader >= 0 && progressTowardWin(v, leader) > -10 && chartsOwned(v, leader) > 0) {
+        list.push({ kind: 'bondmageddon', target: leader, val: 30 });
+      }
+    }
+    if (v.owner['back'] === pi && !v.pressured && v.players.some((pl, i) => i !== pi && progressTowardWin(v, i) > -12 && vulnerable(v, i))) {
+      list.push({ kind: 'pressure', val: 12 });
+    }
+    if (v.owner['albo'] === pi && !v.blockadeUsed) {
+      const bd = pickBlockadeTarget(v, pi);
+      if (bd) list.push({ kind: 'blockade', nid: bd, val: 16 });
+    }
+    if (v.geo) {
+      /* STAGE 5 DECLINE: the richest rival skips a whole income turn */
+      if (v.owner['geo_stage5'] === pi && me.intel >= 2 && !v.geoUsed.stage5) {
+        const leader = strongestSeat(v, pi);
+        if (leader >= 0 && v.owner['geo_pillars'] !== leader) {
+          list.push({ kind: 'stage5', target: leader, val: projectIncome(v, leader) * W.incomeTurns * 0.8 });
+        }
+      }
+      if (v.owner['geo_scs'] === pi && me.money >= 3 && !v.geoUsed.crash && countType(v, pi, 'COMMODITY') === 0) {
+        const oilVictims = ownersOf(v, n => v.oilIds.indexOf(n.id) >= 0).length;
+        if (oilVictims) list.push({ kind: 'oilcrash', val: oilVictims * 2 * W.money * 0.8 });
+      }
+      if (v.owner['geo_boeing'] === pi && me.money >= 4 && !v.geoUsed.boeing && v.owner['qantas'] != null && v.owner['qantas'] !== pi) {
+        list.push({ kind: 'qantasdown', val: 10 });
+      }
+      /* THE MISSILE — erase the leader's best standing asset (or break the ESG
+         shield). Tuvalu is never a target: the island reflects the warhead. */
+      if (canFireFromPos(v, pi, me.pos) && me.money >= 4 && me.intel >= 1 && !v.geoMissiled) {
+        const shielded = nid => { const o = v.owner[nid]; return o != null && o !== pi && v.owner['geo_pillars'] === o && nid !== 'geo_pillars'; };
+        let bm = null;
+        for (const n of v.nodes) {
+          const o = v.owner[n.id];
+          if (o == null || o === pi || v.rubble[n.id] || n.id === 'geo_tuvalu' || shielded(n.id)) continue;
+          const val = nodeOwnValue(v, o, n.id) * 0.6 - 4 * W.money - W.intel * 2;
+          if (!bm || val > bm.val) bm = { kind: 'missile', nid: n.id, target: o, val };
+        }
+        if (bm && bm.val > 4) list.push(bm);
+      }
+      /* OVERTOURISM — the Venice owner rides a rival node for a rotation */
+      if (v.owner['geo_venice'] === pi && me.money >= 2 && !v.geoVenice) {
+        let bo = null;
+        for (let j = 0; j < v.players.length; j++) {
+          if (j === pi || !vulnerable(v, j) || progressTowardWin(v, j) <= -12) continue;
+          for (const nid of myNodes(v, j)) {
+            if (v.rubble[nid]) continue;
+            const val = victimValue(v, pi, j, 1) * v.players.length * 0.8 - 2 * W.money;
+            if (!bo || val > bo.val) bo = { kind: 'overtour', nid, target: j, val };
+          }
+        }
+        if (bo && bo.val > 2) list.push(bo);
+      }
+      /* REBUILD — only with heavy spare cash: the node returns unowned, so the
+         value is mostly re-opening the graph (and a missing set type) */
+      if (v.rubble[me.pos]) {
+        const n = v.nmap[me.pos];
+        if (n && me.money >= n.cost * 2 + 10) {
+          list.push({ kind: 'rebuild', val: nodeOwnValue(v, pi, me.pos) * 0.35 - n.cost * W.money - 2 });
+        }
+      }
+    }
+    /* the dossier as a takeover prelude */
+    if (me.intel >= 3 && !v.dossier) {
+      const take = list.filter(x => x.kind === 'seize' && x.isTake)[0];
+      if (take && take.cost - take.base >= 3) {
+        list.push({ kind: 'dossier', val: (take.cost - take.base) * W.money - 3 * W.intel * 2 + 2, continuing: true });
+      }
+    }
+    let best = null;
+    for (const c of list) if (!best || c.val > best.val) best = c;
+    if (best && best.val < 0.55) return { kind: 'laylow', choice: me.cortisol >= 4 ? 'cool' : 'cash' };
+    return best;
+  }
+
+  function victimsOf(v, pi) {
+    const out = [];
+    for (let i = 0; i < v.players.length; i++) if (i !== pi && vulnerable(v, i)) out.push(i);
+    return out;
+  }
+  function countType(v, seat, t) { return mineWhere(v, seat, n => n.type === t).length; }
+
+  function pickBlockadeTarget(v, pi) {
+    /* wall off the node whose loss would hurt the strongest rival most */
+    let best = null, bestV = 1.2;
+    for (const n of v.nodes) {
+      if (!passable(v, n.id)) continue;
+      const o = v.owner[n.id];
+      if (o === pi) continue;
+      if (o != null) {
+        const denial = nodeOwnValue(v, o, n.id) * 0.5 - nodeOwnValue(v, pi, n.id) * 0.1;
+        if (denial > bestV) { bestV = denial; best = n.id; }
+      } else {
+        for (const j of victimsOf(v, pi)) {
+          if (progressTowardWin(v, j) <= -16) continue;
+          const would = nodeOwnValue(v, j, n.id);
+          if (would > bestV) { bestV = would; best = n.id; }
+        }
+      }
+    }
+    return best;
+  }
+
+  function pickRandomAction(v, pi) {
+    const me = v.players[pi];
+    const opts = [];
+    const sz = seizeCandidate(v, pi, me.pos);
+    if (sz) opts.push(sz);
+    const rivals = victimsOf(v, pi);
+    if (me.intel >= 2 && rivals.length) opts.push({ kind: 'leak', target: rivals[Math.floor(r32(pi) * rivals.length)] });
+    if (me.intel >= 2) opts.push({ kind: 'spy', continuing: true });
+    if (me.intel >= 3 && v.moodRate >= 3) opts.push({ kind: 'sell', n: 2 });
+    opts.push({ kind: 'laylow', choice: me.cortisol >= 5 ? 'cool' : 'cash' });
+    return opts[Math.floor(r32(pi) * opts.length)];
+  }
+
+  async function dispatchAction(v, pi, pick, api) {
+    switch (pick.kind) {
+      case 'seize': {
+        /* the engine seizes wherever the seat STANDS — never fire at a stale plan */
+        if (v.players[pi].pos !== pick.nid) return false;
+        await tryIntent(api, pi, { act: 'seize' });
+        /* the waspish one-liner when a hostile takeover actually lands */
+        const sv = api.viewOf(pi);
+        const victim = v.owner[pick.nid];
+        if (pick.isTake && sv && sv.owner[pick.nid] === pi && typeof victim === 'number' && victim !== pi
+          && (B.lastChat[pi] | 0) !== sv.turn && r32(pi) < 0.35) {
+          B.lastChat[pi] = sv.turn;
+          if (api.chat) api.chat(pi, pickLine(v, pi, 'taunt'));
+        }
+        return true;
+      }
+      case 'laylow':
+        await tryIntent(api, pi, { act: 'laylow', choice: pick.choice });
+        return true;
+      case 'sell':
+        if (pick.n >= v.players[pi].intel) await tryIntent(api, pi, { act: 'sellall' });
+        else await tryIntent(api, pi, { act: 'sell', n: pick.n });
+        return true;
+      case 'spy': await tryIntent(api, pi, { act: 'spy' }); return false;
+      case 'dossier': await tryIntent(api, pi, { act: 'dossier' }); return false;
+      case 'leak':
+        if (v.players[pi].intel >= 2) {
+          await tryIntent(api, pi, { act: 'leakmode' });
+          await tryIntent(api, pi, { act: 'leak', target: pick.target });
+          return true;
+        }
+        return false;
+      case 'audit':
+        if (v.owner['asic'] === pi) {
+          await tryIntent(api, pi, { act: 'auditmode' });
+          await tryIntent(api, pi, { act: 'audit', target: pick.target });
+          return true;
+        }
+        return false;
+      case 'tweet':
+        if (v.owner['trump'] === pi) {
+          await tryIntent(api, pi, { act: 'tweetmode' });
+          await tryIntent(api, pi, { act: 'tweet', target: pick.target });
+          return true;
+        }
+        return false;
+      case 'roast': {
+        await tryIntent(api, pi, { act: 'spin', kind: v.owner['fox'] === pi ? 'fox' : 'press' });
+        /* the spin prompt is answered through answerPrompt — roast mode only
+           exists if the answer chose 'cortisol'; the engine ignores a stray
+           roast otherwise and the final pass closes the turn. */
+        const rv = api.viewOf(pi);
+        if (rv && rv.mode === 'roast') await tryIntent(api, pi, { act: 'roast', target: pick.target });
+        return true;
+      }
+      case 'cook': await tryIntent(api, pi, { act: 'cook' }); return true;
+      case 'jog': await tryIntent(api, pi, { act: 'jog' }); return true;
+      case 'beach': await tryIntent(api, pi, { act: 'beach' }); return true;
+      case 'venicecool': await tryIntent(api, pi, { act: 'venicecool' }); return true;
+      case 'budget': await tryIntent(api, pi, { act: 'budget' }); return true;
+      case 'push': await tryIntent(api, pi, { act: 'push' }); return true;
+      /* sweep exists in the engine but only ever removes the SWEEPER'S OWN
+         bugs (S.bugs is keyed by planter) — nothing emits it on purpose */
+      case 'sweep': await tryIntent(api, pi, { act: 'sweep' }); return true;
+      case 'masspanic': await tryIntent(api, pi, { act: 'masspanic' }); return true;
+      case 'targetpanic': await tryIntent(api, pi, { act: 'targetpanic' }); return true;
+      case 'divestmade': await tryIntent(api, pi, { act: 'divestmade' }); return true;
+      case 'pressure': await tryIntent(api, pi, { act: 'pressure' }); return true;
+      case 'stage5': await tryIntent(api, pi, { act: 'stage5' }); return true;
+      case 'oilcrash': await tryIntent(api, pi, { act: 'oilcrash' }); return true;
+      case 'qantasdown': await tryIntent(api, pi, { act: 'qantasdown' }); return true;
+      case 'rebuild': await tryIntent(api, pi, { act: 'rebuild' }); return true;
+      case 'bug': {
+        await tryIntent(api, pi, { act: 'bugmode' });
+        const bv = api.viewOf(pi);
+        if (!bv || bv.mode !== 'bug') return false;
+        await tryIntent(api, pi, { act: 'bug', id: pick.nid });
+        return true;
+      }
+      case 'missile': {
+        await tryIntent(api, pi, { act: 'missilemode' });
+        const mv = api.viewOf(pi);
+        if (!mv || mv.mode !== 'missile') return false;
+        await tryIntent(api, pi, { act: 'missile', id: pick.nid });
+        return true;
+      }
+      case 'overtour': {
+        await tryIntent(api, pi, { act: 'overmode' });
+        const ov = api.viewOf(pi);
+        if (!ov || ov.mode !== 'overtour') return false;
+        await tryIntent(api, pi, { act: 'overtour', id: pick.nid });
+        return true;
+      }
+      case 'blockade':
+        await tryIntent(api, pi, { act: 'blockmode' });
+        await tryIntent(api, pi, { act: 'blockade', id: pick.nid });
+        return true;
+      case 'bondmageddon':
+        await tryIntent(api, pi, { act: 'bondmageddon', target: pick.target });
+        return true;
+      default: return false;
+    }
+  }
+
+  /* ================= PROMPT ANSWERS ================= */
+  /* Every private prompt the engine delivers to a bot seat comes through here.
+     Same fairness contract as turn decisions: table knowledge only, except
+     where the prompt itself IS the (fairly bought) information. */
+  function answerPrompt(pi, opt, api) {
+    const def = opt.def !== undefined ? opt.def : (opt.options && opt.options[0] ? opt.options[0].v : undefined);
+    B.stats.answers++;
+    let view = null;
+    try { view = api.viewOf(pi); } catch (e) { view = null; }
+    let answer;
+    try { answer = chooseAnswer(pi, opt, view); } catch (e) { answer = undefined; }
+    const val = answer === undefined ? def : answer;
+    if (!B.paceMs) return Promise.resolve(val); /* tests: the virtual clock never advances */
+    return new Promise(res => {
+      try { setTimeout(() => res(val), 400 + r32(pi) * 900); } catch (e) { res(val); }
+      setTimeout(() => res(val), 15000); /* never hold the table for a bot */
+    });
+  }
+  function chooseAnswer(pi, opt, view) {
+    const title = opt.title || '';
+    const byTitle = t => title.indexOf(t) === 0;
+    /* knowledge prompts first: record what the bot now fairly knows */
+    if (opt.meta && opt.meta.card && opt.meta.kind === 'peek') {
+      B.known[pi] = { card: opt.meta.card, at: view.turn };
+      const ev = cardEV(opt.meta.card, view, pi);
+      if (ev.fire >= 1 || ev.money <= -4) return 'bury';
+      return 'keep';
+    }
+    if (opt.meta && opt.meta.card && opt.meta.kind === 'brief') {
+      B.known[pi] = { card: opt.meta.card, at: view.turn };
+      return undefined; /* falls through to the default ('Noted') */
+    }
+    if (byTitle('JTPORTAL INTERVENES?')) {
+      const known = knowledge(view);
+      if (known) {
+        const ev = cardEV(known, view, pi);
+        if (ev.money <= -5 || ev.fire >= 2) return 1;
+      }
+      return 0;
+    }
+    if (byTitle('BACKROOM DEALS')) {
+      /* a seizure is mid-flight: cover the shortfall if Backroom is mine */
+      return view.owner['back'] === pi ? 1 : 0;
+    }
+    if (byTitle('DIVEST MADE')) {
+      const mo = view.owner['made'];
+      return (mo != null && mo !== pi && progressTowardWin(view, mo) > -8) ? 1 : 0;
+    }
+    if (byTitle('CORTISOL OVERLOAD') || byTitle('BONDMAGEDDON')) {
+      const rivals = (opt.options || []).filter(o => typeof o.v === 'number' && o.v >= 0 && o.v !== pi);
+      if (!rivals.length) return -1;
+      let best = rivals[0];
+      for (const o of rivals) if (evalSeat(view, o.v).score > evalSeat(view, best.v).score) best = o;
+      return best.v;
+    }
+    if (byTitle('MEDIA FRENZY')) {
+      const rivals = (opt.options || []).filter(o => typeof o.v === 'number' && o.v >= 0 && o.v !== pi);
+      if (!rivals.length) return -1;
+      let best = rivals[0];
+      for (const o of rivals) if (evalSeat(view, o.v).score > evalSeat(view, best.v).score) best = o;
+      return progressTowardWin(view, best.v) > -30 ? best.v : -1;
+    }
+    if (byTitle('TRUMP TWEETS TARIFFS')) {
+      const own = id => view.owner[id] === pi;
+      let oil = 0, coal = 0;
+      for (const id of ['oil', 'oilgraph', 'barrels', 'tanker', 'petronas']) if (own(id)) oil++;
+      for (const id of ['coal', 'train', 'port', 'watson', 'forklift', 'bhp']) if (own(id)) coal++;
+      if (oil === coal) return r32(pi) < 0.5 ? 'oil' : 'coal';
+      return oil > coal ? 'oil' : 'coal';
+    }
+    if (byTitle('FOX SPIN') || byTitle('SPIN THE PRESS')) {
+      const me = view.players[pi];
+      const rivals = victimsOf(view, pi);
+      /* roast the strongest rival if it stings, else cool my own head */
+      if (rivals.length) {
+        const top = strongestSeat(view, pi);
+        if (top >= 0 && progressTowardWin(view, top) > -12) return 'cortisol';
+      }
+      if (me.cortisol >= 3) return 'cool';
+      return 'no';
+    }
+    return undefined;
+  }
+
+  /* ================= LIFECYCLE ================= */
+  function resetForGame(seed) {
+    B.seed = seed >>> 0 || 1;
+    B.streams = {};
+    B.known = {};
+    B.lastChat = {};
+    B.turnStamp = 1;
+  }
+
+  /* exports */
+  B.cardEV = cardEV;
+  B.deckEV = deckEV;
+  B.evalSeat = evalSeat;
+  B.projectIncome = projectIncome;
+  B.takeTurn = takeTurn;
+  B.answerPrompt = answerPrompt;
+  B.resetForGame = resetForGame;
+})();

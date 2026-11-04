@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>THE BIG CON v1.12</title>
+<title>THE BIG CON v1.13</title>
 <link rel="icon" href="favicon.ico">
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
@@ -169,7 +169,7 @@ button.mini:hover{background:#168388}
 .pface{width:28px;height:28px;border-radius:50%;object-fit:cover;border:2px solid var(--pc,#168388);flex:0 0 28px;background:#000}
 #board text{font-family:system-ui,Segoe UI,Helvetica,Arial,sans-serif}
 
-/* v1.12 UI: the map is a fixed, full-height left viewport; only the sidebar scrolls. */
+/* v1.13 UI: the map is a fixed, full-height left viewport; only the sidebar scrolls. */
 body.game-open{overflow:hidden}
 #app{display:none;flex-wrap:nowrap;gap:0;padding:0;align-items:stretch;width:100vw;height:100vh;height:100dvh;overflow:hidden}
 #boardWrap{flex:1 1 auto;min-width:0;height:100%;position:relative;overflow:hidden;background:#1d201f}
@@ -252,7 +252,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = 'b321bfd';
+const BUILD_COMMIT = '2006575';
 const IS_DISCORD_ACTIVITY = new URLSearchParams(location.search).get('discord') === '1' || location.hostname.endsWith('.discordsays.com') || new URLSearchParams(location.search).has('instance_id');
 if(IS_DISCORD_ACTIVITY)window.__BIGCON_DISCORD_ACTIVITY__=true;
 const $=id=>document.getElementById(id);
@@ -937,11 +937,18 @@ function scheduleRender(){
  renderRaf=requestAnimationFrame(()=>{renderRaf=0;render()});
 }
 function sync(now){if(Net.role==='host'){scheduleRender();sendState(now)}else scheduleRender()}
-function sysTo(pi,msg){if(Net.role!=='host')return;if(pi===Net.myIdx){toast(msg);return}sendTo(pi,{t:'sys',msg})}
+function sysTo(pi,msg){if(Net.role!=='host')return;if(pi===Net.myIdx){if(S&&S.players[pi]&&S.players[pi].bot)return;toast(msg);return}sendTo(pi,{t:'sys',msg})}
 function askPlayer(pi,opt){return new Promise(res=>{
  if(Net.role!=='host'){modal(opt).then(res);return}
  const def=opt.def!==undefined?opt.def:(opt.options&&opt.options[0]?opt.options[0].v:undefined);
  if(pi===Net.myIdx){modal(opt).then(res);return}
+ /* Bot seats answer privately through the policy module — the wire prompt
+    below is for human guests and must never fire for a bot. */
+ const bp=S&&S.players[pi];
+ if(bp&&bp.bot&&window.BigConBots&&window.BigConBots.answerPrompt){
+  window.BigConBots.answerPrompt(pi,opt,botAPI()).then(v=>res(v===undefined?def:v));
+  return;
+ }
  const c=Net.conns[pi];
  if(!c||!c.open){res(def);return}
  const pid=++Net.promptSeq;
@@ -1031,6 +1038,7 @@ function generateRandomBoard(slot){
  return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
 }
 function initGame(defs){
+ Net.gameEpoch=(Net.gameEpoch||0)+1;
  rebuildWorld(!!Net.dlcGeo);
  const quikSlot=Math.floor(Math.random()*QUIK_SLOTS.length);
  const order=defs.map((_,i)=>i);
@@ -1043,8 +1051,9 @@ function initGame(defs){
   Net.myIdx=order.indexOf(hostWas);
  }
  const goal=clampGoal(Net.goal);
- S={backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:(charMeta(d.char)||{}).color||PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',visited:{quik:true},dc:false})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null,dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,rubble:{},ov:null,geoMissiled:false,geoBeach:false,geoBoeing:false,geoCrash:false,geoStage5:false,geoVenice:false,bondmageddonUsed:false,blockades:{},blockadeUsed:false,missileProbe:null,qantasGroundUntil:0,decline:null};
+ S={backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:(charMeta(d.char)||{}).color||PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',visited:{quik:true},dc:false,bot:!!d.bot})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null,dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,rubble:{},ov:null,geoMissiled:false,geoBeach:false,geoBoeing:false,geoCrash:false,geoStage5:false,geoVenice:false,bondmageddonUsed:false,blockades:{},blockadeUsed:false,missileProbe:null,qantasGroundUntil:0,decline:null};
  const slot=QUIK_SLOTS[quikSlot];
+ if(typeof window!=='undefined'&&window.BigConBots&&window.BigConBots.resetForGame)window.BigConBots.resetForGame((window.__BIGCON_BOT_SEED__|0)||((Math.random()*0x7fffffff)|0));
  const generated=generateRandomBoard(slot);S.boardLayout=generated.positions;S.boardEdges=generated.edges;
  applyLayoutFromState();
  Net.started=true;
@@ -1065,7 +1074,7 @@ function initGame(defs){
 /* ================= LOCAL DESKTOP TURN ALERTS =================
    Alerts are opt-out and default on. Permission is requested only from a
    user gesture; the preference is local to this browser/device. */
-const TURN_ALERTS_KEY='bigcon-v1.12-turn-alerts';
+const TURN_ALERTS_KEY='bigcon-v1.13-turn-alerts';
 let lastTurnAlertKey='',lastDeliveredTurnAlertKey='';
 function turnAlertsEnabled(){try{return localStorage.getItem(TURN_ALERTS_KEY)!=='off'}catch(_){return true}}
 function requestTurnNotificationPermission(){
@@ -1082,7 +1091,7 @@ function notifyCurrentTurn(force){
  lastTurnAlertKey=key;
  if(lastDeliveredTurnAlertKey===key||typeof Notification==='undefined'||Notification.permission!=='granted')return;
  try{
-  const p=S.players[S.cur];const n=new Notification('THE BIG CON v1.12 — Your turn',{body:(p&&p.name?p.name+' — ':'')+'It is your move. Open the game to make your play.',tag:'bigcon-turn-'+key,renotify:false});
+  const p=S.players[S.cur];const n=new Notification('THE BIG CON v1.13 — Your turn',{body:(p&&p.name?p.name+' — ':'')+'It is your move. Open the game to make your play.',tag:'bigcon-turn-'+key,renotify:false});
   lastDeliveredTurnAlertKey=key;
   n.onclick=()=>{try{window.focus()}catch(_){}try{n.close()}catch(_){}};
  }catch(_){}
@@ -1158,7 +1167,69 @@ async function startTurn(){
  sync(true);
  if(await winCheck())return;
  if(jtHolder&&!p.dc)await jtBriefing(S.cur);
+ /* Bot seats are driven locally by the policy module. The away-path below
+    would pay the away dollar and end the turn, so the bot branch must come
+    first; a bot whose module failed to load falls back to the away path. */
+ if(p.bot&&window.BigConBots&&window.BigConBots.takeTurn){await runBotTurn(S.cur);return}
  if(p.dc){log('💤 '+pname(S.cur)+' is away — plays it quiet.');gain(S.cur,1,'away');endOfTurn()}
+}
+/* ============ BOT SEATS ============
+   A bot is a roster entry {bot:true, conn:null}. The engine drives it exactly
+   like a human guest: every mutation goes through applyIntent, every private
+   prompt through askPlayer's bot branch, and the only state it sees is
+   botView() — a redacted snapshot that carries nothing the wire wouldn't
+   (the event deck order never leaves the engine). If static/bots.js failed
+   to load, a bot seat quietly falls back to the away path in startTurn. */
+function botAPI(epoch){
+ return {
+  viewOf:pi=>((epoch===undefined||Net.gameEpoch===(epoch|0))?botView(pi):null),
+  applyIntent:async(pi,m)=>{await applyIntent(pi,m)},
+  /* bot banter faucet — a bot may only speak as itself, through the host */
+  chat:(seat,text)=>{try{
+   if(!S||S.over||!S.players[seat]||!S.players[seat].bot)return;
+   const line=String(text).slice(0,140).trim();
+   if(line)addChat(seat,line);
+  }catch(e){}},
+ };
+}
+function botView(pi){
+ if(!S)return null;
+ const c={};
+ for(const k in S){if(k==='deck'||k==='log'||k==='chat')continue;c[k]=S[k]}
+ const out=JSON.parse(JSON.stringify(c));
+ out.pi=pi;
+ out.curSeat=S.cur;
+ out.cardIds=CARDS.map(x=>x.id);
+ out.discardIds=S.discard.slice();
+ out.country=COUNTRY.slice();
+ out.oilIds=OIL_IDS.slice();
+ out.edges=EDGES.map(e=>e.slice());
+ out.nodes=NODES.map(n=>({id:n.id,type:n.type,income:n.income,cost:n.cost}));
+ out.nmap={};NODES.forEach(n=>{out.nmap[n.id]={id:n.id,type:n.type,income:n.income,cost:n.cost}});
+ out.moodRate=(MOODS[S.mood]||{rate:2}).rate;
+ out.geo={qantasGrounded:!!(S.dlcGeo&&qantasGrounded())};
+ out.geoUsed={stage5:!!S.geoStage5,crash:!!S.geoCrash,boeing:!!S.geoBoeing};
+ out.seizePrice=(seat,nid)=>seizeListPrice(seat,NMAP[nid]);
+ out.takePrice=(seat,nid,base)=>takeoverCost(seat,nid,base);
+ out.flatSeize=nid=>flatSeize(nid);
+ out.missingTypes=seat=>missingTypes(seat);
+ return out;
+}
+async function runBotTurn(pi){
+ if(!S||S.over)return;
+ const epoch=Net.gameEpoch;
+ /* Yield the turn boundary: the table paints between turns, and a fresh game
+    (initGame bumps gameEpoch) can never be haunted by a stale turn chain. */
+ await new Promise(res=>setTimeout(res,0));
+ if(!S||S.over||Net.gameEpoch!==epoch)return;
+ try{
+  await window.BigConBots.takeTurn(pi,botView(pi),botAPI(epoch));
+ }catch(e){console.error('[BIGCON] bot turn error',e)}
+ /* whatever happened above, the turn cannot be left hanging on the table */
+ if(!S||S.over||Net.gameEpoch!==epoch||S.cur!==pi)return;
+ if(S.phase==='move'){S.steps=0;await endMovement()}
+ if(!S||S.over||Net.gameEpoch!==epoch||S.cur!==pi)return;
+ if(S.phase==='action')await endOfTurn();
 }
 /* JTPortal knows what runs tomorrow, and tells whoever holds it. */
 async function jtBriefing(pi){
@@ -1168,7 +1239,7 @@ async function jtBriefing(pi){
  const c=CARDBYID[S.deck[S.deck.length-1]];
  log('🌐 JTPortal briefs '+pname(pi)+' on what is coming next.');
  sync();
- await askPlayer(pi,{title:'JTPORTAL — “QUITE FRANKLY, HERE IS WHAT HAPPENS NEXT”',html:cardFace(c)+'<p class="fine">The event that lands at the end of your turn — for your eyes only.</p>',options:[{label:'Noted',v:1}],def:1,timeout:25000});
+ await askPlayer(pi,{title:'JTPORTAL — “QUITE FRANKLY, HERE IS WHAT HAPPENS NEXT”',html:cardFace(c)+'<p class="fine">The event that lands at the end of your turn — for your eyes only.</p>',options:[{label:'Noted',v:1}],def:1,timeout:25000,meta:{kind:'brief',card:c.id}});
 }
 function income(i){
  const p=S.players[i];const own=id=>S.owner[id]===i;
@@ -1386,7 +1457,7 @@ async function applyIntent(pi,m){
    if(!S.deck.length){S.deck=shuffle(S.discard.slice());S.discard=[];log('🎴 The rumor deck is reshuffled.')}
    if(S.deck.length){
     const c=CARDBYID[S.deck[S.deck.length-1]];
-    await askPlayer(pi,{title:'SPY ON THE DECK — 2 🛈',html:cardFace(c)+'<p class="fine">The next market event, for your eyes only.</p>',options:[{label:'Understood',v:1}]});
+    await askPlayer(pi,{title:'SPY ON THE DECK — 2 🛈',html:cardFace(c)+'<p class="fine">The next market event, for your eyes only.</p>',options:[{label:'Understood',v:1}],meta:{kind:'brief',card:c.id}});
    }
    sync();
   }
@@ -1447,7 +1518,8 @@ async function applyIntent(pi,m){
     while(targets.length<4)targets.push(owned[Math.floor(Math.random()*owned.length)].id);
    }
    p.money-=16;p.intel-=4;S.bondmageddonUsed=true;fxAt(pi,'−$16 · 🛈−4','#ff6b5e');
-   log('💥 '+pname(pi)+' unleashes BONDMAGEDDON on '+pname(target)+', the table’s biggest chart-holder ('+most+' CHART nodes). Four missiles inbound.');
+   const targetCharts=NODES.filter(nn=>nn.type==='CHART'&&S.owner[nn.id]===target&&!S.rubble[nn.id]).length;
+   log('💥 '+pname(pi)+' unleashes BONDMAGEDDON on '+pname(target)+' ('+targetCharts+' CHART nodes). Four missiles inbound.');
    for(let i=0;i<targets.length;i++){
     const id=targets[i],node=NMAP[id];
     if(projFx('missile','bond',id)){sync();await projPause()}
@@ -1576,7 +1648,7 @@ async function maybePeek(){
  if(!S.deck.length){S.deck=shuffle(S.discard.slice());S.discard=[];log('🎴 The rumor deck is reshuffled.')}
  if(!S.deck.length)return;
  const c=CARDBYID[S.deck[S.deck.length-1]];
- const v=await askPlayer(pi,{title:anywhere&&!here?'THE MARKET INTERFACE — PEEK':'THE TERMINAL — INSIDER PEEK',html:cardFace(c)+'<p class="fine">For your eyes only. Keep the card on top, or bury it at the bottom?</p>',options:[{label:'Put it back on top',v:'keep'},{label:'Bury it at the bottom',v:'bury'}],def:'keep'});
+ const v=await askPlayer(pi,{title:anywhere&&!here?'THE MARKET INTERFACE — PEEK':'THE TERMINAL — INSIDER PEEK',html:cardFace(c)+'<p class="fine">For your eyes only. Keep the card on top, or bury it at the bottom?</p>',options:[{label:'Put it back on top',v:'keep'},{label:'Bury it at the bottom',v:'bury'}],def:'keep',meta:{kind:'peek',card:c.id}});
  if(v==='bury'){const cid=S.deck.pop();S.deck.unshift(cid);log('📈 '+pname(pi)+' buries the story at the bottom of the deck.')}
  else log('📈 '+pname(pi)+' peeks at tomorrow and puts it back.');
 }
@@ -1694,7 +1766,7 @@ function addChat(pi,text){
 }
 function showRules(){
  modal({title:'HOW TO PULL THE BIG CON',html:
- '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code — a jt portal <b>buzzword</b> (NESA, LOW CORTISOL, JAKE TOMKINS…), every one of them straight off the jt portal news ticker; the others <b>join</b> by typing it — the table seats up to <b>eight</b>. Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. Chat in the <b>lobby</b> before the con starts, and in the sidebar once it does.</p>'
+ '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code — a jt portal <b>buzzword</b> (NESA, LOW CORTISOL, JAKE TOMKINS…), every one of them straight off the jt portal news ticker; the others <b>join</b> by typing it — the table seats up to <b>eight</b>. Short a friend? The host can <b>🤖 seat a bot</b> — it plays through the same rules, sends the same moves, and only ever knows what the table shows it. Or hand your <b>own seat</b> to a bot too and spectate: a table full of cons, and you just watch (and chat). Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. Chat in the <b>lobby</b> before the con starts, and in the sidebar once it does.</p>'
  +'<h4>The market mood — events you can feel</h4><p>Every market event shifts the mood of the whole board — watch the <b>ticker</b> across the top, the <b>tint</b> of the board and the <b>glowing nodes</b>: <b style="color:#f5c542">BOOM</b> (commodities +$1/turn), <b style="color:#ff6b5e">PANIC</b> (banks −$1/turn, intel dearer), <b style="color:#e19bff">MEDIA FRENZY</b> (media +$1/turn), <b style="color:#8fbf7f">CALM</b>. Yields go vertical in a panic; the oil graph spikes in a boom. Money, Cortisol and Intel changes pop up on the board as they happen.</p>'
  +'<h4>Intel ops (🛈)</h4><ul><li><b>Burn a favor</b> (1 🛈, while moving) — +1 step this turn.</li><li><b>Spy on the deck</b> (2 🛈, free action) — privately see the next event card, anywhere.</li><li><b>The Dossier</b> (3 🛈, free action) — your hostile takeovers this turn cost <b>list price, not double</b>.</li><li><b>Sweep for bugs</b> (2 🛈, your action) — remove every bug on your nodes.</li><li><b>Mass panic</b> (5 🛈, your action) — every player gains +2 Cortisol.</li><li><b>Divest MADE</b> (5 🛈, your action) — take MADE from any rival and pay its former owner $7 compensation.</li><li><b>Sell intel</b> (your action, anywhere): sell 1–3 or <b>ALL</b> your Intel at once for the current market rate. Bad news is good news.</li><li><b>Overload a rival</b> (30 🛈, your action): choose one rival to receive <b>+6 Cortisol</b>, bypassing the normal one-node immunity.</li></ul>'
  +'<h4>The board is the whole collage</h4><p><b>70 exhibits.</b> Charts are spread across the collage — US yields sit by Trump, Japan by the tankers, UK by the papers, Australia by the coat of arms, and the 10-year master in the middle. Each game <b>Quikstop opens in a different neighbourhood</b>, so the first moves change. New pins from the collage: <b>Westpac</b>, <b>BHP</b>, <b>Herald Sun / The Jim Reaper</b>, <b>the bullet train</b>, the circled <b>ASICS shoe</b>, and <b>Toktimer</b>. Red threads are the paths — long ones dash. <i>Drag to pan, scroll to zoom.</i></p>'
@@ -1872,7 +1944,7 @@ function renderBoard(){
  s+=scribble(1830,860,100,64,4)+scribble(1150,540,95,72,-3)+scribble(1000,1380,92,62,5)+scribble(1630,930,96,62,-4)+scribble(1500,470,98,62,3)+scribble(2020,185,92,66,-5)+scribble(390,1200,102,68,3);
  s+=redArrow(2090,330,1140,310)+redArrow(1965,235,1580,440)+redArrow(1080,585,480,1140)+redArrow(1130,1170,420,640);
  s+=scribText(1930,392,-4,'CASH RATE ↑')+scribText(1150,390,3,'“BOND…”')+scribText(1715,448,-6,'WTI +12%')+scribText(455,295,2,'TOO BIG TO FAIL')+scribText(1930,745,-3,'GOLD ↑')+scribText(1050,1150,4,'RATES ON HOLD')+scribText(640,810,-5,'INSIDER TRADING?');
- s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="268" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.12</text></g>';
+ s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="268" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.13</text></g>';
  /* the market wire — the mood, live */
  s+='<g transform="translate(1230,30)"><rect x="-700" y="-13" width="1400" height="26" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-682" cy="0" r="5" fill="'+md.color+'"/><text x="-668" y="4" font-size="11" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="-20" y="4" text-anchor="middle" font-size="10.5" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,88))+'</text><text x="688" y="4" text-anchor="end" font-size="10" font-weight="800" fill="#9ad">1🛈=$'+md.rate+'</text></g>';
  let lx=560;
@@ -2082,7 +2154,7 @@ function renderSide(){
  const chatVal=(window.__chatDraft)||'';
  side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomLabel||Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':'SEAT '+(Net.myIdx+1))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
   +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
-  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.12 · '+(S.dlcGeo?'81':'70')+' exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
+  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.13 · '+(S.dlcGeo?'81':'70')+' exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
   +'<div class="turncard" style="border-color:'+p.color+'"><div class="turnlab">TURN '+S.turn+'</div><div class="turnname" style="color:'+p.color+'">'+esc(p.name)+(isTurn?' — that’s you':'')+'</div>'
   +'<div class="resline">$ '+p.money+' &nbsp;·&nbsp; 🛈 '+p.intel+' &nbsp;·&nbsp; 🔥 '+p.cortisol+(p.cortisol>=6?' <span class="danger">RAID AT 9</span>':'')+'</div>'
   +'<div class="holds" title="holdings of '+esc(p.name)+'">'+(isTurn?ownedIcons:'<span style="opacity:.5;font-size:12px">'+NODES.filter(n=>S.owner[n.id]===S.cur).length+' holdings</span>')+'</div></div>'
@@ -2500,10 +2572,10 @@ function renderCharGrid(){
  const mine=rows[myIdx]&&rows[myIdx].char;
  const taken=new Set(rows.filter((e,i)=>e.char&&i!==myIdx).map(e=>e.char));
  grid.innerHTML=CHARS.map(c=>{
-  const on=mine===c.id,busy=taken.has(c.id);
+  const on=mine===c.id,busy=taken.has(c.id),spect=Net.role==='host'&&rows[0]&&rows[0].bot;
   return '<button type="button" class="charpick'+(on?' on':'')+(busy?' taken':'')+'" data-char="'+c.id+'" style="border-bottom:4px solid '+c.color+'" '+(busy?'disabled':'')+'>'
    +'<img src="'+charSrc(c.id)+'" alt="">'
-   +'<div class="cn">'+esc(c.name)+(on?' · YOU':'')+(busy?' · TAKEN':'')+'</div>'
+   +'<div class="cn">'+esc(c.name)+(on?(spect?' · YOUR BOT':' · YOU'):'')+(busy?' · TAKEN':'')+'</div>'
    +'<div class="ccolour"><span class="cswatch" style="background:'+c.color+'"></span>'+c.color.toUpperCase()+(on?' · YOUR COLOUR':'')+'</div></button>';
  }).join('');
 }
@@ -2573,9 +2645,10 @@ function broadcastLobby(){
  renderLobbyList();renderLobbyChat();
  const n=Net.roster.length;
  const ready=n>=1&&Net.roster.every(e=>e.char);
+ const allBots=n>=1&&Net.roster.every(e=>e.bot);
  $('btnStart').disabled=!ready;
  $('btnStart').textContent=!ready?(n<1?'START THE CON (need a player)':'START THE CON (everyone pick a face)'):
-  (n===1?'START SOLO TEST — 1 PLAYER':n>=MAXPLAYERS?'START THE CON — FULL TABLE (8/8)':
+  (allBots?'START THE CON — ALL-BOT TABLE ('+n+(n===1?' BOT':' BOTS')+' · YOU WATCH)':n===1?'START SOLO TEST — 1 PLAYER':n>=MAXPLAYERS?'START THE CON — FULL TABLE (8/8)':
   'START THE CON — '+n+' PLAYERS · '+(MAXPLAYERS-n)+' SEATS OPEN');
 }
 function renderLobbyList(){
@@ -2583,14 +2656,54 @@ function renderLobbyList(){
  const rows=Net.role==='host'?Net.roster:(Net.lobbyPlayers||[]);
  c.innerHTML=rows.map((e,i)=>{
   const face=charSrc(e.char);
-  const who=Net.role==='host'?(i===0?'HOST · YOU':'CONNECTED'):(i===Net.myIdx?'YOU':'CONNECTED');
+  const who=Net.role==='host'?(e.bot?(i===0?'🤖 BOT · HOST SPECTATES':'🤖 BOT'):(i===0?'HOST · YOU':'CONNECTED')):(i===Net.myIdx?'YOU':'CONNECTED');
   return '<div class="lrow" style="border-left:4px solid '+((charMeta(e.char)||{}).color||PCOLORS[i%PCOLORS.length])+'">'+(face?'<img class="pface" src="'+face+'" alt="" style="border-color:'+((charMeta(e.char)||{}).color||PCOLORS[i%PCOLORS.length])+'">':'<span class="ld" style="background:'+PCOLORS[i%PCOLORS.length]+'"></span>')
-   +'<span class="ln">'+(i+1)+'. '+esc(e.name)+(e.char?' · '+esc((charMeta(e.char)||{}).name||''):' · pick a face')+'</span><span class="lh">'+who+'</span></div>';
+   +'<span class="ln">'+(i+1)+'. '+esc(e.name)+(e.char?' · '+esc((charMeta(e.char)||{}).name||''):' · pick a face')+'</span><span class="lh">'+who+(Net.role==='host'&&e.bot&&i>0?' <button class="botbtn" data-kickbot="'+i+'" title="Send this bot home">✕</button>':'')+'</span></div>';
  }).join('')
-  +'<div class="lrow" style="background:transparent;border:1px dashed #168388;color:#9ad;font-size:12px"><span class="ln">'+rows.length+' of 8 seats filled</span></div>';
+  +'<div class="lrow" style="background:transparent;border:1px dashed #168388;color:#9ad;font-size:12px"><span class="ln">'+rows.length+' of 8 seats filled</span>'
+  +(Net.role==='host'&&rows.length<MAXPLAYERS?'<button class="botbtn" id="btnAddBot" style="margin-left:8px;cursor:pointer;background:#000;border:1px solid #168388;color:#9ad;padding:2px 10px;font:inherit">🤖 ADD A BOT — FILLS THE NEXT EMPTY SEAT</button>':'')
+  +(Net.role==='host'&&!Net.started?'<button class="botbtn" id="btnSpectate" style="margin-left:8px;cursor:pointer;background:#000;border:1px solid #168388;color:#9ad;padding:2px 10px;font:inherit">'+(rows[0]&&rows[0].bot?'🙋 TAKE MY SEAT BACK — I’LL PLAY':'🤖 SPECTATE — LET A BOT PLAY MY SEAT')+'</button>':'')
+  +'</div>';
  renderCharGrid();
  const meIdx=Net.role==='host'?0:Net.myIdx;
  Presence.lobby(Net.role==='host',Net.roomLabel||Net.roomCode,rows.length,MAXPLAYERS,rows[meIdx]&&rows[meIdx].char);
+}
+/* ---- BOTS (host lobby) ----
+   A bot is a roster entry with bot:true and no connection. It picks a free
+   face immediately so the start button unlocks, plays through the same
+   applyIntent gate as everyone else, and never counts as connected. */
+function addBotSeat(){
+ if(Net.role!=='host'||!Net.roster)return;
+ if(Net.roster.length>=MAXPLAYERS){toast('The table is full — no seat for a bot.');return}
+ const used=new Set(Net.roster.map(e=>e.char));
+ const pick=CHARS.filter(ch=>!used.has(ch.id))[0];
+ if(!pick){toast('Every face is already at the table.');return}
+ const n=Net.roster.filter(e=>e.bot).length+1;
+ Net.roster.push({name:'BOT '+(pick.name||pick.id).toUpperCase(),playerId:'bot'+n+'-'+pick.id,conn:null,char:pick.id,bot:true});
+ broadcastLobby();
+}
+function kickBotSeat(i){
+ if(Net.role!=='host'||!Net.roster||!Net.roster[i]||!Net.roster[i].bot||i===0)return;
+ Net.roster.splice(i,1);broadcastLobby();
+}
+/* Spectator host: hand your OWN seat to a bot and watch the con unfold. The
+   roster row stays at index 0 — the relay's seat — it just plays itself
+   through the same bot policy as every other bot. Your name, player id and
+   face are kept aside so you can take the seat back before the start. */
+function toggleSpectate(){
+ if(Net.role!=='host'||!Net.roster||!Net.roster.length||Net.started)return;
+ const me=Net.roster[0];
+ if(me.bot){
+  const back=me.spectated||{};
+  const used=new Set(Net.roster.slice(1).map(e=>e.char).filter(Boolean));
+  Net.roster[0]={name:back.name||'HOST',playerId:back.playerId||Net.playerId||'host',conn:null,char:(back.char&&!used.has(back.char))?back.char:null,bot:false};
+ }else{
+  const used=new Set(Net.roster.slice(1).map(e=>e.char).filter(Boolean));
+  const pick=(me.char&&!used.has(me.char))?CHARS.filter(ch=>ch.id===me.char)[0]||null:CHARS.filter(ch=>!used.has(ch.id))[0];
+  if(!pick){toast('Every face is already at the table — send a bot home first.');return}
+  Net.roster[0]={name:'BOT '+(pick.name||pick.id).toUpperCase(),playerId:'spectator-'+pick.id,conn:null,char:pick.id,bot:true,spectated:{name:me.name,playerId:me.playerId,char:me.char}};
+ }
+ broadcastLobby();
 }
 /* ---- GUEST ---- */
 let guestReconnectTimer=null;
@@ -2797,14 +2910,20 @@ function showLobby(asHost){
  $('btnStart').onclick=()=>{
  if(Net.roster.length<1||Net.roster.some(e=>!e.char)){toast('Pick a character before starting.');return}
  requestTurnNotificationPermission();$('btnStart').disabled=true;
- initGame(Net.roster.map(e=>({name:e.name,char:e.char})));
+ initGame(Net.roster.map(e=>({name:e.name,char:e.char,bot:!!e.bot})));
 };
  document.addEventListener('click',e=>{
   const b=e.target.closest('#charGrid .charpick');
   if(!b||b.disabled)return;
   const id=b.dataset.char;
-  if(Net.role==='host')applyChar(0,id);
+  if(Net.role==='host'){if(Net.roster[0]&&Net.roster[0].bot){toast('You are spectating — take your seat back to pick a face.');return}applyChar(0,id)}
   else if(Net.conn&&Net.conn.open)Net.conn.send({t:'pick',char:id});
+ });
+ document.addEventListener('click',e=>{
+  if(e.target.closest&&e.target.closest('#btnAddBot')){addBotSeat();return}
+  if(e.target.closest&&e.target.closest('#btnSpectate')){toggleSpectate();return}
+  const kick=e.target.closest&&e.target.closest('[data-kickbot]');
+  if(kick)kickBotSeat(Number(kick.dataset.kickbot));
  });
  (function(){
  const gi=$('goalInput');
@@ -2873,6 +2992,7 @@ Presence.menu();
  }
 })();
 </script>
+<script src="./static/bots.js"></script>
 <script type="module">
 if (IS_DISCORD_ACTIVITY) {
 

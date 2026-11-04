@@ -601,7 +601,7 @@ test('GD-15 the geo flag is host-gated in the lobby and travels with every paylo
 test('GD-16 the help panel explains the DLC without breaking the base-game copy pins', t => {
   assert.ok(SOURCE.includes('The Geography DLC'), 'the help section is titled');
   assert.ok(SOURCE.includes('82 exhibits'), 'help copy says what the board becomes');
-  assert.ok(SOURCE.includes('v1.12'), 'the current version stamp is documented');
+  assert.ok(SOURCE.includes('v1.13'), 'the current version stamp is documented');
   assert.ok(SOURCE.includes('70 exhibits'), 'the base-game exhibit copy is intact (RC-01 pin)');
   assert.ok(!SOURCE.includes('81 exhibits'), 'no stale exhibit counts');
   assert.ok(SOURCE.includes('KIM JONG UN ($6)'), 'the Supreme Leader has a help bullet');
@@ -992,11 +992,13 @@ test('GD-25 targeted Cortisol overload costs 30 Intel and adds 6 to one selected
 test('GD-26 Bondmageddon targets the chart leader and prioritises ESG before one other random holding', async t => {
   const { e, S } = await geoGame(t, 3);
   S.owner.bond = 0;
+  S.owner.leak = 0; // Bondmageddon requires both the Bond Desk and The Leak
   S.owner.us = 1; S.owner.japan = 1;  // player 1 has two charts
   S.owner.aus = 2;                    // player 2 has only one chart
   S.owner.geo_pillars = 1; S.owner.oil = 1; S.owner.westpac = 1;
   S.players[0].money = 40; S.players[0].intel = 10;
   armAction(e);
+  e.queueModal(1); // choose the first listed rival in the explicit target picker
   const barrage = e.f.applyIntent(0, { act: 'bondmageddon' });
   for (let i = 0; i < 8; i++) { e.clock.advance(e.acc.PROJ_PAUSE_MS + 100); await settle(); }
   await barrage; await settle();

@@ -177,7 +177,7 @@ export function loadEngine(opts = {}) {
     const def = o.def !== undefined ? o.def : (o.options && o.options[0] ? o.options[0].v : 0);
     return Promise.resolve(def);
   };
-  const locationStub = { reloadCount: 0, reload() { this.reloadCount++; } };
+  const locationStub = { reloadCount: 0, reload() { this.reloadCount++; }, search: '', hostname: 'localhost' };
   const store = new Map();
   let uuidSeq = 0;
   const ctx = {
@@ -186,7 +186,7 @@ export function loadEngine(opts = {}) {
       warn: (...a) => consoleOut.warn.push(a.join(' ')),
       error: (...a) => consoleOut.error.push(a.join(' ')),
     },
-    Math, Date, JSON,
+    Math, Date, JSON, URLSearchParams,
     setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
     setInterval: clock.setInterval, clearInterval: clock.clearInterval,
     requestAnimationFrame: () => 0,
@@ -293,8 +293,9 @@ export async function makeGame(engine, playerCount = 2, opts = {}) {
   Net.conns = [];
   const canonical = [];
   for (let i = 0; i < playerCount; i++) {
-    const conn = i === 0 ? null : makeConn(engine, 'pid' + i, opts);
-    canonical.push({ name: opts.names?.[i] || ('Player ' + (i + 1)), playerId: 'pid' + i, conn, char: chars[i] });
+    const isBot = !!(opts.bots && opts.bots.indexOf(i) >= 0);
+    const conn = (i === 0 || isBot) ? null : makeConn(engine, 'pid' + i, opts);
+    canonical.push({ name: opts.names?.[i] || ('Player ' + (i + 1)), playerId: 'pid' + i, conn, char: chars[i], bot: isBot });
   }
   /* initGame shuffles the seating order. Flow tests drive the host as seat 0,
      so retry seeds until the shuffle seats the host first. Everything is
@@ -302,7 +303,7 @@ export async function makeGame(engine, playerCount = 2, opts = {}) {
   for (const seed of opts.seeds || Array.from({ length: 220 }, (_, i) => 40 + i)) {
     Net.roster = canonical.map(e => ({ ...e }));
     Net.conns = canonical.map(e => e.conn);
-    withSeed(seed, () => engine.f.initGame(canonical.map(e => ({ name: e.name, char: e.char }))));
+    withSeed(seed, () => engine.f.initGame(canonical.map(e => ({ name: e.name, char: e.char, bot: !!e.bot }))));
     await pump();
     if (Net.myIdx === 0) return engine.acc.S;
     /* Seat shuffle misfired for this seed: forget its traffic and try again. */
