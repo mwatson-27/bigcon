@@ -252,7 +252,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = '0a4ce80';
+const BUILD_COMMIT = 'e873020';
 const IS_DISCORD_ACTIVITY = new URLSearchParams(location.search).get('discord') === '1' || location.hostname.endsWith('.discordsays.com') || new URLSearchParams(location.search).has('instance_id');
 if(IS_DISCORD_ACTIVITY)window.__BIGCON_DISCORD_ACTIVITY__=true;
 const $=id=>document.getElementById(id);
@@ -702,7 +702,7 @@ const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);
 /* ================= STATE, NET & HELPERS ================= */
 let S=null;
 const GOAL_MIN=20,GOAL_MAX=999,GOAL_DEF=100;
-const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,roomLabel:null,lobbyChat:[],lobbyPlayers:[],started:false,begun:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,dlcGeo:false,fogOfWar:false,hbTimer:null,lastSeen:0};
+const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,roomLabel:null,lobbyChat:[],lobbyPlayers:[],started:false,begun:false,spect:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,dlcGeo:false,fogOfWar:false,hbTimer:null,lastSeen:0};
 function clampGoal(v){const n=Math.round(Number(v)||0);if(!n)return GOAL_DEF;return Math.max(GOAL_MIN,Math.min(GOAL_MAX,n))}
 let fxSeq=0;
 const shownFx=new Set();
@@ -962,14 +962,14 @@ function announceAll(title,html){
  if(Net.role!=='host')return;
  const eid=++Net.evSeq;
  flushState();
- for(let i=0;i<S.players.length;i++){if(i===Net.myIdx)continue;const c=Net.conns[i];if(c&&c.open)sendTo(i,{t:'event',eid,title,html})}
+ for(let i=0;i<Net.conns.length;i++){if(i===Net.myIdx)continue;const c=Net.conns[i];if(c&&c.open)sendTo(i,{t:'event',eid,title,html})}
  modal({title,html,options:[{label:'Continue',v:1}]});
 }
 async function revealAll(title,html){
  if(Net.role!=='host'){await modal({title,html,options:[{label:'Continue',v:1}]});return}
  const eid=++Net.evSeq;const need=new Set();
  flushState();
- for(let i=0;i<S.players.length;i++){if(i===Net.myIdx)continue;const c=Net.conns[i];if(c&&c.open){sendTo(i,{t:'event',eid,title,html});need.add(i)}}
+ for(let i=0;i<Net.conns.length;i++){if(i===Net.myIdx)continue;const c=Net.conns[i];if(c&&c.open){sendTo(i,{t:'event',eid,title,html});need.add(i)}}
  await modal({title,html,options:[{label:'Continue',v:1}]});
  /* the table has already seen the card — a short grace, then play moves on */
  if(need.size){await new Promise(res=>{Net.acks={eid,set:need,res,timer:setTimeout(()=>{if(Net.acks){Net.acks=null;res()}},5000)}})}
@@ -1729,7 +1729,9 @@ async function endOfTurn(){
   if(v){S.jtUsed=true;log('🌐 JTPortal: “Quite frankly, that never happened.” The event vanishes.');fx(1200,720,'“NEVER HAPPENED.”','#55c1ff',true);nextTurn();return}
  }
  const card=drawCard();
- announceAll('MARKET EVENT — TURN '+S.turn,cardFace(card));
+ /* A table of only bots has nobody to interrupt: the event still runs, the log
+    keeps the record and the mood strip shows the swing — but no modal. */
+ if(!S.players.every(p=>p.bot))announceAll('MARKET EVENT — TURN '+S.turn,cardFace(card));
  const tk=S.owner.toktimer;if(tk!=null)giveIntel(tk,1,'Toktimer clocked the event');
  await card.run();
  sync();
@@ -1763,13 +1765,16 @@ async function winCheck(){
 }
 function addChat(pi,text){
  if(!S)return;
- S.chat.push({n:pname(pi),c:S.players[pi].color,t:text});S.chatN=(S.chatN|0)+1;
+ /* rows past the seated table are spectators — they chat under their roster
+    name with a palette colour, since they hold no seat of their own */
+ const sp=pi>=S.players.length?Net.roster[pi]:null;
+ S.chat.push({n:sp?'👁 '+sp.name:pname(pi),c:sp?PCOLORS[pi%PCOLORS.length]:S.players[pi].color,t:text});S.chatN=(S.chatN|0)+1;
  if(S.chat.length>60)S.chat.shift();
  sync();
 }
 function showRules(){
  modal({title:'HOW TO PULL THE BIG CON',html:
- '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code — a jt portal <b>buzzword</b> (NESA, LOW CORTISOL, JAKE TOMKINS…), every one of them straight off the jt portal news ticker; the others <b>join</b> by typing it — the table seats up to <b>eight</b>. Short a friend? The host can <b>🤖 seat a bot</b> — it plays through the same rules, sends the same moves, and only ever knows what the table shows it. Or hand your <b>own seat</b> to a bot too and spectate: a table full of cons, and you just watch (and chat). Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. Chat in the <b>lobby</b> before the con starts, and in the sidebar once it does.</p>'
+ '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code — a jt portal <b>buzzword</b> (NESA, LOW CORTISOL, JAKE TOMKINS…), every one of them straight off the jt portal news ticker; the others <b>join</b> by typing it — the table seats up to <b>eight</b>. Short a friend? The host can <b>🤖 seat a bot</b> — it plays through the same rules, sends the same moves, and only ever knows what the table shows it. Or hand your <b>own seat</b> to a bot too and spectate: a table full of cons, and you just watch (and chat). Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. The table plays on: joining <b>mid-con</b> deals you in fresh at <b>Quikstop</b> — $15 and 2 Intel, the same stake every first turn gets — or you can take the <b>spectator rail</b> and just watch. Chat in the <b>lobby</b> before the con starts, and in the sidebar once it does.</p>'
  +'<h4>The market mood — events you can feel</h4><p>Every market event shifts the mood of the whole board — watch the <b>ticker</b> across the top, the <b>tint</b> of the board and the <b>glowing nodes</b>: <b style="color:#f5c542">BOOM</b> (commodities +$1/turn), <b style="color:#ff6b5e">PANIC</b> (banks −$1/turn, intel dearer), <b style="color:#e19bff">MEDIA FRENZY</b> (media +$1/turn), <b style="color:#8fbf7f">CALM</b>. Yields go vertical in a panic; the oil graph spikes in a boom. Money, Cortisol and Intel changes pop up on the board as they happen.</p>'
  +'<h4>Intel ops (🛈)</h4><ul><li><b>Burn a favor</b> (1 🛈, while moving) — +1 step this turn.</li><li><b>Spy on the deck</b> (2 🛈, free action) — privately see the next event card, anywhere.</li><li><b>The Dossier</b> (3 🛈, free action) — your hostile takeovers this turn cost <b>list price, not double</b>.</li><li><b>Sweep for bugs</b> (2 🛈, your action) — remove every bug on your nodes.</li><li><b>Mass panic</b> (5 🛈, your action) — every player gains +2 Cortisol.</li><li><b>Divest MADE</b> (5 🛈, your action) — take MADE from any rival and pay its former owner $7 compensation.</li><li><b>Sell intel</b> (your action, anywhere): sell 1–3 or <b>ALL</b> your Intel at once for the current market rate. Bad news is good news.</li><li><b>Overload a rival</b> (30 🛈, your action): choose one rival to receive <b>+6 Cortisol</b>, bypassing the normal one-node immunity.</li></ul>'
  +'<h4>The board is the whole collage</h4><p><b>70 exhibits.</b> Charts are spread across the collage — US yields sit by Trump, Japan by the tankers, UK by the papers, Australia by the coat of arms, and the 10-year master in the middle. Each game <b>Quikstop opens in a different neighbourhood</b>, so the first moves change. New pins from the collage: <b>Westpac</b>, <b>BHP</b>, <b>Herald Sun / The Jim Reaper</b>, <b>the bullet train</b>, the circled <b>ASICS shoe</b>, and <b>Toktimer</b>. Red threads are the paths — long ones dash. <i>Drag to pan, scroll to zoom.</i></p>'
@@ -2034,7 +2039,8 @@ function renderSide(){
     ?'<button class="act primary" data-act="tolobby">🃏 BACK TO THE LOBBY — same room, deal the next con</button><p class="fine" style="margin-top:8px">Nobody is going anywhere — the table keeps the room, the record and the chat. LEAVE is the only button that ends the night.</p>'
     :'<p class="fine">Stick around — the host can deal the next con. Nobody has to leave.</p>');
  } else if(!isTurn){
-  if(S.phase==='event')phaseHtml='<div class="phlabel">MARKET EVENT</div><p>The market moves whether anyone likes it or not…</p>';
+  if(Net.spect)phaseHtml='<div class="phlabel">SPECTATING</div><p>You joined mid-con — the table plays on without you. The chat is open and the record below is the play-by-play.</p>';
+  else if(S.phase==='event')phaseHtml='<div class="phlabel">MARKET EVENT</div><p>The market moves whether anyone likes it or not…</p>';
   else phaseHtml='<div class="phlabel">STANDBY</div><p>⏳ Waiting for <b style="color:'+p.color+'">'+esc(p.name)+'</b>'+(p.dc?' <i>(away — auto-playing)</i>':'')+'…</p><p>Scheme in the chat. Hover exhibits to study their powers.</p>';
  } else if(S.phase==='move'){
   const maxSteps=S.caution?1:3+(S.owner.coal===me?1:0)+((S.owner.train===me||S.owner.bullet===me)?1:0)+(S.owner.asics===me?1:0)+(S.extraStep?1:0)+(S.slipped?2:0);
@@ -2154,17 +2160,17 @@ function renderSide(){
    +'<span class="pstats">$'+pl.money+' · 🛈'+pl.intel+' · 🔥'+pl.cortisol+'</span>'
    +'<span class="pnodes">'+nodes+' node'+(nodes!==1?'s':'')+' · set '+(WIN_TYPES.length-missingTypes(i).length)+'/'+WIN_TYPES.length+'</span></div>';
  }).join('');
- const myMissing=missingTypes(me);
- const setHtml=WIN_TYPES.map(t=>{const has=hasType(me,t);return '<span style="color:'+(has?'#7fe08d':'#ff6b5e')+'">'+(has?'✔':'✘')+' '+t+'</span>'}).join('');
+ const myMissing=Net.spect?[]:missingTypes(me);
+ const setHtml=Net.spect?'<span style="color:#9ad">not playing — just watching</span>':WIN_TYPES.map(t=>{const has=hasType(me,t);return '<span style="color:'+(has?'#7fe08d':'#ff6b5e')+'">'+(has?'✔':'✘')+' '+t+'</span>'}).join('');
  const chatHtml=(S.chat||[]).map(c=>'<div><b style="color:'+c.c+'">'+esc(c.n)+':</b> '+esc(c.t)+'</div>').join('')||'<div style="opacity:.4;font-style:italic">— the wire is quiet —</div>';
  const chatVal=(window.__chatDraft)||'';
- side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomLabel||Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':'SEAT '+(Net.myIdx+1))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
+ side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomLabel||Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':(Net.spect?'👁 SPECTATOR':'SEAT '+(Net.myIdx+1)))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
   +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
   +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.13 · '+(S.dlcGeo?'81':'70')+' exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
   +'<div class="turncard" style="border-color:'+p.color+'"><div class="turnlab">TURN '+S.turn+'</div><div class="turnname" style="color:'+p.color+'">'+esc(p.name)+(isTurn?' — that’s you':'')+'</div>'
   +'<div class="resline">$ '+p.money+' &nbsp;·&nbsp; 🛈 '+p.intel+' &nbsp;·&nbsp; 🔥 '+p.cortisol+(p.cortisol>=6?' <span class="danger">RAID AT 9</span>':'')+'</div>'
   +'<div class="holds" title="holdings of '+esc(p.name)+'">'+(isTurn?ownedIcons:'<span style="opacity:.5;font-size:12px">'+NODES.filter(n=>S.owner[n.id]===S.cur).length+' holdings</span>')+'</div></div>'
-  +'<div class="setcard"><span class="st">🎯 WIN SET</span>'+setHtml+'<span style="flex-basis:100%;color:#9ad">'+(myMissing.length?'still need: '+myMissing.join(', ')+' · and $'+goalAmount():'full set held — now bank $'+goalAmount())+'</span></div>'
+  +'<div class="setcard"><span class="st">🎯 WIN SET</span>'+setHtml+'<span style="flex-basis:100%;color:#9ad">'+(Net.spect?'the spectacle is the point':(myMissing.length?'still need: '+myMissing.join(', ')+' · and $'+goalAmount():'full set held — now bank $'+goalAmount()))+'</span></div>'
   +'<div class="phasecard">'+phaseHtml+'</div>'
   +'<div class="paneltitle">THE SYNDICATE — '+S.players.length+' AT THE TABLE</div><div>'+prows+'</div>'
   +'<div class="paneltitle">THE RECORD</div><div class="log" id="logbox">'+S.log.map(l=>'<div>'+l+'</div>').join('')+'</div>'
@@ -2578,13 +2584,15 @@ function onHostData(c,d){
  if(d.t==='ping'){try{c.send({t:'pong'})}catch(_){}return}
  if(d.t==='pong')return;
  if(d.t==='hello'){handleHello(c,cleanName(d.name)||'Player',String(d.playerId||''));return}
+ if(d.t==='joinmode'){handleJoinMode(c,d);return}
+ if(d.t==='joinchar'){handleJoinChar(c,d);return}
  if(d.t==='pick'){const pi=Net.conns.indexOf(c);if(pi>=0)applyChar(pi,d.char);return}
  const pi=Net.conns.indexOf(c);
  if(pi<0)return;
  if(d.t==='intent'){applyIntent(pi,d)}
  else if(d.t==='answer'){const pr=Net.pendingPrompts.get(d.pid);if(pr&&pr.pi===pi){Net.pendingPrompts.delete(d.pid);pr.res(d.v)}}
  else if(d.t==='ack'){if(Net.acks&&Net.acks.eid===d.eid){Net.acks.set.delete(pi);if(!Net.acks.set.size){clearTimeout(Net.acks.timer);const r=Net.acks.res;Net.acks=null;r()}}}
- else if(d.t==='chat'){if(S)addChat(pi,String(d.text||'').slice(0,140))}
+ else if(d.t==='chat'){if(S&&pi>=0)addChat(pi,String(d.text||'').slice(0,140))}
  else if(d.t==='lchat'){if(!Net.started)addLobbyChat(pi,String(d.text||'').slice(0,140))}
 }
 /* The wire opens before the con does: chat runs in the lobby too, and whatever
@@ -2640,7 +2648,12 @@ function handleHello(c,name,playerId){
   if(old===c)return;
   if(old&&old.open){c.send({t:'kick',reason:'This player is already connected in this room. Close the other tab before joining again.'});setTimeout(()=>{try{c.close()}catch(e){}},800);return;}
   Net.roster[existing].conn=c;Net.conns[existing]=c;c.__bigconClosed=false;c.__lastSeen=Date.now();
-  if(Net.started&&S){S.players[existing].dc=false;clearTimeout(Net.autoT);log('🔔 '+name+' reconnected to their existing seat.');c.send({t:'welcome',idx:existing,s:pubState(true)});sync(true);return;}
+  if(Net.started&&S){
+   if(S.players[existing]){S.players[existing].dc=false;clearTimeout(Net.autoT);log('🔔 '+name+' reconnected to their existing seat.');c.send({t:'welcome',idx:existing,s:pubState(true)});sync(true);return}
+   /* a spectator row holds no seat at the table — back to the rail, not the door */
+   Net.roster[existing].spect=true;
+   c.send({t:'welcome',idx:existing,spect:true,s:pubState(true)});sync(true);return;
+  }
   c.send({t:'welcome',idx:existing,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,chat:Net.lobbyChat.slice(-40)});broadcastLobby();return;
  }
  if(Net.started&&S){
@@ -2653,9 +2666,18 @@ function handleHello(c,name,playerId){
    c.send({t:'welcome',idx:idx,s:pubState(true)});
    sync(true);return;
   }
-  c.send({t:'kick',reason:'Game already in progress — no empty seat named “'+name+'”.'});
-  setTimeout(()=>{try{c.close()}catch(e){}},800);return;
+  /* dead spectator rows are not seats — sweep them so rejoiners don't pile up */
+  for(let i=Net.roster.length-1;i>=S.players.length;i--){if(Net.roster[i]&&Net.roster[i].spect&&!Net.roster[i].conn)Net.roster.splice(i,1)}
+  Net.conns=Net.roster.map(e=>e.conn);
+  /* the con is already on, so the joiner chooses: a fresh seat dealt at
+     Quikstop, or the spectator rail. The host validates every step of it. */
+  c.__midjoin={name,playerId:playerId||crypto.randomUUID()};
+  c.send({t:'midjoin',over:!!S.over});
+  return;
  }
+ joinLobby(c,name,playerId);
+}
+function joinLobby(c,name,playerId){
  if(Net.roster.length>=MAXPLAYERS){c.send({t:'kick',reason:'Room is full (8 players).'});setTimeout(()=>{try{c.close()}catch(e){}},800);return}
  if(Net.roster.some(e=>e.name.toLowerCase()===name.toLowerCase()))name=name+' ★';
  Net.roster.push({name,playerId:playerId||crypto.randomUUID(),conn:c,char:null});
@@ -2663,6 +2685,52 @@ function handleHello(c,name,playerId){
  c.__lastSeen=Date.now();
  c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,chat:Net.lobbyChat.slice(-40)});
  broadcastLobby();
+}
+/* Mid-con joiners: the game does not stop for them. A new player gets the
+   same deal every con starts with ($15, 2 Intel, standing at Quikstop); a
+   spectator gets the whole board read-only. Nothing is trusted from the wire —
+   the host re-validates the cap and the face on every step. */
+function midJoinReject(c,reason){c.send({t:'kick',reason});setTimeout(()=>{try{c.close()}catch(e){}},800)}
+function seatSpectator(c){
+ if(Net.roster.length>=MAXPLAYERS)return midJoinReject(c,'Room is full (8 players).');
+ const mj=c.__midjoin;if(!mj)return;delete c.__midjoin;
+ Net.roster.push({name:mj.name,playerId:mj.playerId,conn:c,char:null,spect:true});
+ Net.conns=Net.roster.map(e=>e.conn);
+ c.__bigconClosed=false;c.__lastSeen=Date.now();
+ log('👁 '+mj.name+' pulls up a chair — spectating the con.');
+ toast('👁 '+mj.name+' joined as a spectator.');
+ c.send({t:'welcome',idx:Net.roster.length-1,spect:true,s:pubState(true)});
+ sync(true);
+}
+function seatMidgamePlayer(c,char){
+ if(Net.roster.length>=MAXPLAYERS)return midJoinReject(c,'Room is full (8 players).');
+ if(!charMeta(char)||Net.roster.some(e=>e.char===char))return midJoinReject(c,'That face was just taken — join the room again to pick another.');
+ const mj=c.__midjoin;if(!mj)return;delete c.__midjoin;
+ const idx=Net.roster.length;
+ Net.roster.push({name:mj.name,playerId:mj.playerId,conn:c,char});
+ Net.conns=Net.roster.map(e=>e.conn);
+ c.__bigconClosed=false;c.__lastSeen=Date.now();
+ const meta=charMeta(char);
+ S.players.push({name:mj.name,color:meta.color||PCOLORS[idx%PCOLORS.length],char,money:15,intel:2,cortisol:0,raided:0,pos:'quik',visited:{quik:true},dc:false,bot:false});
+ log('🔔 '+mj.name+' joins the con — dealt in at Quikstop with $15 and 2 Intel.');
+ toast('🔔 '+mj.name+' joined — dealt in at Quikstop.');
+ c.send({t:'welcome',idx,s:pubState(true)});
+ sync(true);
+}
+function handleJoinMode(c,d){
+ const mj=c.__midjoin;if(!mj)return;
+ if(!Net.started||!S){delete c.__midjoin;joinLobby(c,mj.name,mj.playerId);return}
+ if(d.v!=='player'||S.over)return seatSpectator(c);
+ const taken=new Set(Net.roster.map(e=>e.char));
+ const free=CHARS.filter(ch=>!taken.has(ch.id));
+ if(!free.length)return seatSpectator(c);
+ c.send({t:'joinface',free:free.map(f=>f.id)});
+}
+function handleJoinChar(c,d){
+ const mj=c.__midjoin;if(!mj)return;
+ if(!Net.started||!S){delete c.__midjoin;joinLobby(c,mj.name,mj.playerId);return}
+ if(S.over)return seatSpectator(c);
+ seatMidgamePlayer(c,String(d.char||''));
 }
 function onHostClose(c){
  if(c.__bigconClosed)return;
@@ -2879,7 +2947,7 @@ function onGuestData(d){
   case 'ping':if(Net.conn&&Net.conn.open){try{Net.conn.send({t:'pong'})}catch(_){}}break;
   case 'pong':break;
   case 'welcome':
-   Net.myIdx=d.idx;
+   Net.myIdx=d.idx;Net.spect=!!d.spect;
    if(d.lobby)Net.lobbyPlayers=d.lobby;
    if(d.chat)Net.lobbyChat=d.chat;
    if(d.goal)setGoalUI(d.goal);
@@ -2897,11 +2965,13 @@ function onGuestData(d){
    if(d.fogOfWar!==undefined)setFogUI(!!d.fogOfWar);
    renderLobbyList();
    break;
-  case 'begin':S=null;adoptState(d.s);if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
+  case 'begin':S=null;Net.spect=false;adoptState(d.s);if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
   case 'state':adoptState(d.s);scheduleRender();break;
   case 'prompt':modal({title:d.title,html:d.html,body:d.body,options:d.options}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'answer',pid:d.pid,v})});break;
   case 'event':modal({title:d.title,html:d.html,options:[{label:'Continue',v:1}]});break;
-  case 'tolobby':S=null;Net.begun=false;if(d.idx!=null)Net.myIdx=d.idx;showLobby(false);break;
+  case 'midjoin':modal({title:'THE CON IS ALREADY ON',body:d.over?'The table just wrapped up. Take the spectator rail — when the host deals the next con, you are in it.':'The table is mid-heist. You can deal in fresh at Quikstop — $15 and 2 Intel, the same stake every con starts with — or take the spectator rail and just watch.',options:d.over?[{label:'👁 WATCH AS A SPECTATOR',v:'spect'}]:[{label:'🎲 DEAL ME IN AT QUIKSTOP',v:'player'},{label:'👁 SPECTATE — JUST WATCHING',v:'spect'}]}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'joinmode',v:v||'spect'})});break;
+  case 'joinface':modal({title:'PICK YOUR FACE',body:'Every free face at the table. Pick who you are for this con.',options:(d.free||[]).map(id=>{const m=charMeta(id);return{label:m?m.name:id,v:id}})}).then(id=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'joinchar',char:id})});break;
+  case 'tolobby':S=null;Net.begun=false;Net.spect=false;if(d.idx!=null)Net.myIdx=d.idx;showLobby(false);break;
   case 'sys':toast(d.msg);break;
   case 'reload':location.reload();break;
   case 'kick':guestReconnectStopped=true;clearGuestReconnect();stopGuestHeartbeat();showFatal(d.reason||'Kicked from room.');break;
@@ -2940,6 +3010,8 @@ function setFogUI(v){
 function backToLobby(){
  if(Net.role!=='host'||!S||!S.over)return;
  Net.started=false;Net.begun=false;S=null;
+ /* spectators step off the rail and pick a face like anyone else for the next con */
+ Net.roster.forEach(e=>{if(e.spect)e.spect=false});
  for(let i=0;i<Net.roster.length;i++){
   if(i===Net.myIdx)continue;
   const c=Net.conns[i];if(c&&c.open)sendTo(i,{t:'tolobby',idx:i});

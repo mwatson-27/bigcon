@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import { loadEngine, makeGame, pump, snapshot, withSeedAsync, repoRoot, CHARS8 } from './helpers/harness.mjs';
+import { loadEngine, makeGame, makeConn, pump, snapshot, withSeedAsync, repoRoot, CHARS8 } from './helpers/harness.mjs';
 
 const BOT_SRC = fs.readFileSync(path.join(repoRoot, 'static', 'bots.js'), 'utf8');
 
@@ -54,7 +54,7 @@ function botEngine(t, botSeed = 4242) {
    timers (pump's macrotasks) and block on projPause chains (clock.advance).
    The loop shape is part of the determinism contract in BT-02 — keep it
    identical between runs. */
-async function driveToOver(engine, S, maxIters = 6000) {
+async function driveToOver(engine, S, maxIters = 24000) {
   for (let i = 0; i < maxIters && !S.over; i++) {
     await pump(2);
     if (engine.clock.pending()) engine.clock.advance(25);
@@ -514,4 +514,104 @@ test('BT-12 a guest walked back from the payout lands in the lobby on their own 
   assert.equal(engine.elems.get('lobbyView').style.display, 'block', 'the guest sees the lobby');
   assert.equal(engine.elems.get('app').style.display, 'none', 'the game screen is hidden');
   assert.equal(engine.elems.get('btnStart').style.display, 'none', 'the guest does not see START');
+});
+
+test('BT-13 an all-bot table runs its market events without popup spam', async t => {
+  const engine = botEngine(t);
+  const S = await makeGame(engine, 3, { bots: [0, 1, 2], goal: 100, seeds: [41] });
+  await driveToOver(engine, S);
+  assert.equal(S.over, true, 'the all-bot con finished');
+  assert.ok(S.turn > 2, 'the game ran a real number of turns (' + S.turn + ')');
+  assert.ok(S.log.some(l => l.indexOf('🎴 EVENT — ') === 0), 'market events still resolved — the record keeps them');
+  assert.equal(engine.modalRec.filter(m => m.title.startsWith('MARKET EVENT')).length, 0,
+    'no market-event popup was shown at a table of only bots');
+});
+
+test('BT-14 a mid-game joiner is dealt in at Quikstop and takes their turns', async t => {
+  const engine = botEngine(t);
+  const S = await makeGame(engine, 2, { bots: [0, 1], goal: 100, seeds: [41] });
+  const Net = engine.acc.Net;
+  assert.equal(S.players.length, 2, 'the game starts as a duo');
+
+  /* the handshake: hello mid-game gets the joiner a choice, not the door */
+  const c = makeConn(engine, 'pid-late');
+  engine.f.handleHello(c, 'Late Larry', 'pid-late');
+  const mid = c.sent.find(m => m.t === 'midjoin');
+  assert.ok(mid, 'the host asked the joiner what they want');
+
+  engine.f.onHostData(c, { t: 'joinmode', v: 'player' });
+  const face = c.sent.find(m => m.t === 'joinface');
+  assert.ok(face, 'a player-joiner is shown the free faces');
+  const taken = new Set(S.players.map(p => p.char));
+  assert.ok(face.free.every(id => !taken.has(id)), 'no taken face is offered');
+  assert.ok(face.free.length >= 10, 'the full roster minus two is free');
+
+  const char = face.free[0];
+  engine.f.onHostData(c, { t: 'joinchar', char });
+  assert.equal(S.players.length, 3, 'the joiner holds a live seat');
+  const np = S.players[2];
+  assert.equal(np.name, 'Late Larry');
+  assert.equal(np.pos, 'quik', 'they spawn at Quikstop');
+  assert.equal(np.money, 15, 'the same $15 every first turn gets');
+  assert.equal(np.intel, 2, 'and the same 2 Intel');
+  assert.equal(np.visited.quik, true, 'Quikstop counts as visited');
+  assert.equal(np.dc, false, 'they are connected, not away');
+  assert.equal(np.bot, false, 'they play by hand');
+  const row = Net.roster[2];
+  assert.ok(row && row.char === char && row.conn === c, 'the roster row carries face and connection');
+  const wel = c.sent.find(m => m.t === 'welcome');
+  assert.ok(wel && wel.idx === 2 && wel.s && wel.s.players.length === 3, 'the joiner was welcomed with the full live state');
+  assert.ok(S.log.some(l => l.includes('Late Larry') && l.includes('Quikstop')), 'the record announces the joiner');
+
+  /* the new seat participates: parked (away), it still takes its turns to the payout */
+  np.dc = true;
+  await driveToOver(engine, S);
+  assert.equal(S.over, true, 'the three-seat con finishes with the late joiner in the rotation');
+});
+
+test('BT-15 a mid-game joiner can take the spectator rail and chat from it', async t => {
+  const engine = botEngine(t);
+  const S = await makeGame(engine, 2, { bots: [0, 1], goal: 100, seeds: [41] });
+  const Net = engine.acc.Net;
+
+  const c = makeConn(engine, 'pid-watch');
+  engine.f.handleHello(c, 'Rail Bird', 'pid-watch');
+  assert.ok(c.sent.find(m => m.t === 'midjoin'), 'the host asked the joiner what they want');
+
+  engine.f.onHostData(c, { t: 'joinmode', v: 'spect' });
+  assert.equal(S.players.length, 2, 'no seat was created — the rail holds nobody');
+  const row = Net.roster[2];
+  assert.ok(row && row.spect === true && row.char === null && row.conn === c, 'the spectator row rides past the seated table');
+  const wel = c.sent.find(m => m.t === 'welcome');
+  assert.ok(wel && wel.spect === true && wel.idx === 2 && wel.s, 'the spectator was welcomed with the read-only flag and live state');
+
+  /* the rail sees table-wide traffic: state broadcasts and bulletins */
+  engine.f.sync(true);
+  assert.ok(c.sent.some(m => m.t === 'state'), 'state broadcasts reach the spectator');
+  engine.f.announceAll('TEST BULLETIN', 'x');
+  assert.ok(c.sent.some(m => m.t === 'event' && m.title === 'TEST BULLETIN'), 'table-wide bulletins reach the spectator');
+
+  /* spectators chat under their own name — never through a seated pname() */
+  engine.f.onHostData(c, { t: 'chat', text: 'watching the wheels' });
+  const last = S.chat[S.chat.length - 1];
+  assert.ok(last && last.n === '👁 Rail Bird', 'the spectator chatted under their roster name');
+
+  /* at the walk-back the spectator steps off the rail to pick a face like anyone else */
+  await driveToOver(engine, S);
+  engine.ctx.backToLobby();
+  assert.equal(Net.roster[2].spect, false, 'the spect flag is cleared');
+  assert.equal(Net.roster[2].char, null, 'they owe the lobby a face');
+  assert.ok(String(engine.elems.get('btnStart').textContent).includes('pick a face'), 'the start gate waits on them, as for any guest');
+});
+
+test('BT-16 the guest client wears the spectator flag: on at a spectator welcome, off in the lobby', t => {
+  const engine = loadEngine();
+  t.after(() => engine.dispose());
+  const Net = engine.acc.Net;
+  Net.role = 'guest'; Net.begun = false; Net.myIdx = 0;
+  engine.ctx.onGuestData({ t: 'welcome', idx: 4, spect: true });
+  assert.equal(Net.spect, true, 'the spectator welcome set the flag');
+  assert.equal(Net.myIdx, 4, 'the spectator holds their roster row');
+  engine.ctx.onGuestData({ t: 'tolobby', idx: 4 });
+  assert.equal(Net.spect, false, 'the lobby clears the flag — they pick a face next con');
 });

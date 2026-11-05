@@ -336,3 +336,17 @@ Table-life pass — the payout no longer ends the night, so new engine copy pins
 | Lobby status after walk-back (`backToLobby` → `setNetStatus`) | "Back in the lobby — same room, same faces. Deal the next con when ready." | NEW |
 
 The payout modal itself is unchanged (🏆 THE BIG CON PAYS OUT, the "walks away with…" body, the board list); what changed is that nothing reloads afterward — the old `sendAll({t:'reload'})` teardown is gone, LEAVE remains the only button that disconnects the room. The syndicate hover card (leaderboard hover shows each rival's held node types by name and the types they still need) is UI, not rules copy — it renders live state, no new strings to pin. Automated validation: 151 tests, 150 pass, 1 documented skip, 0 fail (BT-01..BT-12 in `tests/bots.test.mjs`; CF-09 rewritten to pin "no reload after the payout").
+
+Open-table pass — mid-game joins and the quiet all-bot table, new copy pins:
+
+| Copy (source) | Text | Status |
+| --- | --- | --- |
+| Guest join handshake (`case 'midjoin'`) | title "THE CON IS ALREADY ON"; body "The table is mid-heist. You can deal in fresh at Quikstop — $15 and 2 Intel, the same stake every con starts with — or take the spectator rail and just watch." Options `🎲 DEAL ME IN AT QUIKSTOP` / `👁 SPECTATE — JUST WATCHING` | NEW — replaces the "Game already in progress — no empty seat" kick |
+| Join handshake after the payout (`over` variant) | body "The table just wrapped up. Take the spectator rail — when the host deals the next con, you are in it." Single option `👁 WATCH AS A SPECTATOR` | NEW |
+| Guest face picker (`case 'joinface'`) | title "PICK YOUR FACE", body "Every free face at the table. Pick who you are for this con." — options are only the untaken faces | NEW |
+| Spectator phase card (`renderSide`) | `SPECTATING` — "You joined mid-con — the table plays on without you. The chat is open and the record below is the play-by-play." | NEW |
+| Spectator netstrip / win-set card | `👁 SPECTATOR` replaces the seat number; win-set card reads "not playing — just watching" / "the spectacle is the point" | NEW |
+| Engine log lines | `👁 <name> pulls up a chair — spectating the con.` · `🔔 <name> joins the con — dealt in at Quikstop with $15 and 2 Intel.` | NEW |
+| Help modal, "Online play" | gains: "The table plays on: joining **mid-con** deals you in fresh at **Quikstop** — $15 and 2 Intel, the same stake every first turn gets — or you can take the **spectator rail** and just watch." | EXTENDED |
+
+All-bot market events run without the popup — behaviour, not copy (the `🎴 EVENT —` log line and mood-strip swings are unchanged). Automated validation: 155 tests, 154 pass, 1 documented skip, 0 fail (BT-13..BT-16 added).
