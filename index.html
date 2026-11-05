@@ -252,7 +252,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = 'ecf7bdb';
+const BUILD_COMMIT = '40d323b';
 const IS_DISCORD_ACTIVITY = new URLSearchParams(location.search).get('discord') === '1' || location.hostname.endsWith('.discordsays.com') || new URLSearchParams(location.search).has('instance_id');
 if(IS_DISCORD_ACTIVITY)window.__BIGCON_DISCORD_ACTIVITY__=true;
 const $=id=>document.getElementById(id);
@@ -451,7 +451,7 @@ const BASE_NODES=[
 {id:'rock',image:'./static/the rock.gif',name:['THE ROCK','CAN SMELL IT'],icon:'💪',type:'WILD',shape:'photo',income:1,cost:7,x:660,y:450,rot:2,sub:'final boss energy',sp:'Unlocks COOK THE BOOKS ($3): −3 Cortisol. +$1 income per DIFFERENT node type you own.'},
 {id:'brad',image:'./static/brad pitt.png',name:['BRAD PITT','“THE BIG SHORT”'],icon:'😎',type:'WILD',shape:'photo',income:1,cost:5,x:1630,y:1120,rot:-2,sub:'explained it in the movie',sp:'+$2 whenever a BOND event runs (he had it explained to him).'},
 {id:'jt',image:'./static/jt portal.png',name:['JTPORTAL','QUITE FRANKLY'],icon:'🌐',type:'WILD',shape:'photo',income:1,cost:9,x:1150,y:540,rot:-1,sub:'the legend of the board',sp:'+1 Intel each turn AND you are shown the next Market Event at the start of your turn. ONCE PER GAME: cancel a Market Event as it is revealed — “quite frankly, it never happened.”'},
-{id:'made',image:'./static/made logo.png',name:['MADE','(???)'],type:'WILD',shape:'made',income:2,cost:7,x:1000,y:1380,rot:-2,sub:'the purple graphic',sp:'Start of every turn: 33% chance MADE pays out — +$10 and +1 Intel to its owner. Every other player with more than two nodes and at least $50 pays 15% of their cash. No Cortisol is added. Hostile takeovers of MADE stay at list price forever. Nobody knows why. NOBODY.'},
+{id:'made',image:'./static/made logo.png',name:['MADE','(???)'],type:'WILD',shape:'made',income:2,cost:7,x:1000,y:1380,rot:-2,sub:'the purple graphic',sp:'Start of every turn: a chance MADE pays out (33% at 2 seats, falling to 8% at 8) — +$10 and +1 Intel to its owner. Every other player with more than two nodes and at least $50 pays 15% of their cash. No Cortisol is added. Hostile takeovers of MADE stay at list price forever. Nobody knows why. NOBODY.'},
 {id:'asics',image:'./static/running shoe.jpg',name:['THE RUNNING SHOE','ASICS'],icon:'👟',type:'WILD',shape:'photo',income:1,cost:3,x:430,y:1360,rot:3,sub:'circled in red · why is this here',sp:'+1 movement step (you are always jogging). Stand here (once owned) to JOG: free −1 Cortisol.'},
 {id:'toktimer',image:'./static/toktimer.png',name:['TOKTIMER'],icon:'⏱️',type:'WILD',shape:'photo',income:1,cost:5,x:1920,y:1020,rot:-2,sub:'the clock is running',sp:'+1 Intel whenever a Market Event is revealed. Time is information.'}
 ];
@@ -866,6 +866,10 @@ function acccInvestigate(pi){
   +'<p>Randomly redistributed (max one node per rival): '+transferText+'.'+(lost.length?' Remaining nodes return to the market: <b>'+lost.map(esc).join('</b>, <b>')+'</b>.':'')+'</p>'
   +'<p>Fine: <b>$'+moneyFine+'</b> and <b>'+intelFine+' Intel</b> (20% of current balances).</p>');
 }
+/* MADE rolls on every seat's turn, so a flat chance skims big tables far harder: at
+   33%, 8 seats saw 2.7 payouts a round and no seat could hold a high goal. Every
+   table now gets 2/3 of a payout a round, which leaves 2 seats at the old 33%. */
+function madeChance(){return (2/3)/S.players.length}
 /* MADE moves money off the rest of the table, not out of thin air. */
 function madePay(){
  const m=S.owner.made;
@@ -941,14 +945,15 @@ function sysTo(pi,msg){if(Net.role!=='host')return;if(pi===Net.myIdx){if(S&&S.pl
 function askPlayer(pi,opt){return new Promise(res=>{
  if(Net.role!=='host'){modal(opt).then(res);return}
  const def=opt.def!==undefined?opt.def:(opt.options&&opt.options[0]?opt.options[0].v:undefined);
- if(pi===Net.myIdx){modal(opt).then(res);return}
- /* Bot seats answer privately through the policy module — the wire prompt
-    below is for human guests and must never fire for a bot. */
+ /* Bot seats answer privately through the policy module — neither the host's
+    modal (a spectating host's seat is a bot) nor the wire prompt below may fire
+    for a bot. */
  const bp=S&&S.players[pi];
  if(bp&&bp.bot&&window.BigConBots&&window.BigConBots.answerPrompt){
   window.BigConBots.answerPrompt(pi,opt,botAPI()).then(v=>res(v===undefined?def:v));
   return;
  }
+ if(pi===Net.myIdx){modal(opt).then(res);return}
  const c=Net.conns[pi];
  if(!c||!c.open){res(def);return}
  const pid=++Net.promptSeq;
@@ -1157,7 +1162,7 @@ async function startTurn(){
  if(own('school')&&charts>=3)giveIntel(S.cur,1,'the research department delivers');
  const media=NODES.filter(n=>n.type==='MEDIA'&&S.owner[n.id]===S.cur).length;
  if(own('news')&&media>=2)giveIntel(S.cur,1,'you read everything');
- if(S.owner.made!=null&&Math.random()<1/3)madePay();
+ if(S.owner.made!=null&&Math.random()<madeChance())madePay();
  acccInvestigate(S.cur);
  
  const rail=(S.owner.train===S.cur||S.owner.bullet===S.cur)?1:0;
@@ -1792,7 +1797,7 @@ function showRules(){
  +'<p><b>BONDMAGEDDON</b> (Bond Desk, $16 + 4 🛈, once per turn): launch four missiles at the rival with the most CHART holdings. If they own the ESG Pillars, three missiles hit ESG and the fourth hits another random holding.</p>'
  +'<h4>Cortisol &amp; raids</h4><p>Cortisol is capped at 9. At 🔥9 the regulators raid you, and a raid hurts: your <b>two</b> highest-income nodes are seized, every bug you planted is pulled, you pay a fine of $5 or 30% of your cash (whichever is larger), your Intel is burned down to 1, Cortisol resets to 0 and your <b>next turn brings no income and a single step</b>. <b>The whole table sees the raid</b> — it pops up on every screen. The Hedge Fund pays $3 on every raid; the Group Photograph pays 1 🛈 Intel.</p>'
  +'<h4>ACCC concentration</h4><p>Charts are exempt from the six type-based industries; the custom MONETARY POLICY industry also counts the CASH-RATE and INFLATION charts. If you hold <b>more than two</b> properties in the same tracked industry — banking, regulators, corporates, coal, commodities, media, oil, education, JTPortal, Jim Chalmers, Big Bessent, or monetary policy — then at the start of <b>your turn</b> there is a <b>33% chance</b> the regulators investigate: <b>ASIC</b> runs monetary-policy books as <b>market manipulation</b>, the <b>ACCC</b> takes every other industry. You pay a <b>20% fine on both cash and Intel</b>; divested nodes are randomly redistributed to other players (maximum one node per player), with any remainder returned to the market. Owning <b>Mark Watson</b> exempts your holdings in the COAL industry from ACCC monopoly investigations.</p>'
- +'<h4>MADE (???)</h4><p>Nobody knows what the purple graphic is, but it moves money: at the <b>start of every player\'s turn</b> there is a <b>33% chance</b> MADE pays out — <b>+$10 and +1 Intel</b> to its owner. Every other player with <b>more than two nodes and at least $50</b> pays 15% of their cash to the void. Seizing MADE always costs list price — it never inflates after a takeover. You may also force MADE to divest from any rival for <b>5 Intel</b>, paying the former owner <b>$7 compensation</b>.</p>'
+ +'<h4>MADE (???)</h4><p>Nobody knows what the purple graphic is, but it moves money: at the <b>start of every player\'s turn</b> there is a chance MADE pays out (<b>33% at 2 seats, 22% at 3, 17% at 4, 13% at 5, 11% at 6, 10% at 7, 8% at 8</b>) — <b>+$10 and +1 Intel</b> to its owner. Every other player with <b>more than two nodes and at least $50</b> pays 15% of their cash to the void. Seizing MADE always costs list price — it never inflates after a takeover. You may also force MADE to divest from any rival for <b>5 Intel</b>, paying the former owner <b>$7 compensation</b>.</p>'
  +'<h4>🌍 The Geography DLC — the board expands over the water</h4><p>Host-toggled in the lobby (look for <b>ENABLE THE GEOGRAPHY DLC</b>). <b>On: the board deals 82 exhibits.</b> Off: the same 70 exhibits as always.</p>'
  +'<ul><li><b>MISSILE COMMAND ($8) / IRANIAN SHAHED DRONE ($8)</b> — you can own <b>MISSILE COMMAND or the SHAHED DRONE</b>, but not both. Either owned launch site can LAUNCH A MISSILE ($4 + 1 🛈, once per turn): stand on the launcher you own to fire, or own KIM JONG UN to fire from anywhere. An <b>owned node is expropriated with NO payout</b> to its former owner; either way it becomes <b>RUBBLE</b> until rebuilt at list price. The <b>ESG Pillars themselves can be missile-struck</b>. Strike a <b>REGULATOR</b> and an investigation opens — <b>ASIC or the ACCC</b> comes for you on your next turn: a 50/50 indictment, and <b>+1 Cortisol</b> whether it lands or not.</li>'
  +'<li><b>PYONGYANG CITY ($6)</b> — +$1 income per Geography node you own. The capital collects tribute.</li>'

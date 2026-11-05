@@ -462,6 +462,39 @@ Same-day flaw-fix pass — "implement all the remaining flaws" (sweep counter-in
 
 Tests extended to BT-21..BT-26. Full suite: **165 tests, 164 pass, 1 documented skip, 0 fail.**
 
+### Bot race and valuation pass (2026-11-05)
+
+A review of `static/bots.js` found several behaviours that were written but could never run, and tests that passed anyway.
+
+**Features that were dead.** Grudges truncated with `| 0` on read and write, so none of about 51,000 sampled readings ever took effect (BT-24 only passed because the tie went to the seat it expected). Set denial looked for a node of a type its owner was missing, which cannot exist (BT-19 staged that impossible board). Guard duty skipped a rival already holding the full set. The turn-30 gate meant late-game pressure never started in 64% of games.
+
+**The win race.** "Who is winning" is now `raceOf`, an estimate in rounds: the slower of banking the goal and walking to the missing types. It replaces `progressTowardWin`, which read cash alone and fixed dollar margins, and works at any goal. `leaderSeat` sees one-node seats; `strongestSeat` stays the attackable subset. The income horizon (`horizon`) follows the fastest seat and scales with the goal.
+
+**Valuation.** `bookIncome` prices any hypothetical book, so a node's worth is income with it minus income without it, in both buying orders and for nodes already held (BT-29 pins it to the engine's `income()`). Also corrected: MADE's 15% (only rivals of an actual owner pay), ACCC (the single most concentrated group, the whole book plus 20% fines, charged only for what the node changes), raids (what they would actually take), blockades (only what they stop a rival walking to), sweeps (net of the deciding seat's own live bugs) and one Intel price throughout.
+
+**Scaffolding.** Pacing and banter draw from their own streams, so they cannot shift a decision. A prompt now carries out the action that raised it instead of deciding again, which ended spin turns burning all ten loop iterations. A refused action is struck for the turn. **Engine fix:** `askPlayer` checked the host's seat before the bot branch, so a spectating host received their bot's private prompts as popups (BT-38).
+
+**The stall this exposed.** Pricing MADE honestly made it outrank everything: in one 2-seat game, 297 of 298 takeovers were MADE, with both seats at $850 and no set. Two general rules fixed it: a node that keeps swapping is discounted (`B.churn`), and a seat whose cash is covered prefers set pieces to income. Set-break bids are reserved for a whole set with the cash in sight.
+
+**High goals exposed two more problems.** At $400 and 8 seats these changes took the median game from 70 rounds to 251, and the longest to 1,965:
+
+- **The boulder.** A push was priced at its full payout, which doubles without limit, so seats parked on it with up to about $600 quadrillion and no set. A push is now worth only the cash the seat still needs (`pushWorth`).
+- **MADE (rule change).** MADE rolled 33% on every seat's turn, so 8 seats saw 2.7 payouts a round, taking about 30% of each eligible seat's cash a round. Bots now keep MADE owned, which exposed this. `madeChance()` is now `(2/3) / seats`, so every table gets 2/3 of a payout a round: 33% at 2 seats (unchanged), 22% at 3, 17% at 4, 13% at 5, 11% at 6, 10% at 7, 8% at 8. Cash, Intel, the 15% cut and its eligibility are unchanged. This applies to tables with humans too. A rate of 4/3 a round was raced first and left 6-seat $400 games at a median of 284.
+
+All-bot races, `--shuffle`-style rosters, no DLC. "Before" is the previous commit's bots and rules. "After" is the final code, with a 500-round limit (400 for 8 seats at $400):
+
+| Table, goal | Games after | Average rounds before → after | Longest before → after |
+| --- | --- | --- | --- |
+| 2 seats, $100 | 30 | 26.6 → 13.0 | 44 → 21 |
+| 4 seats, $100 | 40 | 27.8 → 17.6 | 54 → 26 |
+| 8 seats, $100 | 25 | 28.9 → 24.8 | 47 → 56 |
+| 4 seats, $300 | 25 | 54.4 → 54.1 | 98 → 101 |
+| 2 seats, $400 | 30 | not raced → 36.9 | not raced → 55 |
+| 4 seats, $400 | 40 | 75.8 → 81.3 | 132 → 183 |
+| 8 seats, $400 | 12 | 71.8 → at least 138.1 | 110 → hit the 400 limit |
+
+**$100 games are shorter at 2 and 4 seats**, because bots finish their sets sooner. That is a pacing change for tables with humans, and it has not been tested against human play. **8-seat $400 games are still a known regression:** the median is 110 rounds against 70 before, and 1 of 12 games hit the 400-round limit. Samples are small and games are not reproducible run to run, because the engine's dice are unseeded once a game is under way. Seizures remain the bulk of seat-turns. Tests extended to BT-27..BT-42. BT-06c's victim now starts inside the Overtourism race gate. Full suite: **184 tests, 183 pass, 1 documented skip, 0 fail.**
+
 ### Log reviewer (2026-11-05)
 
 Adds logs.html: a standalone, dependency-free reviewer for a finished game record. Paste the record, open a .txt/.log, drag a file in, or use the new REVIEW button on the table record panel (it hands the record and the seat palette to the viewer through igcon-record-pending). The viewer detects players from turn headers (with a high-confidence verb fallback for headerless excerpts), colours every name, tags lines into twelve overlapping event buckets, groups the record into turn blocks, and supports player/category filters, plain or regex search with match navigation, turn jumps, line numbers, compact/wrap toggles, copy/download of the visible view, and a compressed #r= share link that keeps the whole record in the URL fragment. Nothing is uploaded.

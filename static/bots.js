@@ -1,5 +1,8 @@
 /*
- * THE BIG CON — bot seat policy (planner + lookahead + exact event EV).
+ * THE BIG CON — bot seat policy: a one-ply greedy planner. Each turn it scores
+ * every reachable standing node, walks to the best, then scores the action menu
+ * from there. There is no search over future turns; event-card EV only informs
+ * rival evaluation and the bury/intervene answers.
  *
  * Loaded as a classic script AFTER the inline game script, so every top-level
  * binding of the engine exists by the time these functions run. The module
@@ -11,8 +14,10 @@
  *
  * Determinism: all policy randomness flows through per-seat xorshift streams
  * seeded at game start (the engine calls BigConBots.resetForGame from
- * initGame), so a seeded game replays identically. Math.random is never read
- * here at decision time.
+ * initGame). Banter has its own per-seat stream and pacing delays their own
+ * generator, so neither can shift a decision: paced and unpaced play make the
+ * same choices from the same seed and board. Math.random is never read here at
+ * decision time.
  *
  * Fairness: the policy reasons over table-visible state only (ownership,
  * positions, cash, intel, cortisol, moods, bugs, discards). Hidden information
@@ -27,12 +32,16 @@
   'use strict';
 
   const B = {
-    enabled: true,
     paceMs: 0,        /* human-ish pacing between intents; 0 under test */
     mode: 'smart',    /* 'smart' | 'random' — random is the uplift control */
-    stats: { turns: 0, intents: 0, answers: 0, replans: 0 },
+    stats: { turns: 0, intents: 0, answers: 0, replans: 0, noops: 0 },
     known: {},        /* seat -> {card, at} — deck knowledge bought fairly */
     streams: {},      /* seat -> xorshift32 state, re-seeded per game */
+    chatStreams: {},  /* seat -> banter stream, separate from the decisions */
+    commit: {},       /* seat -> the action being dispatched, for its prompts */
+    churn: {},        /* node -> recent seat-to-seat swaps, table-visible */
+    boardSeen: null,  /* the ownership map at the last churn check */
+    churnTurn: 0,
     lastChat: {},     /* seat -> last turn this bot said something */
     memory: {},       /* seat -> {grudge:{seat:n}, guard:seat} across turns */
     lastView: {},     /* seat -> {mine:[nid]} — the attribution snapshot */
@@ -49,16 +58,34 @@
   B.pacedTurn = {};    /* per-seat "already beat once this turn" flags */
 
   /* ---------- deterministic randomness ---------- */
-  function r32(pi) {
-    let st = B.streams[pi];
-    if (st === undefined) { st = (B.seed + ((pi + 2) * 0x9E3779B9)) >>> 0 || 1; }
+  function xorshift(st) {
     st ^= st << 13; st >>>= 0;
     st ^= st >>> 17;
     st ^= st << 5; st >>>= 0;
+    return st;
+  }
+  function r32(pi) {
+    let st = B.streams[pi];
+    if (st === undefined) { st = (B.seed + ((pi + 2) * 0x9E3779B9)) >>> 0 || 1; }
+    st = xorshift(st);
     B.streams[pi] = st;
     return st / 4294967296;
   }
-  function botSeed(pi) { B.streams[pi] = ((B.seed + pi * 7919 + B.turnStamp * 104729) >>> 0) || 1; }
+  /* banter draws here so a line of chat can never change what a seat does next */
+  function chat32(pi) {
+    let st = B.chatStreams[pi];
+    if (st === undefined) { st = (B.seed + ((pi + 3) * 0x85EBCA6B)) >>> 0 || 1; }
+    st = xorshift(st);
+    B.chatStreams[pi] = st;
+    return st / 4294967296;
+  }
+  /* delay lengths only: never reads or advances a decision stream */
+  let paceState = 0x2545F491;
+  function pace32() { paceState = xorshift(paceState); return paceState / 4294967296; }
+  function botSeed(pi) {
+    B.streams[pi] = ((B.seed + pi * 7919 + B.turnStamp * 104729) >>> 0) || 1;
+    B.chatStreams[pi] = ((B.seed + pi * 6151 + B.turnStamp * 15485863) >>> 0) || 1;
+  }
   function sleep(ms) {
     if (!ms) return Promise.resolve();
     return new Promise(res => {
@@ -80,7 +107,7 @@
       if (B.pacedTurn[pi]) return Promise.resolve();
       B.pacedTurn[pi] = true;
     }
-    return sleep(B.paceMs + r32(pi) * B.paceMs);
+    return sleep(B.paceMs + pace32() * B.paceMs);
   }
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
@@ -297,14 +324,25 @@
   const W = {
     money: 1,
     intel: 1.1,
-    incomeTurns: 26,       /* $1/turn of income is worth ~26 to the win race */
+    incomeTurns: 26,       /* opening horizon at a $100 goal: a whole game of income */
     fire: 0.55,            /* hazard per cortisol² — ramps hard near 9 */
     setBonus: 24,          /* first node of a missing win type */
     regScarcity: 12,       /* extra premium: only four REGULATORS exist */
     stepNode: 8,           /* movement-power nodes */
-    intelNode: 30,        /* +1🛈 at start of turn */
+    intelNode: 30,         /* +1🛈 at start of turn */
     raidWall: 150,         /* never step into raid range on purpose */
+    minHorizon: 8,         /* income always counts for at least this many rounds */
+    setTurns: 1.6,         /* rounds to walk to and seize one missing type */
+    setCost: 5,            /* typical cash price of one missing type */
+    homeStretch: 4,        /* a seat within this many rounds of winning is a threat */
+    acccHazard: 0.5,       /* 1/3 per turn, and a concentrated book stays exposed */
+    bugLife: 9,            /* rounds a planted bug is assumed to keep paying */
+    blockDelay: 0.35,      /* a wall delays a rival's best target for one rotation */
   };
+  /* the one price of 1 Intel, for every cost and position score in this file */
+  const INTEL = W.intel * 2;
+  /* payouts a round at any table size: mirrors the engine's madeChance() */
+  const MADE_PER_ROUND = 2 / 3;
   function hazardFire(cur) { const c = clamp(cur, 0, 9); return W.fire * c * c; }
 
   /* ================= PER-CHARACTER STRATEGIES =================
@@ -370,13 +408,16 @@
   }
   function vulnerable(v, seat) { return myNodes(v, seat).length >= 2; } /* addCortisol's ≤1-node quirk */
 
-  /* Income projection — a faithful mirror of the engine's income() for the
-     deterministic parts (salary + holdings + synergies + mood), with the MADE
-     1-in-3 gate modeled as expectation. Bug skim is private-timed and ignored. */
-  function projectIncome(v, seat) {
+  /* Income projection — a mirror of the engine's income() for salary, holdings
+     and synergies (pinned by BT-29), over any hypothetical book, so a node's worth
+     is always "income with it minus income without it". The MADE 1-in-3 gate is
+     modeled as expectation; the engine skips MADE's owner when it takes its 15%,
+     and nobody pays while MADE is unowned. Mood is left out because it changes
+     every few turns: see moodIncome. Bug skim is private-timed and ignored. */
+  function bookIncome(v, seat, book) {
     const p = v.players[seat];
-    const own = id => v.owner[id] === seat;
-    const me = myNodes(v, seat);
+    const own = id => book.has(id);
+    const me = Array.from(book);
     const cnt = t => me.filter(id => v.nmap[id] && v.nmap[id].type === t).length;
     let salary = own('infl') ? 4 : 3;
     let holds = 0;
@@ -389,7 +430,7 @@
       holds += inc;
     }
     const corp = cnt('CORPORATE'), bank = cnt('BANK'), chart = cnt('CHART'),
-      comm = cnt('COMMODITY'), reg = cnt('REGULATOR'), med = cnt('MEDIA');
+      comm = cnt('COMMODITY'), reg = cnt('REGULATOR');
     let syn = 0;
     if (own('citi') && corp) syn += corp;
     if (own('commbank') && bank > 1) syn += 2;
@@ -400,47 +441,137 @@
     for (const c of v.country) if (own(c) && own('tenyear')) syn += 1;
     if (own('mpc') && own('school') && own('ib')) syn += 2;
     if (own('stock') && (own('term') || own('fox'))) syn += 1;
-    if (own('notes') && bank) syn += bank; /* dead node — kept for parity */
     if (own('barrels') && own('forklift')) syn += 1;
     if (own('forklift') && comm) syn += comm;
     if (own('market') && own('quik')) syn += 2;
-    if (own('rock')) syn += new Set(me.map(id => v.nmap[id].type)).size;
+    if (own('rock')) syn += new Set(me.filter(id => v.nmap[id]).map(id => v.nmap[id].type)).size;
     if (own('bessent') && bank) syn += bank;
     if (own('chalmers') && reg) syn += reg;
     if (own('watson') && own('coal')) syn += 2;
     if (own('mpc') && chart) syn += chart;
-    if (v.geo && own('geo_pyoncity')) syn += me.filter(id => id.indexOf('geo_') === 0 && id !== 'geo_pyoncity').length;
-    if (v.mood === 'BOOM' && comm > 0) syn += comm;
-    if (v.mood === 'FRENZY' && med > 0) syn += med;
-    if (v.mood === 'PANIC' && bank > 0) syn -= bank;
-    const madeGain = own('made') ? (10 + 4) / 3 : 0;
-    const madeCut = (me.length > 2 && p.money >= 50) ? Math.floor(p.money * 0.15) / 3 : 0;
+    if (v.geo && own('geo_pyoncity')) syn += me.filter(id => id.indexOf('geo_') === 0).length;
+    const madeHolder = own('made') ? seat : (v.owner['made'] === seat ? null : v.owner['made']);
+    const madeGain = own('made') ? (10 + INTEL) * MADE_PER_ROUND : 0;
+    const madeCut = (madeHolder != null && madeHolder !== seat && me.length > 2 && p.money >= 50)
+      ? Math.floor(p.money * 0.15) * MADE_PER_ROUND : 0;
     return salary + holds + syn + madeGain - madeCut;
+  }
+  function bookOf(v, seat) { return new Set(myNodes(v, seat)); }
+  function moodIncome(v, book) {
+    let comm = 0, med = 0, bank = 0;
+    book.forEach(id => {
+      const n = v.nmap[id];
+      if (!n) return;
+      if (n.type === 'COMMODITY') comm++;
+      else if (n.type === 'MEDIA') med++;
+      else if (n.type === 'BANK') bank++;
+    });
+    if (v.mood === 'BOOM') return comm;
+    if (v.mood === 'FRENZY') return med;
+    if (v.mood === 'PANIC') return -bank;
+    return 0;
+  }
+  /* next turn's expected income, current mood included */
+  function projectIncome(v, seat) {
+    const book = bookOf(v, seat);
+    return bookIncome(v, seat, book) + moodIncome(v, book);
+  }
+  /* what holding this node adds per turn, in every direction: it counts a chart
+     bought under TENYEAR as well as TENYEAR itself, and works for a node the seat
+     already owns as well as one it might buy */
+  function marginalIncome(v, seat, nid) {
+    const without = bookOf(v, seat); without.delete(nid);
+    const withIt = new Set(without); withIt.add(nid);
+    return bookIncome(v, seat, withIt) - bookIncome(v, seat, without);
+  }
+
+  /* ================= THE WIN RACE =================
+     winCheck needs the cash AND the whole set, so "who is winning" is an estimate
+     in rounds: the slower of banking the goal (plus what the missing types will
+     cost) and walking to the missing types. Scale-free, so it holds at any goal. */
+  function raceOf(v, seat) {
+    const memo = v._race || (v._race = {});
+    if (memo[seat]) return memo[seat];
+    const p = v.players[seat];
+    const missing = v.missingTypes(seat).length;
+    const inc = Math.max(1, bookIncome(v, seat, bookOf(v, seat)));
+    const cash = Math.max(0, (v.goal || 100) + missing * W.setCost - p.money) / inc;
+    const set = missing * W.setTurns;
+    return (memo[seat] = { eta: Math.max(cash, set), cash, set, missing });
+  }
+  function etaOf(v, seat) { return raceOf(v, seat).eta; }
+  /* A push is only worth the cash the seat still needs. The payout doubles without
+     limit, so pricing it in full parked seats on the boulder with billions and no set. */
+  function pushWorth(v, seat) {
+    const needed = (v.goal || 100) + v.missingTypes(seat).length * W.setCost - v.players[seat].money;
+    return clamp(needed, 0, v.sisyPayout || 10);
+  }
+  function gameLength(v) { return W.incomeTurns * Math.pow((v.goal || 100) / 100, 0.6); }
+  /* 0 = nowhere near winning, 1 = winning now */
+  function closeness(v, seat) { return clamp(1 - etaOf(v, seat) / gameLength(v), 0, 1); }
+  function isHomeStretch(v, seat) { return etaOf(v, seat) <= W.homeStretch; }
+  /* How many more rounds of income a node can expect: the game lasts until the
+     fastest seat finishes, so this shrinks as anyone closes in on the win. */
+  function horizon(v) {
+    if (v._horizon !== undefined) return v._horizon;
+    let fastest = Infinity;
+    for (let i = 0; i < v.players.length; i++) fastest = Math.min(fastest, etaOf(v, i));
+    return (v._horizon = clamp(fastest + 2, W.minHorizon, gameLength(v)));
+  }
+  /* The rival closest to winning, whether or not they can currently be attacked:
+     a one-node seat is immune to Cortisol but can still bank. */
+  function leaderSeat(v, exclude) {
+    let top = -1, topEta = Infinity;
+    for (let i = 0; i < v.players.length; i++) {
+      if (i === exclude) continue;
+      const eta = etaOf(v, i);
+      if (eta < topEta || (eta === topEta && top >= 0 && v.players[i].money > v.players[top].money)) { topEta = eta; top = i; }
+    }
+    return top;
+  }
+  /* the same, among seats that Cortisol can actually touch */
+  function strongestSeat(v, exclude) {
+    let top = -1, topEta = Infinity;
+    for (let i = 0; i < v.players.length; i++) {
+      if (i === exclude || !vulnerable(v, i)) continue;
+      const eta = etaOf(v, i);
+      if (eta < topEta || (eta === topEta && top >= 0 && v.players[i].money > v.players[top].money)) { topEta = eta; top = i; }
+    }
+    return top;
   }
 
   function evalSeat(v, seat) {
     const p = v.players[seat];
-    const inc = projectIncome(v, seat);
+    const book = bookOf(v, seat);
+    const inc = bookIncome(v, seat, book);
     const missing = v.missingTypes(seat);
     let setB = 0;
     for (const t of missing) setB += (t === 'REGULATOR' ? W.setBonus + W.regScarcity : W.setBonus) * 0.22;
     const deck = deckEV(v, seat);
     return {
-      score: p.money * W.money + inc * W.incomeTurns - fireOf(v, seat, p.cortisol)
-        + setB + p.intel * W.intel * 4 + deck.money * 3 - deck.fire * 6,
+      score: p.money * W.money + inc * horizon(v) + moodIncome(v, book) - fireOf(v, seat, p.cortisol)
+        + setB + p.intel * INTEL + deck.money * 3 - deck.fire * 6,
       income: inc, missing,
     };
   }
-  function progressTowardWin(v, seat) { return v.players[seat].money - v.goal * 0.9; }
-  function strongestSeat(v, exclude) {
-    let top = -1, topSc = -Infinity;
-    for (let i = 0; i < v.players.length; i++) {
-      if (i === exclude || !vulnerable(v, i)) continue;
-      const s = evalSeat(v, i).score;
-      if (s > topSc) { topSc = s; top = i; }
+
+  /* What a raid actually costs its victim: the two highest-income nodes, 30% of
+     the cash (minimum $5), every Intel but one, and the next turn's income. */
+  function raidValue(v, victim) {
+    const p = v.players[victim];
+    const owned = myNodes(v, victim).map(id => v.nmap[id]).filter(Boolean)
+      .sort((a, b) => b.income - a.income || b.cost - a.cost);
+    let assets = 0;
+    for (const n of owned.slice(0, 2)) {
+      assets += marginalIncome(v, victim, n.id) * horizon(v);
+      if (typeCount(v, victim, n.type) === 1) assets += setPieceValue(n.type);
     }
-    return top;
+    const fine = Math.max(5, Math.floor(p.money * 0.3));
+    const burned = Math.max(0, p.intel - 1) * INTEL;
+    return assets + Math.min(p.money, fine) * W.money + burned + bookIncome(v, victim, bookOf(v, victim));
   }
+  function typeCount(v, seat, type) { return myNodes(v, seat).filter(id => v.nmap[id] && v.nmap[id].type === type).length; }
+  function setPieceValue(type) { return type === 'REGULATOR' ? W.setBonus + W.regScarcity : W.setBonus; }
 
   /* ================= MOVEMENT PLANNING ================= */
   function buildAdj(v) {
@@ -493,67 +624,59 @@
   }
 
   /* ================= NODE & SEIZURE VALUE ================= */
-  /* ACCC/ASIC concentration, mirrored from the engine's INDUSTRIES table.
-     The engine investigates any industry where a seat holds MORE THAN TWO
-     nodes (33% chance: forced divestment of the lot). The view carries the
-     industry groups as id lists (botView.industryIds). */
-  function industryCounts(v, seat, extraNid) {
-    const counts = {};
-    if (!v.industryIds) return counts;
-    const owned = {};
-    for (const id in v.owner) if (v.owner[id] === seat) owned[id] = true;
-    if (extraNid && v.nmap[extraNid]) owned[extraNid] = true;
+  /* ACCC/ASIC concentration, mirrored from acccInvestigate. Each turn with any
+     tracked industry past two nodes carries a 1-in-3 chance of an investigation,
+     which hits only the single most concentrated group (Watson exempts coal):
+     the whole group is divested and 20% of the cash and Intel is fined. So the
+     exposure is the loss from that one group, however many others qualify. The
+     view carries the groups as id lists (botView.industryIds). */
+  function acccLoss(v, seat, book) {
+    if (!v.industryIds) return 0;
+    let hitCount = 0, hitBook = 0;
+    const H = horizon(v);
     for (const g of v.industryIds) {
-      let n = 0;
-      for (const id of g.ids) if (owned[id]) n++;
-      if (n > 2) counts[g.id] = n;
+      if (g.id === 'coal' && book.has('watson')) continue;
+      const held = g.ids.filter(id => book.has(id));
+      if (held.length <= 2) continue;
+      const worth = held.reduce((sum, id) => sum + (v.nmap[id] ? v.nmap[id].income * H : 0), 0);
+      if (held.length > hitCount || (held.length === hitCount && worth > hitBook)) { hitCount = held.length; hitBook = worth; }
     }
-    return counts;
+    if (!hitCount) return 0;
+    const p = v.players[seat];
+    return hitBook + Math.floor(p.money * 0.2) * W.money + Math.floor(p.intel * 0.2) * INTEL;
   }
-  function penaltyOf(n) { return 9 * (n - 2) + (n > 3 ? 26 * (n - 3) : 0); }
-  function acccExposure(v, seat, extraNid) {
-    const counts = industryCounts(v, seat, extraNid);
-    let pen = 0;
+  /* only what THIS node changes: a deal outside the exposed group costs nothing
+     extra, and picking up Watson over a stacked coal book comes out as a saving */
+  function acccExposure(v, seat, nid) {
+    const without = bookOf(v, seat); without.delete(nid);
+    const withIt = new Set(without); withIt.add(nid);
     const tol = strOf(v, seat).accc; /* personalities differ on risk tolerance */
-    for (const id in counts) {
-      if (id === 'coal' && v.owner['watson'] === seat) continue; /* the watson exemption */
-      pen += penaltyOf(counts[id]) * tol;
-    }
-    return pen;
+    return (acccLoss(v, seat, withIt) - acccLoss(v, seat, without)) * W.acccHazard * tol;
   }
   function nodeOwnValue(v, seat, nid) {
     const n = v.nmap[nid];
     if (!n) return 0;
-    const mine = myNodes(v, seat);
-    const cnt = ty => mine.concat([nid]).filter(id => v.nmap[id] && v.nmap[id].type === ty).length;
-    let v2 = n.income * W.incomeTurns;
-    const own = id => v.owner[id] === seat || id === nid;
-    let syn = 0;
-    if (nid === 'citi') syn += cnt('CORPORATE');
-    if (nid === 'commbank' && cnt('BANK') > 1) syn += 2;
-    if (nid === 'westpac') syn += cnt('REGULATOR');
-    if (nid === 'anz') syn += cnt('CHART');
-    if (nid === 'bhp' && own('train')) syn += 1;
-    if (nid === 'tenyear' && cnt('CHART') > 1) syn += 3 * (cnt('CHART') - 1);
-    if (nid === 'rock') syn += new Set(mine.map(id => v.nmap[id].type).concat([n.type])).size - 1;
-    if (nid === 'bessent') syn += cnt('BANK');
-    if (nid === 'chalmers') syn += cnt('REGULATOR');
-    if (nid === 'watson' && own('coal')) syn += 2;
-    if (nid === 'mpc') syn += cnt('CHART');
-    if (nid === 'barrels' && own('forklift')) syn += 1;
-    if (nid === 'forklift') syn += cnt('COMMODITY');
-    if (nid === 'market' && own('quik')) syn += 2;
-    v2 += syn * W.incomeTurns;
-    if (['coal', 'train', 'bullet', 'asics'].indexOf(nid) >= 0) v2 += W.stepNode * W.incomeTurns * 0.25;
-    if (['whistle', 'bullock', 'jt', 'mpc', 'geo_kim'].indexOf(nid) >= 0) v2 += W.intelNode;
+    const H = horizon(v);
+    const cnt = ty => {
+      const book = bookOf(v, seat); book.add(nid);
+      let c = 0;
+      book.forEach(id => { if (v.nmap[id] && v.nmap[id].type === ty) c++; });
+      return c;
+    };
+    /* once the cash is covered, only the set stands between this seat and the win:
+       more income buys nothing and the next missing type is everything */
+    const race = raceOf(v, seat);
+    const setBound = race.missing > 0 && race.cash <= race.set;
+    let v2 = marginalIncome(v, seat, nid) * H * (setBound ? 0.3 : 1);
+    if (['coal', 'train', 'bullet', 'asics'].indexOf(nid) >= 0) v2 += W.stepNode * H * 0.25;
+    if (['whistle', 'bullock', 'jt', 'mpc', 'geo_kim'].indexOf(nid) >= 0) v2 += W.intelNode * H / W.incomeTurns;
     const t = n.type;
     /* the win set: a node of a still-missing type IS the race — the con only
        pays out with all types held. The closer to the full set, the hungrier:
        the last two missing types are worth more than any income math. */
     const missing = v.missingTypes(seat);
     if (missing.indexOf(t) >= 0) {
-      v2 += (t === 'REGULATOR' ? W.setBonus + W.regScarcity : W.setBonus)
-        + (missing.length <= 2 ? 42 : missing.length === 3 ? 18 : 0);
+      v2 += setPieceValue(t) + ((missing.length <= 2 || setBound) ? 42 : missing.length === 3 ? 18 : 0);
     }
     /* the character's own plan: loved nodes and loved industries pay a premium
        (also read for rival seats — it measures what the node means to THEM).
@@ -567,14 +690,7 @@
     if (str.nodes.indexOf(nid) >= 0) v2 = v2 * damp(str.nodeBoost) + 8;
     else if (str.types.indexOf(t) >= 0) v2 = v2 * damp(str.typeBoost);
     if (dupType) v2 -= 8; /* income only — it does not move the win set */
-    /* ACCC exposure: a third holding in one tracked INDUSTRIES group invites
-       the 33% divestment — the more nodes past two, the worse the books look.
-       The Mark Watson face exempts COAL entirely; holding watson shields it. */
     v2 -= acccExposure(v, seat, nid);
-    if (nid === 'watson' && v.owner['watson'] !== seat) {
-      const coal = industryCounts(v, seat, null).coal;
-      if (coal > 2) v2 += penaltyOf(coal) * 0.8; /* the shield itself has value */
-    }
     /* cooling nodes are fire extinguishers — worth more the hotter the seat
        runs (gold cools passively every income phase) */
     const relief = nid === 'gold' ? 2 : (nid === 'rock' || nid === 'asics') ? 3 : (nid === 'geo_wonsan' || nid === 'geo_venice') ? 2 : 0;
@@ -611,22 +727,28 @@
       val -= (cost - base) * W.money;
       if (v.owner['accc'] === prev) val -= 2;
       val -= base * 0.4;                            /* their refund funds their race */
-      val += nodeOwnValue(v, prev, nid) * 0.5;      /* denial: what it hurts them */
-      /* set denial: taking a node a near-complete rival still NEEDS outranks
-         the income math — one node now or they finish the set and bank */
-      const theirMissing = v.missingTypes(prev);
-      if (theirMissing.length && theirMissing.indexOf(n.type) >= 0) {
-        val += theirMissing.length === 1 ? 70 : 34;
+      const denial = nodeOwnValue(v, prev, nid) * 0.5; /* what it hurts them */
+      val += denial;
+      /* a node that keeps changing hands will not stay taken: neither the holding
+         nor the denial lasts, and every swap costs Cortisol. Without this two
+         seats can swap one prize forever and never build a set. */
+      const swaps = B.churn[nid] || 0;
+      if (swaps) val -= (Math.max(0, nodeOwnValue(v, seat, nid)) + Math.max(0, denial)) * (1 - 1 / (1 + swaps));
+      /* set break: a rival's ONLY node of a type reopens their set when taken.
+         (A node they own is never of a type they are missing, so this is the only
+         set denial a takeover can do.) It is reserved for a whole set with the
+         cash in sight: bidding it up any earlier stalled games for 1000+ rounds. */
+      if (typeCount(v, prev, n.type) === 1 && v.missingTypes(prev).length === 0
+        && raceOf(v, prev).cash <= W.homeStretch * 1.5) {
+        val += 70 * closeness(v, prev);
       }
-      /* raid-window victims: pushing them to 9 hands their book to the table */
-      if (p.cortisol + cort >= 9) val += 60;
     }
     /* intel cover spends armory intel — price it */
-    if (p.money < cost) val -= (cost - p.money) * W.intel * 2 + 2;
+    if (p.money < cost) val -= (cost - p.money) * INTEL + 2;
     /* the dossier prelude: taking at list beats paying the doubling */
     if (isTake && !v.dossier && !v.flatSeize(nid) && p.intel >= 3) {
       const saved = cost - base;
-      if (saved >= 3) val += saved * W.money - 3 * W.intel * 2 + 4;
+      if (saved >= 3) val += saved * W.money - 3 * INTEL + 4;
     }
     return { kind: 'seize', nid, cost, base, isTake, val };
   }
@@ -639,43 +761,68 @@
 
   /* ================= CROSS-TURN MEMORY =================
      The wire does not attribute a leak or a raid, but it does show ownership.
-     So a node that was mine last turn and is a rival's now WAS taken by that
-     rival — the one attributable attack, and it is remembered. A rival one
-     missing type from the win is put on guard duty until they are stopped. */
+     So a node that was mine at the end of my last turn and is a rival's now WAS
+     taken by that rival — the one attributable attack, and it is remembered. The
+     rival closest to winning, once they hold all but one type at most, is put on
+     guard duty until they are stopped. */
   function updateMemory(v, pi) {
     const mem = B.memory[pi] || (B.memory[pi] = { grudge: {}, guard: null });
     const prev = B.lastView[pi];
     if (prev) {
-      const stolen = [];
-      for (const nid of prev.mine) {
-        const o = v.owner[nid];
-        if (o != null && o !== pi) stolen.push(o);
-      }
-      /* ACCC divestment moves several nodes to different rivals at once —
-         that is the regulator, not a heist. Only a single takeover stings. */
-      if (stolen.length === 1) mem.grudge[stolen[0]] = (mem.grudge[stolen[0]] | 0) + 1;
       for (const k in mem.grudge) {
         mem.grudge[k] *= 0.85;
         if (mem.grudge[k] < 0.05) delete mem.grudge[k];
       }
+      /* An ACCC divestment empties a whole group of three or more at once and
+         hands the pieces out: that is the regulator, not a heist. */
+      const divested = {};
+      for (const g of (v.industryIds || [])) {
+        const had = g.ids.filter(id => prev.mine.indexOf(id) >= 0);
+        if (had.length > 2 && !had.some(id => v.owner[id] === pi)) for (const id of had) divested[id] = true;
+      }
+      for (const nid of prev.mine) {
+        const o = v.owner[nid];
+        if (o != null && o !== pi && !divested[nid]) mem.grudge[o] = (mem.grudge[o] || 0) + 1;
+      }
     }
     mem.guard = null;
+    let guardEta = Infinity;
     for (let i = 0; i < v.players.length; i++) {
       if (i === pi) continue;
-      const miss = v.missingTypes(i);
-      if (miss.length === 1 && v.players[i].money >= v.goal * 0.5) { mem.guard = i; break; }
+      const race = raceOf(v, i);
+      if (race.missing > 1) continue;
+      if (v.players[i].money < (v.goal || 100) * 0.5 && race.eta > W.homeStretch) continue;
+      if (race.eta < guardEta) { guardEta = race.eta; mem.guard = i; }
     }
     B.lastView[pi] = { mine: myNodes(v, pi) };
   }
+  /* Table-visible ownership history: how recently each node went from one seat
+     straight to another, fading by a fifth per round. */
+  function noteChurn(v) {
+    if (B.churnTurn !== v.turn) {
+      B.churnTurn = v.turn;
+      for (const id in B.churn) {
+        B.churn[id] *= 0.8;
+        if (B.churn[id] < 0.05) delete B.churn[id];
+      }
+    }
+    const seen = B.boardSeen || {};
+    for (const id in v.owner) {
+      const now = v.owner[id];
+      if (seen[id] != null && now != null && seen[id] !== now) B.churn[id] = (B.churn[id] || 0) + 1;
+    }
+    B.boardSeen = Object.assign({}, v.owner);
+  }
   function grudgeOf(pi, victim) {
     const mem = B.memory[pi];
-    return mem && mem.grudge ? (mem.grudge[victim] | 0) : 0;
+    return mem && mem.grudge ? (mem.grudge[victim] || 0) : 0;
   }
 
   async function takeTurn(pi, view, api) {
     B.stats.turns++;
     B.turnStamp = view.turn;
     botSeed(pi);
+    noteChurn(view);
     updateMemory(view, pi);
     B.pacedTurn[pi] = false; /* the throttle beat refreshes each turn */
     try {
@@ -697,14 +844,23 @@
       /* ---- action phase ---- */
       let v = api.viewOf(pi);
       let guard = 0;
+      const refused = {};
       while (v && !v.over && v.curSeat === pi && v.phase === 'action' && guard < 10) {
-        const pick = B.mode === 'random' ? pickRandomAction(v, pi) : pickAction(v, pi);
+        const pick = B.mode === 'random' ? pickRandomAction(v, pi, refused) : pickAction(v, pi, refused);
         if (!pick) break;
+        const before = actionPrint(v, pi);
         await dispatchAction(v, pi, pick, api);
         guard++;
         v = api.viewOf(pi);
         /* most actions ended the turn inside the engine (phase left 'action');
-           free ops (spy/dossier) come back with the phase still ours — repick */
+           free ops (spy/dossier) come back with the phase still ours — repick.
+           A pick that changed nothing was refused: strike it for this turn and
+           drop any half-open targeting mode, so the next best action gets a go. */
+        if (v && !v.over && v.curSeat === pi && v.phase === 'action' && actionPrint(v, pi) === before) {
+          refused[pick.kind] = true;
+          B.stats.noops++;
+          if (v.mode) { await tryIntent(api, pi, { act: 'cancel' }); v = api.viewOf(pi); }
+        }
       }
       /* last-chance pass so a drifted decision can never hang the table */
       const fv = api.viewOf(pi);
@@ -715,10 +871,18 @@
           await tryIntent(api, pi, { act: 'laylow', choice: av.players[pi].cortisol >= 4 ? 'cool' : 'cash' });
         }
       }
+      /* the attribution snapshot closes the turn, so a node bought just now is
+         on the books if a rival takes it before my next turn */
+      const end = api.viewOf(pi);
+      if (end) B.lastView[pi] = { mine: myNodes(end, pi) };
     } catch (err) {
       /* the engine's runBotTurn wrapper owns the quiet fallback */
       throw err;
     }
+  }
+  /* everything a successful action could have changed, for spotting a refusal */
+  function actionPrint(v, pi) {
+    return JSON.stringify([v.phase, v.mode, v.steps, v.spun, v.dossier, v.owner, v.bugs, v.players[pi]]);
   }
 
   function computeBudgets(v, pi) {
@@ -735,9 +899,9 @@
     const budgets = computeBudgets(v, pi);
     let best = { val: -Infinity, rec: null, flyTo: null, variant: null };
     const variants = [{ budget: budgets.steps, cost: 0, useFavor: false, useSlip: false }];
-    if (budgets.favor && budgets.steps < 9) variants.push({ budget: budgets.steps + 1, cost: W.intel * 4, useFavor: true, useSlip: false });
+    if (budgets.favor && budgets.steps < 9) variants.push({ budget: budgets.steps + 1, cost: INTEL, useFavor: true, useSlip: false });
     if (budgets.slip) variants.push({ budget: budgets.steps + 2, cost: 2 * W.money, useFavor: false, useSlip: true });
-    if (budgets.favor && budgets.slip && budgets.steps < 8) variants.push({ budget: budgets.steps + 3, cost: W.intel * 4 + 2 * W.money, useFavor: true, useSlip: true });
+    if (budgets.favor && budgets.slip && budgets.steps < 8) variants.push({ budget: budgets.steps + 3, cost: INTEL + 2 * W.money, useFavor: true, useSlip: true });
     for (const variant of variants) {
       const reach = planGraph(v, pi, variant.budget);
       for (const nid in reach) {
@@ -749,7 +913,7 @@
            their race — the walk costs more than its number */
         for (const hop of (rec.path || [])) {
           const o = v.owner[hop];
-          if (o != null && o !== pi && progressTowardWin(v, o) > -14) val -= 2.5;
+          if (o != null && o !== pi && etaOf(v, o) <= W.homeStretch + 1) val -= 2.5;
         }
         if (rec.hops > 0) val += 0.3; /* a gentle bias to actually move */
         if (val > best.val) best = { val, rec, flyTo: null, variant };
@@ -788,7 +952,7 @@
     const seize = seizeCandidate(v, pi, nid);
     if (seize) val += seize.val;
     if (v.owner[nid] === pi) {
-      if (nid === 'sisy') val += (v.sisyPayout || 10) * W.money * strOf(v, pi).cash;
+      if (nid === 'sisy') val += pushWorth(v, pi) * W.money * strOf(v, pi).cash;
       /* standing on a cooling node while hot — the relief is free once there */
       if (nid === 'asics' && me.cortisol >= 2) val += (fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 1)) * 1.5;
       if (v.geo && nid === 'geo_wonsan' && me.cortisol >= 3) val += (fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 2)) * 1.5;
@@ -796,7 +960,7 @@
       if (nid === 'rock' && me.cortisol >= 4 && !v.cooked) val += fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 3);
     }
     /* the cash rush walks to the boulder: $4 to own, then pushes double forever */
-    if (nid === 'sisy' && v.owner[nid] == null && me.money >= v.goal * 0.72 && v.turn >= 30) val += 14;
+    if (nid === 'sisy' && v.owner[nid] == null && isCashRushing(v, pi)) val += 14;
     /* positioning support: stand where a bug or a missile becomes available */
     if (me.intel >= 1) {
       const A = buildAdj(v);
@@ -857,8 +1021,8 @@
   }
 
   /* ================= TABLE BANTER =================
-     One line at most per turn, ~7% of turns plus rare event reactions — dry,
-     state-driven, drawn from the same deterministic stream as the play. */
+     One line at most per turn, about two lines per round across the table, plus
+     rare event reactions — dry, state-driven, from each seat's own banter stream. */
   const CHAT = {
     flavor: [
       'quite frankly, this board is a scam and I am the scam',
@@ -940,7 +1104,7 @@
   };
   function pickLine(v, pi, bucket) {
     const arr = CHAT[bucket];
-    return arr[Math.floor(r32(pi) * arr.length)];
+    return arr[Math.floor(chat32(pi) * arr.length)];
   }
 
   /* ================= LOBBY CHATTER =================
@@ -1038,7 +1202,7 @@
     /* voluntary lines: the table runs about two lines per turn total, split
        across the seats, after a short quiet gap — chatty but never spammy */
     const rate = 1.7 / Math.max(2, v.players.length);
-    if (gap < 2 || r32(pi) >= rate) return;
+    if (gap < 2 || chat32(pi) >= rate) return;
     let bucket = 'flavor';
     const mem = B.memory[pi];
     const grudges = mem && mem.grudge ? mem.grudge : {};
@@ -1047,10 +1211,10 @@
     else if (gMax >= 2) bucket = 'grudge';
     else if (p.money < 5) bucket = 'broke';
     else if (p.money >= v.goal * 0.8) bucket = 'rich';
-    else if (strongestSeat(v, pi) >= 0 && evalSeat(v, pi).score > evalSeat(v, strongestSeat(v, pi)).score + 60) bucket = 'taunt';
+    else if (leaderSeat(v, pi) >= 0 && evalSeat(v, pi).score > evalSeat(v, leaderSeat(v, pi)).score + 60) bucket = 'taunt';
     else if (v.mood === 'PANIC') bucket = 'panic';
     else if (v.mood === 'FRENZY') bucket = 'hype';
-    if (bucket === 'flavor' && r32(pi) < 0.6) bucket = 'bs';
+    if (bucket === 'flavor' && chat32(pi) < 0.6) bucket = 'bs';
     B.lastChat[pi] = v.turn;
     api.chat(pi, pickLine(v, pi, bucket));
   }
@@ -1060,17 +1224,15 @@
   function victimValue(v, me, victim, fire) {
     if (!vulnerable(v, victim)) return -2; /* the ≤1-node immunity eats it */
     const p = v.players[victim];
+    const near = isHomeStretch(v, victim) ? 1.6 : 1;
     let val;
-    if (p.cortisol + fire >= 9) val = 120; /* pushes them into the raid */
-    else {
-      const near = progressTowardWin(v, victim) > -12 ? 1.6 : 1;
-      val = (hazardFire(p.cortisol + fire) - hazardFire(p.cortisol)) * near * 2.2;
-    }
+    if (p.cortisol + fire >= 9) val = raidValue(v, victim) * 0.7 * near; /* pushes them into the raid */
+    else val = (hazardFire(p.cortisol + fire) - hazardFire(p.cortisol)) * near * 2.2;
     /* humans over bots — scaled by how close the human is to the win, so a
        losing human is not bullied over a bot about to bank. The bot flag
        rides on every view row, so this is table-visible info. */
     if (!p.bot) {
-      const prog = clamp((p.money || 0) / (v.goal || 100), 0, 1);
+      const prog = closeness(v, victim);
       val = val * (1.12 + 0.5 * prog) + 4 + 4 * prog;
     }
     /* grudges (attributable takeovers) and set-threat guards */
@@ -1090,24 +1252,34 @@
     return best;
   }
 
-  function pickAction(v, pi) {
+  /* a seat that holds the whole set and is only waiting on the money stops
+     scheming and chases cash; with types still missing it keeps buying the set */
+  function isCashRushing(v, pi) {
+    const race = raceOf(v, pi);
+    return race.missing === 0 && race.cash <= W.homeStretch * 1.5;
+  }
+
+  function pickAction(v, pi, refused) {
     const me = v.players[pi];
     const list = [];
     /* ---- convergence pressure: the con has to END ----
        A game only finishes when a seat holds cash >= goal AND the full set of
-       node types. So past the mid-game the whole table ramps hostility (+2%/turn),
-       a rival inside the home stretch is hunted 1.7x harder, and a seat in its
-       own home stretch chases raw cash — sisyphus pushes and intel sales — over
-       vanity buys (spending down delays the win). Gated at turn 30 so staged
-       micro-rigs and opening books stay deterministic and calm. */
-    const late = v.turn >= 30;
-    const nearGoal = late && me.money >= v.goal * 0.72;
-    const leader = strongestSeat(v, pi);
-    const leaderNear = late && leader >= 0 && v.players[leader].money >= v.goal * 0.75;
-    const homeStretch = v.players.filter((pl, i) => i !== pi && progressTowardWin(v, i) > -12).length;
+       node types. So a game running long ramps hostility (+2%/round), a rival
+       inside the home stretch is hunted 1.7x harder, and a seat in its own cash
+       rush takes sisyphus pushes and intel sales over vanity buys (spending down
+       delays the win). All of it reads the race estimate, not the turn number. */
+    const nearGoal = isCashRushing(v, pi);
+    const leader = leaderSeat(v, pi);
+    const leaderNear = leader >= 0 && isHomeStretch(v, leader);
+    const homeStretch = v.players.filter((pl, i) => i !== pi && isHomeStretch(v, i)).length;
     const str = strOf(v, pi);
-    const ramp = late ? 1 + Math.max(0, v.turn - 45) * 0.02 : 1;
-    const urg = str.aggr * ramp * (leaderNear ? 1.7 : 1) * (nearGoal ? 0.6 : 1);
+    const ramp = 1 + Math.max(0, v.turn - gameLength(v) * 1.7) * 0.02;
+    /* a seat close to the money spends its turns finishing, not scheming, whether
+       what is left is cash or set pieces; only a whole set turns that into a cash
+       rush. Without this, every seat near the goal fights every other and the con
+       can run for hundreds of rounds. */
+    const finishing = raceOf(v, pi).cash <= W.homeStretch * 1.5;
+    const urg = str.aggr * ramp * (leaderNear ? 1.7 : 1) * (finishing ? 0.6 : 1);
     const cashRush = str.cash * (nearGoal ? 2.2 : 1);
     const sz = seizeCandidate(v, pi, me.pos);
     if (sz) list.push(sz);
@@ -1126,33 +1298,48 @@
     else if (me.intel >= 6) list.push({ kind: 'sell', n: Math.min(6, me.intel), val: rate * Math.min(6, me.intel) * 0.72 });
     /* bought knowledge (spy) — once per turn while it is still unknown */
     if (me.intel >= 2 && !knowledge(v)) list.push({ kind: 'spy', val: 2.4, continuing: true });
-    /* counter-intelligence: rival bugs sitting on MY nodes are a rival income
-       stream — sweeping them is the office being cleaned (see the engine's
-       "remove every bug on your nodes" contract) */
+    /* counter-intelligence: a sweep clears rival bugs off MY nodes, ending that
+       skim, but also pulls every bug I planted — and those pay while the node is
+       someone else's. Both sides of that go on the scale. */
     if (me.intel >= 2) {
-      let rivalBugs = 0;
-      for (const id of myNodes(v, pi)) if (v.bugs[id] != null && v.bugs[id] !== pi) rivalBugs++;
-      if (rivalBugs) list.push({ kind: 'sweep', val: rivalBugs * 20 * W.money - 2 * W.intel * 2 });
+      const bugRounds = Math.min(W.bugLife, horizon(v));
+      let rivalBugs = 0, rivalSkim = 0, ownSkim = 0;
+      for (const id in v.bugs) {
+        const planter = v.bugs[id];
+        if (v.owner[id] === pi && planter !== pi) {
+          rivalBugs++;
+          rivalSkim += (v.owner['wef'] === planter ? 2 : 1) * bugRounds;
+        } else if (planter === pi && v.owner[id] !== pi) {
+          ownSkim += (v.owner['wef'] === pi ? 2 : 1) * bugRounds;
+        }
+      }
+      if (rivalBugs) list.push({ kind: 'sweep', val: (rivalSkim - ownSkim) * W.money - 2 * INTEL });
     }
     /* attacks — only at victims the cortisol quirk lets us touch; the target
        is the best-valued victim, humans over bots (see victimValue) */
     if (victimsOf(v, pi).length) {
       const top = bestVictim(v, pi, 2);
       if (top >= 0) {
-        if (me.intel >= 2) list.push({ kind: 'leak', target: top, val: victimValue(v, pi, top, 2) - 2 * W.intel * 2 });
+        if (me.intel >= 2) list.push({ kind: 'leak', target: top, val: victimValue(v, pi, top, 2) - 2 * INTEL });
         if (v.owner['asic'] === pi && me.money >= 4 && !v.audited) {
           list.push({ kind: 'audit', target: top, val: victimValue(v, pi, top, 1) - 4 * W.money });
         }
         const tv = v.players[top];
         if (v.owner['trump'] === pi && me.money >= 2 && tv.intel >= 4) {
           const loss = Math.min(tv.intel, Math.max(3, Math.ceil(tv.intel * 0.5)));
-          list.push({ kind: 'tweet', target: top, val: loss * W.intel * 2 - 2 * W.money });
+          list.push({ kind: 'tweet', target: top, val: loss * INTEL - 2 * W.money });
         }
         const spinKind = v.owner['fox'] === pi ? 'fox' : (v.owner['press'] === pi ? 'press' : null);
         if (spinKind && !v.spun && me.money >= (spinKind === 'fox' ? 2 : 3)) {
           list.push({ kind: 'roast', target: top, val: victimValue(v, pi, top, 1) - (spinKind === 'fox' ? 2 : 3) * W.money });
         }
       }
+    }
+    /* the other half of a spin: friendly coverage for my own head */
+    const coolKind = v.owner['fox'] === pi ? 'fox' : (v.owner['press'] === pi ? 'press' : null);
+    if (coolKind && !v.spun && me.cortisol >= 3 && me.money >= (coolKind === 'fox' ? 2 : 3)) {
+      const relief = coolKind === 'fox' ? 3 : 2;
+      list.push({ kind: 'spincool', val: (fireOf(v, pi, me.cortisol) - fireOf(v, pi, Math.max(0, me.cortisol - relief))) * coolNeed - (coolKind === 'fox' ? 2 : 3) * W.money });
     }
     if (v.owner['rock'] === pi && me.cortisol >= 3 && me.money >= 3 && !v.cooked) {
       list.push({ kind: 'cook', val: (fireOf(v, pi, me.cortisol) - fireOf(v, pi, me.cortisol - 3) - 3 * W.money) * 1.5 });
@@ -1172,13 +1359,13 @@
       list.push({ kind: 'budget', val: (v.players.length - 1) * W.money + 6 - 3 * W.money });
     }
     if (me.pos === 'sisy' && v.owner['sisy'] === pi) {
-      list.push({ kind: 'push', val: (v.sisyPayout || 10) * W.money });
+      list.push({ kind: 'push', val: pushWorth(v, pi) * W.money });
     }
     if (me.intel >= 5 && me.cortisol <= 2 && v.players.some((pl, i) => i !== pi && pl.cortisol >= 6 && vulnerable(v, i))) {
       list.push({ kind: 'masspanic', val: (v.players.length - 1) * 6 });
     }
     if (me.intel >= 5 && me.money >= 7 && v.owner['made'] != null && v.owner['made'] !== pi) {
-      list.push({ kind: 'divestmade', val: progressTowardWin(v, v.owner['made']) > 0 ? 12 + projectIncome(v, v.owner['made']) : 4 });
+      list.push({ kind: 'divestmade', val: etaOf(v, v.owner['made']) <= W.homeStretch ? 12 + projectIncome(v, v.owner['made']) : 4 });
     }
     /* plant a bug — $1/turn skim (2 with the WEF) for as long as it survives */
     if (me.intel >= 1) {
@@ -1189,12 +1376,10 @@
         if (o == null || o === pi) continue;
         if (v.bugs[nid] != null || v.rubble[nid]) continue;
         const skim = v.owner['wef'] === pi ? 2 : 1;
-        /* sweep is real counter-intelligence now, so the skim does not run
-           a full nine turns: a victim with a couple of nodes can spend an
-           action and 2 Intel to clear it. Bots sweep eagerly (their own
-           policy prices a rival bug at ~$20), humans less reliably. */
+        /* a victim can spend an action and 2 Intel to sweep it, and the game may
+           not last the full run, so the skim is discounted for both */
         const surv = v.players[o].bot ? 0.55 : 0.75;
-        const val = 9 * skim * surv * W.money - (v.owner['insider'] === pi ? 0 : 1) * W.intel * 2
+        const val = Math.min(W.bugLife, horizon(v)) * skim * surv * W.money - (v.owner['insider'] === pi ? 0 : 1) * INTEL
           + nodeOwnValue(v, o, nid) * (v.players[o].bot ? 0.12 : 0.18);
         if (!bb || val > bb.val) bb = { kind: 'bug', nid, val };
       }
@@ -1202,37 +1387,37 @@
     }
     /* CORTISOL OVERLOAD — 30 Intel, bypasses the one-node immunity */
     if (me.intel >= 30) {
-      let top = -1, topSc = -Infinity;
+      let top = -1, topEta = Infinity;
       for (let j = 0; j < v.players.length; j++) {
         if (j === pi) continue;
-        const s = evalSeat(v, j).score + (v.players[j].bot ? 0 : 40); /* humans first */
-        if (s > topSc) { topSc = s; top = j; }
+        const eta = etaOf(v, j) * (v.players[j].bot ? 1 : 0.75); /* humans first */
+        if (eta < topEta) { topEta = eta; top = j; }
       }
       if (top >= 0) {
         const near = v.players[top].cortisol + 6 >= 9;
-        const val = near ? 120 : victimValue(v, pi, top, 6) - 30 * W.intel * 2;
-        if (near || progressTowardWin(v, top) > -10) list.push({ kind: 'targetpanic', target: top, val });
+        const val = near ? raidValue(v, top) * 0.7 : victimValue(v, pi, top, 6) - 30 * INTEL;
+        if (near || etaOf(v, top) <= W.homeStretch) list.push({ kind: 'targetpanic', target: top, val });
       }
     }
     if (v.owner['bond'] === pi && v.owner['leak'] === pi && me.money >= 16 && me.intel >= 4 && !v.bondmageddonUsed) {
-      const leader = bestVictim(v, pi, 2);
-      if (leader >= 0 && progressTowardWin(v, leader) > -10 && chartsOwned(v, leader) > 0) {
-        list.push({ kind: 'bondmageddon', target: leader, val: 30 });
+      const target = bestVictim(v, pi, 2);
+      if (target >= 0 && etaOf(v, target) <= W.homeStretch && chartsOwned(v, target) > 0) {
+        list.push({ kind: 'bondmageddon', target, val: 30 });
       }
     }
-    if (v.owner['back'] === pi && !v.pressured && v.players.some((pl, i) => i !== pi && progressTowardWin(v, i) > -12 && vulnerable(v, i))) {
+    if (v.owner['back'] === pi && !v.pressured && v.players.some((pl, i) => i !== pi && isHomeStretch(v, i) && vulnerable(v, i))) {
       list.push({ kind: 'pressure', val: 8 + 4 * homeStretch });
     }
     if (v.owner['albo'] === pi && !v.blockadeUsed) {
       const bd = pickBlockadeTarget(v, pi);
-      if (bd) list.push({ kind: 'blockade', nid: bd, val: 12 + 4 * homeStretch });
+      if (bd) list.push({ kind: 'blockade', nid: bd.nid, val: bd.val });
     }
     if (v.geo) {
       /* STAGE 5 DECLINE: the richest rival skips a whole income turn */
       if (v.owner['geo_stage5'] === pi && me.intel >= 2 && !v.geoUsed.stage5) {
-        const leader = strongestSeat(v, pi);
         if (leader >= 0 && v.owner['geo_pillars'] !== leader) {
-          list.push({ kind: 'stage5', target: leader, val: projectIncome(v, leader) * W.incomeTurns * 0.8 });
+          /* one lost income phase, weighted by how much that delay matters */
+          list.push({ kind: 'stage5', target: leader, val: projectIncome(v, leader) * W.money * (1 + 2 * closeness(v, leader)) });
         }
       }
       if (v.owner['geo_scs'] === pi && me.money >= 3 && !v.geoUsed.crash && countType(v, pi, 'COMMODITY') === 0) {
@@ -1250,7 +1435,7 @@
         for (const n of v.nodes) {
           const o = v.owner[n.id];
           if (o == null || o === pi || v.rubble[n.id] || n.id === 'geo_tuvalu' || shielded(n.id)) continue;
-          const val = nodeOwnValue(v, o, n.id) * (v.players[o].bot ? 0.6 : 0.85) - 4 * W.money - W.intel * 2;
+          const val = nodeOwnValue(v, o, n.id) * (v.players[o].bot ? 0.6 : 0.85) - 4 * W.money - INTEL;
           if (!bm || val > bm.val) bm = { kind: 'missile', nid: n.id, target: o, val };
         }
         if (bm && bm.val > 4) list.push(bm);
@@ -1259,7 +1444,7 @@
       if (v.owner['geo_venice'] === pi && me.money >= 2 && !v.geoVenice) {
         let bo = null;
         for (let j = 0; j < v.players.length; j++) {
-          if (j === pi || !vulnerable(v, j) || progressTowardWin(v, j) <= -12) continue;
+          if (j === pi || !vulnerable(v, j) || etaOf(v, j) > W.homeStretch * 3) continue;
           for (const nid of myNodes(v, j)) {
             if (v.rubble[nid]) continue;
             const val = victimValue(v, pi, j, 1) * v.players.length * 0.8 - 2 * W.money;
@@ -1281,7 +1466,7 @@
     if (me.intel >= 3 && !v.dossier) {
       const take = list.filter(x => x.kind === 'seize' && x.isTake)[0];
       if (take && take.cost - take.base >= 3) {
-        list.push({ kind: 'dossier', val: (take.cost - take.base) * W.money - 3 * W.intel * 2 + 2, continuing: true });
+        list.push({ kind: 'dossier', val: (take.cost - take.base) * W.money - 3 * INTEL + 2, continuing: true });
       }
     }
     /* apply the character's temperament: hostility through urg, cash plays
@@ -1293,9 +1478,10 @@
       else if (c.kind === 'push' || c.kind === 'sell') c.val *= cashRush;
       else if (c.kind === 'laylow' && c.choice === 'cash' && nearGoal) c.val *= cashRush;
     }
+    const open = refused ? list.filter(c => !refused[c.kind]) : list;
     let best = null;
-    for (const c of list) if (!best || c.val > best.val) best = c;
-    if (best && best.val < 0.55) return { kind: 'laylow', choice: me.cortisol >= 3 ? 'cool' : 'cash' };
+    for (const c of open) if (!best || c.val > best.val) best = c;
+    if (best && best.val < 0.55 && !(refused && refused.laylow)) return { kind: 'laylow', choice: me.cortisol >= 3 ? 'cool' : 'cash' };
     return best;
   }
 
@@ -1306,29 +1492,55 @@
   }
   function countType(v, seat, t) { return mineWhere(v, seat, n => n.type === t).length; }
 
-  function pickBlockadeTarget(v, pi) {
-    /* wall off the node whose loss would hurt the strongest rival most */
-    let best = null, bestV = 1.2;
-    for (const n of v.nodes) {
-      if (!passable(v, n.id)) continue;
-      const o = v.owner[n.id];
-      if (o === pi) continue;
-      if (o != null) {
-        const bias = v.players[o].bot ? 1 : 1.35;
-        const denial = (nodeOwnValue(v, o, n.id) * 0.5 - nodeOwnValue(v, pi, n.id) * 0.1) * bias;
-        if (denial > bestV) { bestV = denial; best = n.id; }
-      } else {
-        for (const j of victimsOf(v, pi)) {
-          if (progressTowardWin(v, j) <= -16) continue;
-          const would = nodeOwnValue(v, j, n.id) * (v.players[j].bot ? 1 : 1.35);
-          if (would > bestV) { bestV = would; best = n.id; }
+  /* the engine's start-of-turn step count, in view terms */
+  function stepsOf(v, seat) {
+    return 3 + (v.owner['coal'] === seat ? 1 : 0)
+      + ((v.owner['train'] === seat || v.owner['bullet'] === seat) ? 1 : 0)
+      + (v.owner['asics'] === seat ? 1 : 0);
+  }
+  function nodesWithin(v, from, hops) {
+    const A = buildAdj(v);
+    const seen = { [from]: true };
+    let frontier = [from];
+    for (let h = 0; h < hops; h++) {
+      const next = [];
+      for (const id of frontier) {
+        for (const nb of (A[id] || [])) {
+          if (seen[nb] || !passable(v, nb)) continue;
+          seen[nb] = true;
+          next.push(nb);
         }
       }
+      frontier = next;
+    }
+    delete seen[from];
+    return Object.keys(seen);
+  }
+  /* A blockade only stops anyone WALKING in for one rotation: it touches neither
+     income nor ownership, and it stops the caster too. So its worth is what it
+     costs a rival who could reach the node next turn: the gap between their best
+     target and their next best, weighted by how close they are to winning. */
+  function pickBlockadeTarget(v, pi) {
+    let best = null;
+    for (let j = 0; j < v.players.length; j++) {
+      if (j === pi) continue;
+      const urgency = closeness(v, j) * (v.players[j].bot ? 1 : 1.35);
+      if (urgency <= 0) continue;
+      const targets = nodesWithin(v, v.players[j].pos, stepsOf(v, j))
+        .filter(id => v.owner[id] !== j && !(v.rubble && v.rubble[id]))
+        .map(id => ({ id, worth: nodeOwnValue(v, j, id) }))
+        .sort((a, b) => b.worth - a.worth);
+      if (!targets.length) continue;
+      const fallback = targets.length > 1 ? Math.max(0, targets[1].worth) : 0;
+      const top = targets[0];
+      const mineLost = v.owner[top.id] === pi ? 0 : Math.max(0, nodeOwnValue(v, pi, top.id)) * 0.1;
+      const val = (top.worth - fallback) * urgency * W.blockDelay - mineLost;
+      if (val > 1.2 && (!best || val > best.val)) best = { nid: top.id, val };
     }
     return best;
   }
 
-  function pickRandomAction(v, pi) {
+  function pickRandomAction(v, pi, refused) {
     const me = v.players[pi];
     const opts = [];
     const sz = seizeCandidate(v, pi, me.pos);
@@ -1338,10 +1550,17 @@
     if (me.intel >= 2) opts.push({ kind: 'spy', continuing: true });
     if (me.intel >= 3 && v.moodRate >= 3) opts.push({ kind: 'sell', n: 2 });
     opts.push({ kind: 'laylow', choice: me.cortisol >= 5 ? 'cool' : 'cash' });
-    return opts[Math.floor(r32(pi) * opts.length)];
+    const open = refused ? opts.filter(c => !refused[c.kind]) : opts;
+    return open.length ? open[Math.floor(r32(pi) * open.length)] : null;
   }
 
+  /* While an action runs, B.commit tells chooseAnswer what it was picked for, so
+     the prompt it raises carries out that decision instead of making a new one. */
   async function dispatchAction(v, pi, pick, api) {
+    B.commit[pi] = pick;
+    try { return await runAction(v, pi, pick, api); } finally { delete B.commit[pi]; }
+  }
+  async function runAction(v, pi, pick, api) {
     switch (pick.kind) {
       case 'seize': {
         /* the engine seizes wherever the seat STANDS — never fire at a stale plan */
@@ -1351,7 +1570,7 @@
         const sv = api.viewOf(pi);
         const victim = v.owner[pick.nid];
         if (pick.isTake && sv && sv.owner[pick.nid] === pi && typeof victim === 'number' && victim !== pi
-          && (B.lastChat[pi] | 0) !== sv.turn && r32(pi) < 0.35) {
+          && (B.lastChat[pi] | 0) !== sv.turn && chat32(pi) < 0.35) {
           B.lastChat[pi] = sv.turn;
           if (api.chat) api.chat(pi, pickLine(v, pi, 'taunt'));
         }
@@ -1389,21 +1608,21 @@
         return false;
       case 'roast': {
         await tryIntent(api, pi, { act: 'spin', kind: v.owner['fox'] === pi ? 'fox' : 'press' });
-        /* the spin prompt is answered through answerPrompt — roast mode only
-           exists if the answer chose 'cortisol'; the engine ignores a stray
-           roast otherwise and the final pass closes the turn. */
+        /* the spin prompt answers 'cortisol' for a committed roast (see
+           chooseAnswer), which is what opens roast mode */
         const rv = api.viewOf(pi);
         if (rv && rv.mode === 'roast') await tryIntent(api, pi, { act: 'roast', target: pick.target });
         return true;
       }
+      case 'spincool':
+        await tryIntent(api, pi, { act: 'spin', kind: v.owner['fox'] === pi ? 'fox' : 'press' });
+        return true;
       case 'cook': await tryIntent(api, pi, { act: 'cook' }); return true;
       case 'jog': await tryIntent(api, pi, { act: 'jog' }); return true;
       case 'beach': await tryIntent(api, pi, { act: 'beach' }); return true;
       case 'venicecool': await tryIntent(api, pi, { act: 'venicecool' }); return true;
       case 'budget': await tryIntent(api, pi, { act: 'budget' }); return true;
       case 'push': await tryIntent(api, pi, { act: 'push' }); return true;
-      /* sweep exists in the engine but only ever removes the SWEEPER'S OWN
-         bugs (S.bugs is keyed by planter) — nothing emits it on purpose */
       case 'sweep': await tryIntent(api, pi, { act: 'sweep' }); return true;
       case 'masspanic': await tryIntent(api, pi, { act: 'masspanic' }); return true;
       case 'targetpanic': await tryIntent(api, pi, { act: 'targetpanic' }); return true;
@@ -1459,13 +1678,25 @@
     const val = answer === undefined ? def : answer;
     if (!B.paceMs) return Promise.resolve(val); /* tests: the virtual clock never advances */
     return new Promise(res => {
-      try { setTimeout(() => res(val), 400 + r32(pi) * 900); } catch (e) { res(val); }
+      try { setTimeout(() => res(val), 400 + pace32() * 900); } catch (e) { res(val); }
       setTimeout(() => res(val), 15000); /* never hold the table for a bot */
     });
+  }
+  /* the seat's committed target if the prompt offers it, else the seat closest
+     to winning among the rivals it offers */
+  function chooseRivalOption(pi, opt, view) {
+    const rivals = (opt.options || []).filter(o => typeof o.v === 'number' && o.v >= 0 && o.v !== pi);
+    if (!rivals.length) return null;
+    const c = B.commit[pi];
+    if (c && rivals.some(o => o.v === c.target)) return c.target;
+    let best = rivals[0];
+    for (const o of rivals) if (etaOf(view, o.v) < etaOf(view, best.v)) best = o;
+    return best.v;
   }
   function chooseAnswer(pi, opt, view) {
     const title = opt.title || '';
     const byTitle = t => title.indexOf(t) === 0;
+    const committed = B.commit[pi];
     /* knowledge prompts first: record what the bot now fairly knows */
     if (opt.meta && opt.meta.card && opt.meta.kind === 'peek') {
       B.known[pi] = { card: opt.meta.card, at: view.turn };
@@ -1490,22 +1721,17 @@
       return view.owner['back'] === pi ? 1 : 0;
     }
     if (byTitle('DIVEST MADE')) {
-      const mo = view.owner['made'];
-      return (mo != null && mo !== pi && progressTowardWin(view, mo) > -8) ? 1 : 0;
+      /* the action menu already priced this; only a non-commit can back out */
+      return (committed && committed.kind === 'divestmade') ? 1 : 0;
     }
     if (byTitle('CORTISOL OVERLOAD') || byTitle('BONDMAGEDDON')) {
-      const rivals = (opt.options || []).filter(o => typeof o.v === 'number' && o.v >= 0 && o.v !== pi);
-      if (!rivals.length) return -1;
-      let best = rivals[0];
-      for (const o of rivals) if (evalSeat(view, o.v).score > evalSeat(view, best.v).score) best = o;
-      return best.v;
+      const target = chooseRivalOption(pi, opt, view);
+      return target === null ? -1 : target;
     }
     if (byTitle('MEDIA FRENZY')) {
-      const rivals = (opt.options || []).filter(o => typeof o.v === 'number' && o.v >= 0 && o.v !== pi);
-      if (!rivals.length) return -1;
-      let best = rivals[0];
-      for (const o of rivals) if (evalSeat(view, o.v).score > evalSeat(view, best.v).score) best = o;
-      return progressTowardWin(view, best.v) > -30 ? best.v : -1;
+      const target = chooseRivalOption(pi, opt, view);
+      if (target === null) return -1;
+      return etaOf(view, target) <= W.homeStretch * 2 ? target : -1;
     }
     if (byTitle('TRUMP TWEETS TARIFFS')) {
       const own = id => view.owner[id] === pi;
@@ -1516,14 +1742,8 @@
       return oil > coal ? 'oil' : 'coal';
     }
     if (byTitle('FOX SPIN') || byTitle('SPIN THE PRESS')) {
-      const me = view.players[pi];
-      const rivals = victimsOf(view, pi);
-      /* roast the strongest rival if it stings, else cool my own head */
-      if (rivals.length) {
-        const top = strongestSeat(view, pi);
-        if (top >= 0 && progressTowardWin(view, top) > -12) return 'cortisol';
-      }
-      if (me.cortisol >= 3) return 'cool';
+      if (committed && committed.kind === 'roast') return 'cortisol';
+      if (committed && committed.kind === 'spincool') return 'cool';
       return 'no';
     }
     return undefined;
@@ -1533,6 +1753,11 @@
   function resetForGame(seed) {
     B.seed = seed >>> 0 || 1;
     B.streams = {};
+    B.chatStreams = {};
+    B.commit = {};
+    B.churn = {};
+    B.boardSeen = null;
+    B.churnTurn = 0;
     B.known = {};
     B.lastChat = {};
     B.memory = {};
@@ -1547,6 +1772,10 @@
   B.deckEV = deckEV;
   B.evalSeat = evalSeat;
   B.projectIncome = projectIncome;
+  B.etaOf = etaOf;
+  B.leaderSeat = leaderSeat;
+  B.marginalIncome = marginalIncome;
+  B.raidValue = raidValue;
   B.takeTurn = takeTurn;
   B.answerPrompt = answerPrompt;
   B.resetForGame = resetForGame;
