@@ -244,7 +244,7 @@ export function loadEngine(opts = {}) {
   const fns = [
     'applyIntent','startTurn','endOfTurn','nextTurn','winCheck','initGame','income','addCortisol','raid','madePay',
     'acccInvestigate','concentratedIndustries','ownedInIndustry','industryNodes','generateRandomBoard','rebuildAdj',
-    'separateNodes','applyQuikSlot','nodeBox','pubState','adoptState','mergeTail','flushState','sendAll','sendTo',
+    'separateNodes','applyQuikSlot','nodeBox','pubState','adoptState','mergeTail','sendLogParts','adoptLogPart','flushState','sendAll','sendTo',
     'sysTo','askPlayer','announceAll','revealAll','drawCard','handleHello','onHostClose','onHostData','broadcastLobby','setGeoUI',
     'addLobbyChat','addChat','applyChar','lobbyPlayers','clampGoal','matchBuzzword','codeSlug','codeLabel','genCode',
     'shuffle','esc','showRules','setMood','giveIntel','gain','payVoid','payTo','payFee','log','fxAt','fx','pname',

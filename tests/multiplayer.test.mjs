@@ -8,7 +8,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadEngine, makeGame, makeConn, withSeed } from './helpers/harness.mjs';
+import { loadEngine, makeGame, makeConn, withSeed, SOURCE } from './helpers/harness.mjs';
 
 const engineFor = t => { const e = loadEngine(); t.after(() => e.dispose()); return e; };
 
@@ -377,3 +377,104 @@ test('DC-06 after the disconnect/reconnect gauntlet nothing is leaked', async t 
   await settle();
   assert.equal(Net.pendingPrompts.size, 0, 'still clean after the clock spun out');
 });
+
+/* ================= LOG — the record covers the whole game ================= */
+/* The host's record, as a guest would receive it through a fake relay. */
+function linkGuest(host, guest) {
+  guest.acc.Net.role = 'guest';
+  guest.acc.Net.conn = { send: m => { guest.__out.push(JSON.parse(JSON.stringify(m))); } };
+  guest.__out = [];
+  guest.__deliver = () => {
+    const reqs = guest.__out.splice(0).filter(m => m.t === 'logreq').length;
+    const parts = [];
+    for (let i = 0; i < reqs; i++) host.f.sendLogParts({ send: m => parts.push(JSON.parse(JSON.stringify(m))) });
+    for (const p of parts) guest.f.adoptLogPart(p);
+    return parts;
+  };
+}
+const fillLog = (engine, lines, width = 20) => {
+  for (let i = 0; i < lines; i++) engine.f.log('line ' + i + ' ' + 'x'.repeat(width));
+};
+
+test('LOG-01 the host keeps every line of a long game', async t => {
+  const engine = engineFor(t);
+  const S = await makeGame(engine, 2);
+  const before = S.log.length;
+  fillLog(engine, 1000);
+  assert.equal(S.log.length, before + 1000, 'nothing is dropped past the old 250-line cap');
+  assert.equal(S.log.length, S.logN, 'the count and the record agree');
+  assert.ok(S.log.includes('line 0 ' + 'x'.repeat(20)), 'the earliest lines survive');
+});
+
+test('LOG-02 a join or reconnect stays under the relay limit however long the record', async t => {
+  const engine = engineFor(t);
+  await makeGame(engine, 2);
+  fillLog(engine, 20000, 120);
+  const wire = engine.f.pubState(true);
+  assert.equal(wire.log.length, 250, 'the welcome carries only the recent lines');
+  assert.ok(JSON.stringify({ t: 'welcome', s: wire }).length < 256000, 'the welcome fits the relay');
+  const parts = [];
+  engine.f.sendLogParts({ send: m => parts.push(m) });
+  for (const p of parts) assert.ok(JSON.stringify(p).length < 256000, 'every part fits the relay');
+  assert.equal(parts.reduce((n, p) => n + p.lines.length, 0), engine.acc.S.log.length, 'the parts add up to the record');
+});
+
+test('LOG-03 a guest who joined late ends up with the whole record', async t => {
+  const host = engineFor(t), guest = engineFor(t);
+  await makeGame(host, 2);
+  fillLog(host, 1000);
+  linkGuest(host, guest);
+  guest.f.adoptState(JSON.parse(JSON.stringify(host.f.pubState(true))));
+  assert.equal(guest.acc.S.log.length, 250, 'the welcome brings the recent lines');
+  assert.ok(guest.__deliver().length > 0, 'the guest asks for the rest');
+  assert.deepEqual(Array.from(guest.acc.S.log), Array.from(host.acc.S.log), 'and then holds the same record as the host');
+});
+
+test('LOG-04 a guest who misses updates recovers the lost history', async t => {
+  const host = engineFor(t), guest = engineFor(t);
+  await makeGame(host, 2);
+  linkGuest(host, guest);
+  guest.f.adoptState(JSON.parse(JSON.stringify(host.f.pubState(true))));
+  fillLog(host, 500);
+  guest.f.adoptState(JSON.parse(JSON.stringify(host.f.pubState(false))));
+  assert.equal(guest.acc.S.log.length, 40, 'too big a gap leaves only the latest tail');
+  guest.__deliver();
+  assert.deepEqual(Array.from(guest.acc.S.log), Array.from(host.acc.S.log), 'the fetch restores everything');
+});
+
+test('LOG-05 lines arriving during a fetch are kept, in order', async t => {
+  const host = engineFor(t), guest = engineFor(t);
+  await makeGame(host, 2);
+  fillLog(host, 600);
+  linkGuest(host, guest);
+  guest.f.adoptState(JSON.parse(JSON.stringify(host.f.pubState(true))));
+  const parts = [];
+  guest.__out.splice(0);
+  host.f.sendLogParts({ send: m => parts.push(JSON.parse(JSON.stringify(m))) });
+  fillLog(host, 5, 3);
+  guest.f.adoptState(JSON.parse(JSON.stringify(host.f.pubState(false))));
+  for (const p of parts) guest.f.adoptLogPart(p);
+  assert.deepEqual(Array.from(guest.acc.S.log), Array.from(host.acc.S.log), 'the older lines slot in ahead of the newer ones');
+});
+
+test('LOG-06 the panel draws recent lines in play and the whole record at the end', () => {
+  assert.ok(SOURCE.includes('(S.over?S.log:S.log.slice(-LOG_SHOWN)).map('), 'the render switches to the whole record at game over');
+  assert.ok(SOURCE.includes("const rec=(S.log||[]).join('\\n')") || SOURCE.includes('const rec=(S.log||[]).join('), 'COPY always takes the whole record');
+});
+
+test('LOG-07 the host answers a seated guest with the record, and ignores strangers', async t => {
+  const engine = engineFor(t);
+  const S = await makeGame(engine, 2);
+  fillLog(engine, 300);
+  const seat = engine.acc.Net.conns.findIndex(c => c);
+  const conn = engine.acc.Net.conns[seat];
+  conn.sent.length = 0;
+  engine.f.onHostData(conn, { t: 'logreq' });
+  const parts = conn.sent.filter(m => m.t === 'logpart');
+  assert.equal(parts.reduce((n, p) => n + p.lines.length, 0), S.log.length, 'the guest receives every line');
+  const stranger = makeConn(engine, 'stranger');
+  stranger.sent.length = 0;
+  engine.f.onHostData(stranger, { t: 'logreq' });
+  assert.equal(stranger.sent.filter(m => m.t === 'logpart').length, 0, 'an unseated connection gets nothing');
+});
+
