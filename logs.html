@@ -1,0 +1,1376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>THE RECORD — The Big Con log review</title>
+<style>
+:root{
+  --bg:#141817;--bg2:#1d201f;--panel:#0b0d0c;--panel2:#101413;--line:#242d2a;
+  --teal:#168388;--teal2:#1fb3b9;--aqua:#9ad;--ink:#e9f0f2;--mut:#8fa3a8;
+  --gold:#ffd166;--red:#ff6b5e;--green:#a0e7a0;
+  --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;
+  --serif:"Times New Roman",Times,serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  background:radial-gradient(1100px 700px at 50% -10%,#20302d 0%,#141817 55%,#0e1110 100%);
+  color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  display:flex;flex-direction:column;min-height:100vh;
+}
+button,input,textarea,select{font-family:inherit;color:inherit}
+a{color:var(--aqua)}
+[hidden]{display:none!important}
+::selection{background:var(--teal);color:#fff}
+:focus-visible{outline:2px solid var(--teal2);outline-offset:2px}
+
+/* ---------- top bar ---------- */
+.top{
+  position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:9px 16px;background:rgba(9,11,10,.96);border-bottom:2px solid var(--teal);
+  backdrop-filter:blur(7px);flex:0 0 auto;
+}
+.brand{display:flex;flex-direction:column;line-height:1;margin-right:4px}
+.brand b{font-family:var(--serif);font-size:23px;letter-spacing:2.5px;font-weight:700;color:#fff}
+.brand small{font-size:9px;letter-spacing:3px;color:var(--aqua);font-weight:800;margin-top:3px}
+.back{font-size:11px;letter-spacing:1px;color:var(--mut);text-decoration:none;border:1px solid var(--line);padding:7px 9px;white-space:nowrap}
+.back:hover{color:#fff;border-color:var(--teal)}
+.spacer{flex:1}
+.mobile-only{display:none}
+
+/* ---------- buttons ---------- */
+.btn{
+  font-size:11px;font-weight:900;letter-spacing:1.4px;text-transform:uppercase;
+  padding:9px 13px;border:1px solid var(--teal);background:#000;color:#fff;cursor:pointer;
+  border-radius:0;white-space:nowrap;line-height:1.2;
+}
+.btn:hover:not(:disabled){background:#0e2a2b;border-color:var(--teal2)}
+.btn.primary{background:var(--teal);border-color:var(--teal);color:#fff}
+.btn.primary:hover{background:var(--teal2);border-color:var(--teal2);color:#001}
+.btn.ghost{background:transparent;border-color:var(--line);color:var(--mut)}
+.btn.ghost:hover{color:#fff;border-color:var(--teal)}
+.btn.tiny{font-size:9.5px;padding:6px 9px;letter-spacing:1px}
+.btn:disabled{opacity:.38;cursor:not-allowed}
+.link{background:none;border:0;color:var(--aqua);font-size:10px;letter-spacing:1px;cursor:pointer;text-decoration:underline;padding:0}
+.link:hover{color:#fff}
+
+/* ---------- intake ---------- */
+main{flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+.intake{flex:1 1 auto;display:flex;align-items:center;justify-content:center;padding:26px 18px 40px}
+.intakecard{width:100%;max-width:1040px}
+.kicker{font-size:10px;letter-spacing:4px;color:var(--teal2);font-weight:900;margin-bottom:10px}
+.intake h1{font-family:var(--serif);font-size:clamp(32px,5vw,52px);line-height:.95;letter-spacing:1px;margin:0 0 10px;color:#fff}
+.intake .sub{margin:0 0 18px;color:var(--mut);font-size:13.5px;line-height:1.55;max-width:780px}
+.intake .sub b{color:var(--ink)}
+.drop{position:relative;border:2px dashed #2c3b37;background:rgba(0,0,0,.42);transition:border-color .15s,background .15s}
+.drop.drag{border-color:var(--teal2);background:rgba(22,131,136,.13)}
+.drop textarea{
+  display:block;width:100%;height:clamp(220px,42vh,460px);resize:vertical;
+  background:transparent;border:0;outline:0;color:#dbe7ea;padding:15px 16px;
+  font-family:var(--mono);font-size:12px;line-height:1.6;tab-size:2;
+}
+.drop textarea::placeholder{color:#5c6f6b;white-space:pre-wrap}
+.drop .droptag{position:absolute;right:10px;bottom:8px;font-size:9px;letter-spacing:2px;color:#5c6f6b;pointer-events:none}
+.intakebar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+.intakehint{margin-left:auto;font-size:10.5px;color:#6f8480;letter-spacing:.3px}
+.filebtn{position:relative;overflow:hidden}
+.filebtn input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.alert{margin-top:12px;border:1px solid #6b2b26;background:#2a1210;color:#ffb3ab;padding:9px 12px;font-size:12px}
+
+/* ---------- viewer shell ---------- */
+.viewer{flex:1 1 auto;display:grid;grid-template-columns:268px minmax(0,1fr);min-height:0}
+.side{
+  border-right:1px solid var(--line);background:rgba(8,10,9,.72);padding:14px 12px 28px;
+  overflow:auto;max-height:calc(100vh - 60px);position:sticky;top:60px;
+}
+.sideblock{margin-bottom:18px}
+.sidehead{
+  display:flex;align-items:center;justify-content:space-between;gap:6px;
+  font-size:9.5px;letter-spacing:2px;font-weight:900;color:var(--aqua);
+  border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:9px;
+}
+.sidehead .n{color:#5f7470;font-weight:700;letter-spacing:0}
+.chips{display:flex;flex-direction:column;gap:5px}
+.chip{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  background:#0c100f;border:1px solid #1f2a27;padding:7px 8px;cursor:pointer;
+  font-size:12px;color:#cbd8da;border-radius:0;
+}
+.chip:hover{border-color:#3a504b;background:#111817}
+.chip .dot{width:9px;height:9px;flex:0 0 auto;background:var(--pc,#777);box-shadow:0 0 7px color-mix(in srgb,var(--pc,#777) 55%,transparent)}
+.chip .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip .ct{font-family:var(--mono);font-size:10px;color:#6f8480}
+.chip[aria-pressed="true"]{border-color:var(--pc,#fff);background:#16201e;color:#fff}
+.chip[aria-pressed="true"] .ct{color:#cfe0e2}
+.chip.off{opacity:.42}
+.addrow{display:flex;gap:5px;margin-top:8px}
+.addrow input{
+  flex:1;min-width:0;background:#000;border:1px solid #1f2a27;padding:6px 8px;
+  font-size:11px;color:#fff;
+}
+.addrow button{background:#000;border:1px solid var(--teal);color:var(--aqua);cursor:pointer;padding:4px 9px;font-weight:900}
+.addrow button:hover{background:var(--teal);color:#fff}
+
+.catlist{display:flex;flex-direction:column;gap:3px}
+.cat{
+  display:flex;align-items:center;gap:7px;width:100%;text-align:left;cursor:pointer;
+  background:none;border:1px solid transparent;padding:5px 6px;font-size:11.5px;color:#b6c6c8;
+}
+.cat:hover{background:#111817;border-color:#243330}
+.cat .cdot{width:7px;height:7px;flex:0 0 auto;background:var(--cc,#888);border-radius:50%}
+.cat .cn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat .cc{font-family:var(--mono);font-size:9.5px;color:#667a76}
+.cat[aria-pressed="false"]{opacity:.38}
+.cat[aria-pressed="true"]{background:color-mix(in srgb,var(--cc) 9%,transparent);border-color:color-mix(in srgb,var(--cc) 30%,transparent);color:#fff}
+.cat[aria-pressed="true"] .cc{color:#cfe0e2}
+
+.sel{
+  width:100%;background:#000;border:1px solid #1f2a27;padding:8px;font-size:11.5px;color:#dbe7ea;
+}
+.toggles{display:flex;flex-direction:column;gap:7px}
+.tgl{display:flex;align-items:center;gap:8px;font-size:11.5px;color:#b6c6c8;cursor:pointer;user-select:none}
+.tgl input{appearance:none;width:28px;height:15px;background:#26312e;border:1px solid #384844;position:relative;cursor:pointer;flex:0 0 auto}
+.tgl input::after{content:"";position:absolute;top:1px;left:1px;width:11px;height:11px;background:#6b7f7b;transition:left .12s,background .12s}
+.tgl input:checked{background:#0d3d3f;border-color:var(--teal)}
+.tgl input:checked::after{left:14px;background:var(--teal2)}
+.sidefoot{border-top:1px solid var(--line);padding-top:10px;font-family:var(--mono);font-size:10px;line-height:1.8;color:#6f8480}
+.sidefoot b{color:#cfe0e2;font-weight:700}
+
+/* ---------- main column ---------- */
+.maincol{display:flex;flex-direction:column;min-width:0;min-height:0}
+.toolbar{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 14px;
+  border-bottom:1px solid var(--line);background:rgba(12,15,14,.9);position:sticky;top:60px;z-index:20;
+}
+.searchwrap{display:flex;align-items:center;gap:0;border:1px solid #2a3a36;background:#000;min-width:min(420px,100%);flex:1 1 260px;max-width:560px}
+.searchwrap .ico{padding:0 8px;color:#6f8480;font-size:12px}
+.searchwrap input{flex:1;min-width:0;background:none;border:0;outline:0;padding:8px 2px;font-family:var(--mono);font-size:12px;color:#fff}
+.searchwrap button{background:#0c100f;border:0;border-left:1px solid #22302d;padding:8px 8px;cursor:pointer;color:#7d918d;font-family:var(--mono);font-size:10.5px;font-weight:700}
+.searchwrap button:hover{color:#fff}
+.searchwrap button[aria-pressed="true"]{background:var(--teal);color:#fff}
+.searchwrap.invalid{border-color:#7b2f29}
+.matchinfo{font-family:var(--mono);font-size:10.5px;color:#7d918d;min-width:64px}
+.matchinfo b{color:var(--gold)}
+.navbtn{background:#0c100f;border:1px solid #2a3a36;color:#b6c6c8;padding:7px 8px;cursor:pointer;font-size:11px}
+.navbtn:hover{color:#fff;border-color:var(--teal)}
+.filterbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 14px;border-bottom:1px solid #1b2321;background:#0b0f0e;font-size:10px;color:#6f8480}
+.fchip{display:inline-flex;align-items:center;gap:5px;border:1px solid #2a3a36;padding:3px 6px;font-size:10px;color:#b6c6c8;background:#0c100f}
+.fchip .dot{width:7px;height:7px;background:var(--fc,#888);border-radius:50%}
+.fchip button{background:none;border:0;color:#7d918d;cursor:pointer;padding:0 0 0 2px;font-size:11px}
+.fchip button:hover{color:#fff}
+
+.logwrap{flex:1 1 auto;overflow:auto;min-height:0;background:rgba(6,8,7,.35)}
+.log{min-height:100%;padding:6px 0 70px}
+.line{
+  display:grid;grid-template-columns:48px 3px minmax(0,1fr);align-items:stretch;
+  border-bottom:1px solid rgba(36,45,42,.35);
+}
+.line:hover{background:rgba(22,131,136,.07)}
+.line .ln{
+  font-family:var(--mono);font-size:9.5px;color:#4e615d;text-align:right;padding:7px 8px 0 0;
+  text-decoration:none;user-select:none;background:none;border:0;cursor:pointer;
+}
+.line .ln:hover{color:var(--aqua)}
+.line .gut{background:var(--gc,#1d2422);opacity:.75}
+.line .txt{
+  font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#cfdcdd;
+  padding:5px 14px 5px 9px;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0;
+}
+.line.nowrap .txt{white-space:pre;overflow-wrap:normal;overflow-x:auto}
+.line.compact .txt{padding-top:2px;padding-bottom:2px;font-size:11.5px;line-height:1.4}
+.line.compact .ln{padding-top:4px}
+.line.dim{opacity:.26}
+.line.dim:hover{opacity:.65}
+.line.ctx{background:rgba(22,131,136,.035)}
+.line.hit{background:rgba(255,209,102,.08);box-shadow:inset 3px 0 0 var(--gold)}
+.line.flash{animation:flash 1.1s ease-out}
+@keyframes flash{0%{background:rgba(255,209,102,.34)}100%{background:transparent}}
+
+.line.turn{display:block;border-bottom:0;margin:16px 0 6px;background:linear-gradient(90deg,color-mix(in srgb,var(--pc,#888) 17%,transparent),transparent 60%);border-top:1px solid #2a3a36;border-bottom:1px solid #1b2321}
+.line.turn .turnrule{display:flex;align-items:center;gap:10px;padding:8px 14px 8px 12px;min-width:0}
+.line.turn .tbadge{font-family:var(--mono);font-size:10px;letter-spacing:2px;color:#001;background:var(--pc,#fff);padding:2px 7px;font-weight:900;white-space:nowrap}
+.line.turn .twho{font-family:var(--serif);font-size:17px;letter-spacing:.6px;color:var(--pc,#fff);font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.line.turn .tline{flex:1;height:1px;background:color-mix(in srgb,var(--pc,#888) 42%,transparent);min-width:20px}
+.line.turn .ln{display:none}
+.line.turn .turnln{font-family:var(--mono);font-size:9.5px;color:#7d918d;background:none;border:0;cursor:pointer;text-decoration:none;padding-left:10px;flex:0 0 auto}
+.line.turn .turnln:hover{color:#fff}
+.line.turn:hover{background:linear-gradient(90deg,color-mix(in srgb,var(--pc,#888) 24%,transparent),transparent 65%)}
+.line.turn.ctx{opacity:1}
+.log.hide-ln .line .ln,.log.hide-ln .line .turnln{visibility:hidden}
+
+.line.sys .txt{color:#9fb1af}
+.line.money .txt .amt{color:var(--green)}
+.line.raid{background:rgba(255,107,94,.055);box-shadow:inset 3px 0 0 rgba(255,107,94,.5)}
+.line.win{background:rgba(255,209,102,.12);box-shadow:inset 3px 0 0 var(--gold)}
+.line.win .txt{color:#ffe6a3;font-weight:800;letter-spacing:.3px}
+.line.event .txt{color:#ffe2a8}
+.line.dim.raid,.line.dim.win,.line.dim.event{background:transparent;box-shadow:none}
+
+.pl{
+  color:var(--pc,#fff);font-weight:800;
+  background:color-mix(in srgb,var(--pc,#888) 15%,transparent);
+  box-shadow:inset 0 -1px 0 color-mix(in srgb,var(--pc,#888) 55%,transparent);
+  padding:0 2px;
+}
+mark.q{background:var(--gold);color:#151000;padding:0 1px;box-shadow:0 0 0 1px #7a5a10}
+mark.q.cur{background:var(--red);color:#fff;box-shadow:0 0 0 1px #fff}
+.nomatch{padding:46px 20px;text-align:center;color:#6f8480;font-size:13px}
+.nomatch b{display:block;font-family:var(--serif);font-size:21px;color:#b6c6c8;margin-bottom:6px;letter-spacing:.5px}
+.statusbar{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:6px 14px;
+  border-top:1px solid var(--line);background:rgba(9,12,11,.94);font-family:var(--mono);
+  font-size:10px;color:#6f8480;flex:0 0 auto;
+}
+.statusbar b{color:#cfe0e2;font-weight:700}
+.statusbar .r{margin-left:auto}
+
+/* ---------- toast ---------- */
+.toast{
+  position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:100;
+  background:#0b0f0e;border:1px solid var(--teal);color:#fff;padding:9px 15px;
+  font-size:11.5px;letter-spacing:.4px;box-shadow:0 8px 30px rgba(0,0,0,.55);max-width:90vw;
+}
+.toast.bad{border-color:var(--red);color:#ffc4be}
+
+/* ---------- small screens ---------- */
+@media (max-width:900px){
+  .viewer{grid-template-columns:1fr}
+  .mobile-only{display:inline-block}
+  .side{
+    position:static;display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:0 18px;
+    border-right:0;border-bottom:0;max-height:0;overflow:hidden;padding:0 12px;
+    transition:max-height .16s ease;
+  }
+  .side.open{max-height:64vh;overflow:auto;padding:12px 12px 18px;border-bottom:1px solid var(--line)}
+  .sideblock{margin-bottom:14px}
+  .sidefoot{grid-column:1/-1}
+  .toolbar{top:auto;position:sticky;top:52px}
+  .line{grid-template-columns:36px 3px minmax(0,1fr)}
+  .line .ln{padding-right:5px}
+  .brand b{font-size:19px}
+  .top{gap:8px;padding:7px 10px}
+  .back{display:none}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><b>THE RECORD</b><small>THE BIG CON · LOG REVIEW</small></div>
+  <a class="back" href="index.html">← BACK TO THE TABLE</a>
+  <span class="spacer"></span>
+  <button class="btn ghost" id="btnNew" title="Load a different record">＋ NEW RECORD</button>
+  <button class="btn ghost" id="btnShare" disabled title="Copy a link containing this record">🔗 COPY LINK</button>
+  <button class="btn ghost" id="btnDownload" disabled title="Download the visible record">⭳ DOWNLOAD</button>
+</header>
+
+<main>
+  <section class="intake" id="intake">
+    <div class="intakecard">
+      <div class="kicker">PASTE · DROP · REVIEW</div>
+      <h1>Read the con back.</h1>
+      <p class="sub">Drop in <b>the record</b> from a finished game. Every name gets its own colour, every event is tagged, and the whole night becomes searchable — no account, no upload, nothing leaves this tab.</p>
+      <div class="drop" id="drop">
+        <textarea id="raw" spellcheck="false" autocomplete="off" placeholder="Paste the record here…
+
+💵 BOT 3 DJT collects $16 (salary $3 + holdings $13 + synergies $0) — now $67.
+→ BOT 3 DJT moves to ST ANDREW'S CATHEDRAL SCHOOL.
+🎴 EVENT — IB EXAMS
+
+…or drop a .txt / .log file anywhere on this box."></textarea>
+        <div class="droptag">.TXT · .LOG · CTRL+ENTER</div>
+      </div>
+      <div class="intakebar">
+        <button class="btn primary" id="btnLoad">READ THE RECORD →</button>
+        <label class="btn ghost filebtn">⭱ OPEN FILE<input type="file" id="file" accept=".txt,.log,text/plain"></label>
+        <button class="btn ghost" id="btnSample">SAMPLE</button>
+        <button class="btn ghost" id="btnRestore" hidden>RESTORE LAST</button>
+        <span class="intakehint">Everything is parsed locally in this browser.</span>
+      </div>
+      <div class="alert" id="alert" hidden></div>
+    </div>
+  </section>
+
+  <section class="viewer" id="viewer" hidden>
+    <aside class="side">
+      <div class="sideblock">
+        <div class="sidehead"><span>THE TABLE <span class="n" id="playerCount"></span></span><button class="link" id="btnAllPlayers">ALL</button></div>
+        <div class="chips" id="playerChips"></div>
+        <div class="addrow"><input id="addPlayer" maxlength="40" placeholder="add a name…" aria-label="Add a player name"><button id="btnAddPlayer" title="Add player">＋</button></div>
+      </div>
+      <div class="sideblock">
+        <div class="sidehead"><span>EVENT FILTER</span><button class="link" id="btnAllCats">ALL</button></div>
+        <div class="catlist" id="catList"></div>
+      </div>
+      <div class="sideblock">
+        <div class="sidehead"><span>JUMP TO TURN</span></div>
+        <select class="sel" id="jumpTurn" aria-label="Jump to turn"></select>
+      </div>
+      <div class="sideblock">
+        <div class="sidehead"><span>DISPLAY</span></div>
+        <div class="toggles">
+          <label class="tgl"><input type="checkbox" id="optNums" checked> Line numbers</label>
+          <label class="tgl"><input type="checkbox" id="optWrap" checked> Wrap long lines</label>
+          <label class="tgl"><input type="checkbox" id="optCompact"> Compact rows</label>
+          <label class="tgl"><input type="checkbox" id="optOnly"> Only matching lines</label>
+        </div>
+      </div>
+      <div class="sidefoot" id="stats"></div>
+    </aside>
+
+    <div class="maincol">
+      <div class="toolbar">
+        <button class="btn tiny ghost mobile-only" id="btnSide" aria-expanded="false" title="Show or hide the table and event filters">☰ FILTERS</button>
+        <div class="searchwrap" id="searchWrap">
+          <span class="ico">⌕</span>
+          <input id="search" type="text" spellcheck="false" autocomplete="off" placeholder="Search the record…  ( / )" aria-label="Search the record">
+          <button id="btnCase" aria-pressed="false" title="Match case">Aa</button>
+          <button id="btnRegex" aria-pressed="false" title="Regular expression">.*</button>
+        </div>
+        <span class="matchinfo" id="matchInfo"></span>
+        <button class="navbtn" id="prevMatch" title="Previous match (Shift+Enter)">↑</button>
+        <button class="navbtn" id="nextMatch" title="Next match (Enter)">↓</button>
+        <span class="spacer"></span>
+        <button class="btn tiny ghost" id="btnClearFilters">CLEAR FILTERS</button>
+        <button class="btn tiny ghost" id="btnCopy">COPY VIEW</button>
+      </div>
+      <div class="filterbar" id="filterbar" hidden></div>
+      <div class="logwrap" id="logwrap">
+        <div class="log" id="log"></div>
+        <div class="nomatch" id="noMatch" hidden><b>Nothing on the wire.</b>No lines match the current table, event and search filters.</div>
+      </div>
+      <div class="statusbar">
+        <span id="statusLeft">—</span>
+        <span class="r" id="statusRight">/ search · Esc clear · click a line number to jump</span>
+      </div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
+<script>
+'use strict';
+
+/* ------------------------------------------------------------------
+   THE RECORD — a local, standalone reviewer for The Big Con's log.
+   Paste the record (S.log) or open a .txt/.log file. Nothing is sent
+   anywhere; the optional share link keeps the whole record in the
+   URL fragment and never touches a server.
+------------------------------------------------------------------- */
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const hasVS = (s) => String(s).replace(/\uFE0F/g, '');
+const starts = (line, prefixes) => {
+  const l = hasVS(line);
+  return prefixes.some((p) => l.startsWith(hasVS(p)));
+};
+const fmt = (n) => Number(n).toLocaleString('en-AU');
+
+const PALETTE = [
+  '#ffd166', '#7ee0d3', '#ff8fa3', '#8fb8ff',
+  '#c6a0ff', '#a0e7a0', '#ffb37a', '#74d0ff',
+  '#f0a6ca', '#d4e157', '#b0bec5', '#ff9f68'
+];
+
+/* ----------------------------- categories ----------------------------- */
+const CATS = [
+  { id:'turns',  label:'Turn breaks',        color:'#dbe7ea', test:(l)=> /^[-—–]+\s*TURN\b/i.test(l) },
+  { id:'raid',   label:'Raids & regulators', color:'#ff6b5e', test:(l)=> starts(l,['🚨','🧐','⚖️','🔍']) || /(REGULATOR RAID|INDICTED|under caution|crackdown|ACCC|ASIC|regulators? (move|circle|go)|MONOPOLY ALERT|MARKET MANIPULATION)/i.test(l) },
+  { id:'win',    label:'Wins',               color:'#ffe066', test:(l)=> /^🏆 .* banks /i.test(l) },
+  { id:'event',  label:'Events',             color:'#ffd166', test:(l)=> starts(l,['🎴','🌡️','🦘','🟣','📺','🌐']) || /(EVENT —|MOOD SHIFTS|BUDGET NIGHT|MADE (has|remains))/i.test(l) },
+  { id:'money',  label:'Money',              color:'#a0e7a0', test:(l)=> starts(l,['💵','💰','💸','👩‍💼','🪨']) || /(collects\s+\$|gains\s+\$|loses\s+\$|pays\s+\$|pockets a\s+\$|buyout|compensation|review fee|will pay \$)/i.test(l) },
+  { id:'move',   label:'Movement',           color:'#8fb8ff', test:(l)=> starts(l,['→','✈️','🚤','🛳️','🛩️','🚂','🏎️','👟','🏝️','🛂']) || /(moves to|jets into|lands in|takes the Qantas|takes the gondola|jogs a lap|sends the cruise ships)/i.test(l) },
+  { id:'cortisol', label:'Cortisol',         color:'#ffb37a', test:(l)=> starts(l,['🔥','🏛️','🛰️','🧱','🏖️','💪']) || /(Cortisol|MASS PANIC|regulators circling)/i.test(l) },
+  { id:'market', label:'Market mood',        color:'#c6a0ff', test:(l)=> starts(l,['📈','📉','🌡️','🟣','🦘']) || /(BOOM|PANIC:|FRENZY:|STAGE 5 DECLINE|MOOD SHIFTS|BUDGET NIGHT)/i.test(l) },
+  { id:'deals',  label:'Deals & takeovers',  color:'#ff8fa3', test:(l)=> starts(l,['🤝','📝','📌','📂','💸','🛂','🧐']) || /(buyout|toll|muscles in|seizes|favor|leans on|Dossier|review fee)/i.test(l) },
+  { id:'intel',  label:'Intel & dirt',       color:'#7ee0d3', test:(l)=> starts(l,['🛈','🔎','🗣️','🕴️','🦅','🗑️','📂','✉️']) || /(Intel|leaks dirt|tweets|Dossier|investigation|briefs|buries the story|peeks at tomorrow)/i.test(l) },
+  { id:'board',  label:'Board ops',          color:'#e19bff', test:(l)=> starts(l,['🚀','💥','🌊','♻️','🚧','🏝️','🛳️','🐛','🧹','🏔️','🛩️','🚤']) || /(missile|BONDMAGEDDON|rubble|sweeps|plants a bug|OVERTOURISM|rebuilds|BLOCKADED|Global skim)/i.test(l) },
+  { id:'setup',  label:'Setup & seating',    color:'#8fa3a8', test:(l)=> starts(l,['🌅','🎲','⛽','🧭','🌍','🔔','🔕','💤','👁']) || /(WIN CONDITION|new board is dealt|Seating was shuffled|Quikstop opened|High-value targets|GEOGRAPHY DLC|joins the con|back at the table|lost connection|YOUR TURN,)/i.test(l) }
+];
+const CAT_BY_ID = Object.fromEntries(CATS.map((c) => [c.id, c]));
+
+/* ----------------------------- parsing ----------------------------- */
+const TURN_RE = /^[-—–]+\s*TURN\s+(\d+)\s*[·•|]\s*(.+?)\s*[-—–]+$/i;
+const NAME_PATTERNS = [
+  /^(.*?)\s+collects\s+\$/i,
+  /^(.*?)\s+gains\s+\$/i,
+  /^(.*?)\s+loses\s+\$/i,
+  /^(.*?)\s+pays\s+\$/i,
+  /^(.*?)\s+pockets a\s+\$/i,
+  /^(.*?)\s+moves to\s+/i,
+  /^(.*?)\s+is stripped of\s+/i,
+  /^(.*?)\s+is under caution/i,
+  /^(.*?)\s+[+-]?\d+\s+Cortisol\b/i,
+  /^(.*?)\s+launches a missile\b/i,
+  /^(.*?)\s+plants a bug\b/i,
+  /^(.*?)\s+sweeps\b/i,
+  /^(.*?)\s+tweets\./i,
+  /^(.*?)\s+leaks dirt on\b/i,
+  /^(.*?)\s+roasts\b/i,
+  /^(.*?)\s+banks\s+\$.*full set/i,
+  /^(.*?)\s+muscles in on\b/i,
+  /^(.*?)\s+seizes\b/i,
+  /^(.*?)\s+cashes a favor\b/i,
+  /^(.*?)\s+takes the slipstream\b/i,
+  /^(.*?)\s+sends the regulator after\b/i,
+  /^(.*?)\s+opens THE DOSSIER\b/i,
+  /^(.*?)\s+forces MADE to divest\b/i,
+  /^(.*?)\s+takes a beach day\b/i,
+  /^(.*?)\s+parks THE CORPORATE BOEING\b/i,
+  /^(.*?)\s+closes the sea lanes\b/i,
+  /^(.*?)\s+calls STAGE 5 DECLINE\b/i,
+  /^(.*?)\s+walls off\b/i,
+  /^(.*?)\s+sends the cruise ships\b/i,
+  /^(.*?)\s+sets the rate\b/i,
+  /^(.*?)\s+is away —/i
+];
+const BAD_NAMES = /^(every player|everyone|nobody|someone|each player|the governor|the table|the press room|the regulator|the sea|the rock|the books|the island|the warhead|a new board|the con|the market|the mood|the wire|market|breaking news|big bessent)$/i;
+
+function cleanName(raw) {
+  let s = String(raw || '')
+    .replace(/^[^\p{L}\p{N}"'“”‘’(]+/u, '')
+    .replace(/[\s.,;:!?—–-]+$/u, '')
+    .trim();
+  if (s.length > 40) s = s.slice(0, 40).trim();
+  return s;
+}
+
+function detectPlayers(lines, metaPlayers) {
+  const order = [];
+  const add = (raw) => {
+    const name = cleanName(raw);
+    if (!name || name.length < 2 || BAD_NAMES.test(name)) return;
+    if (!order.some((p) => p.name.toLowerCase() === name.toLowerCase())) order.push({ name });
+  };
+
+  // The turn header is the authoritative roster line.
+  let headers = 0;
+  for (const line of lines) {
+    const m = line.match(TURN_RE);
+    if (m) { headers++; add(m[2]); }
+    let j;
+    if ((j = line.match(/🎲\s*Seating was shuffled\. First to move:\s*(.+?)\.?$/i))) add(j[1]);
+    if ((j = line.match(/🔔\s*(.+?)\s+joins the con\b/i))) add(j[1]);
+    if ((j = line.match(/🔔\s*(.+?)\s+is back at the table\b/i))) add(j[1]);
+    if ((j = line.match(/🔔\s*(.+?)\s+reconnected\b/i))) add(j[1]);
+  }
+
+  // No headers (an excerpt, or a record cut before the first turn):
+  // fall back to high-confidence verb patterns.
+  if (!headers) {
+    for (const line of lines) {
+      for (const re of NAME_PATTERNS) {
+        const m = line.match(re);
+        if (m) { add(m[1]); break; }
+      }
+    }
+  }
+
+  // If the host passed the real roster + colours, keep those colours.
+  if (Array.isArray(metaPlayers) && metaPlayers.length) {
+    const byName = new Map(metaPlayers.filter((p) => p && p.n).map((p) => [String(p.n).toLowerCase(), p.c]));
+    for (const p of order) {
+      const c = byName.get(p.name.toLowerCase());
+      if (typeof c === 'string' && /^#[0-9a-f]{3,8}$/i.test(c)) p.color = c;
+    }
+  }
+  order.forEach((p, i) => { if (!p.color) p.color = PALETTE[i % PALETTE.length]; });
+  return order;
+}
+
+function buildMatcher(players) {
+  const names = players.map((p) => p.name).filter(Boolean).sort((a, b) => b.length - a.length);
+  if (!names.length) return null;
+  try {
+    return new RegExp('(^|[^\\p{L}\\p{N}_])(' + names.map(escRe).join('|') + ')(?=[^\\p{L}\\p{N}_]|$)', 'gu');
+  } catch (_) {
+    return new RegExp('(^|\\W)(' + names.map(escRe).join('|') + ')(?=\\W|$)', 'g');
+  }
+}
+
+function namesIn(text, matcher, lookup) {
+  if (!matcher) return [];
+  const out = [];
+  matcher.lastIndex = 0;
+  let m;
+  while ((m = matcher.exec(text))) {
+    const canon = lookup.get(m[2].toLowerCase());
+    if (canon && !out.includes(canon)) out.push(canon);
+    if (m.index === matcher.lastIndex) matcher.lastIndex++;
+  }
+  return out;
+}
+
+function parseRecord(raw, meta) {
+  const text = String(raw || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').replace(/\u0000/g, '');
+  const lines = text.split('\n').map((l) => l.replace(/\s+$/g, '')).filter((l) => l.trim().length);
+  if (!lines.length) return null;
+
+  const players = detectPlayers(lines, meta && meta.p);
+  const lookup = new Map(players.map((p) => [p.name.toLowerCase(), p.name]));
+  const matcher = buildMatcher(players);
+  const entries = [];
+  let turn = null, turnName = null, block = -1, turnNo = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const tm = line.match(TURN_RE);
+    if (tm) {
+      turn = Number(tm[1]);
+      turnName = cleanName(tm[2]);
+      block = i;
+      turnNo++;
+    }
+    const cats = new Set();
+    for (const c of CATS) { if (c.test(line)) cats.add(c.id); }
+    const who = namesIn(line, matcher, lookup);
+    let kind = 'sys';
+    if (tm) kind = 'turn';
+    else if (/^🏆 .* banks /i.test(line)) kind = 'win';
+    else if (cats.has('raid')) kind = 'raid';
+    else if (cats.has('event')) kind = 'event';
+    else if (cats.has('money')) kind = 'money';
+    entries.push({ i, text: line, cats, players: who, isTurn: !!tm, turn, turnName, block, kind });
+  }
+
+  const turns = entries.filter((e) => e.isTurn).map((e) => ({ n: e.turn, name: e.turnName, line: e.i, block: e.block }));
+  return {
+    text,
+    lines,
+    entries,
+    players,
+    turns,
+    turnCount: turns.length,
+    firstTurn: turns.length ? turns[0].n : null,
+    lastTurn: turns.length ? turns[turns.length - 1].n : null
+  };
+}
+
+/* ----------------------------- state ----------------------------- */
+const state = {
+  rec: null,
+  meta: null,
+  selectedPlayers: new Set(),
+  activeCats: new Set(),
+  q: '',
+  caseSensitive: false,
+  regex: false,
+  onlyMatches: false,
+  showNums: true,
+  wrap: true,
+  compact: false,
+  matchLines: [],
+  matchIdx: 0,
+  visible: [],
+  searchRe: null,
+  searchError: false
+};
+
+const SAMPLE = [
+  '🌅 A new board is dealt — 70 exhibits, 194 freshly rebuilt connections, 4 at the table.',
+  '🎲 Seating was shuffled. First to move: BOT 3 DJT.',
+  '⛽ Quikstop opened SUNRISE this game. Everyone starts there with $15 and 2 Intel.',
+  '🏆 WIN CONDITION: $100 in the bank AND one of every node type (BANK, COMMODITY, MEDIA, CORPORATE, REGULATOR, CHART, WILD). The host set the target.',
+  '',
+  '—— TURN 11 · BOT 1 markwatson ——',
+  '💵 BOT 1 markwatson collects $18 (salary $3 + holdings $11 + synergies $4) — now $61.',
+  '→ BOT 1 markwatson moves to ACCC.',
+  '🛂 BOT 1 markwatson pays $1 toll to BOT 4 denialswan.',
+  '🔥 BOT 1 markwatson -2 Cortisol (now 4) — friendly coverage.',
+  '🗞️ BOT 1 markwatson spins the story smooth.',
+  '📝 BOT 1 markwatson muscles in on THE ROCK CAN SMELL IT.',
+  '💸 BOT 4 denialswan pockets a $7 buyout.',
+  '🧐 ACCC review fee: BOT 1 markwatson pays BOT 4 denialswan $2.',
+  '',
+  '—— TURN 12 · BOT 3 DJT ——',
+  '💵 BOT 3 DJT collects $16 (salary $3 + holdings $13 + synergies $0) — now $67.',
+  '🎴 EVENT — QUIKSTOP ROBBERY',
+  '🌡️ THE MOOD SHIFTS — MARKET: CALM (no modifiers · 1 🛈 = $2).',
+  '💸 BOT 2 bessock loses $1 — nobody was watching the till.',
+  '💸 BOT 4 denialswan loses $1 — nobody was watching the till.',
+  '',
+  '—— TURN 12 · BOT 2 bessock ——',
+  '💵 BOT 2 bessock collects $12 (salary $3 + holdings $7 + synergies $2) — now $48.',
+  '🔎 Striking THE IB DIPLOMA PROGRAMME opens a REGULATOR INVESTIGATION — BOT 2 bessock will answer to ASIC or the ACCC next turn.',
+  '🦅 BOT 2 bessock tweets. BOT 1 markwatson loses 3 Intel (the greater of 3 or 50%).',
+  '🚨 REGULATOR RAID! BOT 2 bessock is stripped of THE ROCK CAN SMELL IT — cameras everywhere.',
+  '🚨 BOT 2 bessock is under caution: Cortisol resets to 0, and next turn brings no income and a single step.',
+  '',
+  '—— TURN 13 · BOT 4 denialswan ——',
+  '💵 BOT 4 denialswan collects $19 (salary $3 + holdings $14 + synergies $2) — now $52.',
+  '→ BOT 4 denialswan moves to TUVALU.',
+  '🏝️ BOT 4 denialswan lands in TUVALU — THE JOIN IS FREE. First arrival claims it: no action, no cost, no Cortisol.',
+  '🐛 BOT 4 denialswan plants a bug on THE HIDDEN KINGDOM.',
+  '🧹 BOT 4 denialswan sweeps 2 bugs — 1 rival bug off their own nodes — the office is clean.',
+  '',
+  '—— TURN 13 · BOT 1 markwatson ——',
+  '💵 BOT 1 markwatson collects $43 (salary $3 + holdings $36 + synergies $4) — now $104.',
+  '🤝 BOT 1 markwatson leans on the table — every other player feels it.',
+  '📂 BOT 1 markwatson opens THE DOSSIER — this turn’s hostile takeovers cost list price, not double.',
+  '📌 THE RESERVE BANK OF AUSTRALIA does not get more expensive — list price, always.',
+  '📝 BOT 1 markwatson seizes THE RESERVE BANK OF AUSTRALIA.',
+  '🏆 BOT 1 markwatson banks $104 with the full set of node types — the target was $100. The con is complete.'
+].join('\n');
+
+/* ----------------------------- small helpers ----------------------------- */
+let toastTimer = 0;
+function toast(msg, bad) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.toggle('bad', !!bad);
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+}
+function saveJSON(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) {}
+}
+function readJSON(key) {
+  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (_) { return null; }
+}
+function playerColor(name) {
+  if (!state.rec) return '#ffffff';
+  const p = state.rec.players.find((x) => x.name.toLowerCase() === String(name).toLowerCase());
+  return p ? p.color : '#ffffff';
+}
+function catColor(e) {
+  for (const c of CATS) { if (e.cats.has(c.id)) return c.color; }
+  return '#2a3a36';
+}
+function reindex(rec) {
+  rec.lookup = new Map(rec.players.map((p) => [p.name.toLowerCase(), p.name]));
+  rec.matcher = buildMatcher(rec.players);
+  for (const e of rec.entries) e.players = namesIn(e.text, rec.matcher, rec.lookup);
+}
+
+/* ----------------------------- search & filters ----------------------------- */
+function makeSearchRe() {
+  state.searchError = false;
+  if (!state.q) return null;
+  try {
+    const flags = state.caseSensitive ? 'g' : 'gi';
+    return new RegExp(state.regex ? state.q : escRe(state.q), flags);
+  } catch (_) {
+    state.searchError = true;
+    return null;
+  }
+}
+function testSearch(text) {
+  if (!state.searchRe) return true;
+  state.searchRe.lastIndex = 0;
+  return state.searchRe.test(text);
+}
+function catPass(e) {
+  if (!state.activeCats.size) return true;
+  for (const c of e.cats) { if (state.activeCats.has(c)) return true; }
+  return false;
+}
+function playerPass(e) {
+  if (!state.selectedPlayers.size) return true;
+  return e.players.some((p) => state.selectedPlayers.has(p));
+}
+function passesFilters(e) { return catPass(e) && playerPass(e); }
+
+function markSearch(text) {
+  if (!state.searchRe) return esc(text);
+  let re;
+  try {
+    const flags = state.searchRe.flags.includes('g') ? state.searchRe.flags : state.searchRe.flags + 'g';
+    re = new RegExp(state.searchRe.source, flags);
+  } catch (_) { return esc(text); }
+  let out = '', last = 0, m, guard = 0;
+  while ((m = re.exec(text)) && guard++ < 800) {
+    if (!m[0].length) { re.lastIndex++; continue; }
+    out += esc(text.slice(last, m.index));
+    out += '<mark class="q">' + esc(m[0]) + '</mark>';
+    last = m.index + m[0].length;
+  }
+  return out + esc(text.slice(last));
+}
+
+function highlightLine(text) {
+  const rec = state.rec;
+  if (!rec || !rec.matcher) return markSearch(text);
+  const matcher = rec.matcher;
+  matcher.lastIndex = 0;
+  let out = '', last = 0, m, guard = 0;
+  while ((m = matcher.exec(text)) && guard++ < 500) {
+    const start = m.index + m[1].length;
+    const end = start + m[2].length;
+    if (start > last) out += markSearch(text.slice(last, start));
+    const canon = rec.lookup.get(m[2].toLowerCase());
+    const color = canon ? playerColor(canon) : '#fff';
+    out += '<span class="pl" style="--pc:' + color + '" title="' + esc(canon || m[2]) + '">'
+      + markSearch(text.slice(start, end)) + '</span>';
+    last = end;
+    if (m.index === matcher.lastIndex) matcher.lastIndex++;
+  }
+  return out + markSearch(text.slice(last));
+}
+
+/* ----------------------------- line markup ----------------------------- */
+function lineHTML(e, match, current, ctx) {
+  if (e.isTurn) {
+    const color = playerColor(e.turnName);
+    return '<div class="line turn' + (ctx ? ' ctx' : '') + '" id="ln-' + e.i + '" data-i="' + e.i + '" style="--pc:' + color + '">'
+      + '<div class="turnrule"><span class="tbadge">' + markSearch('TURN ' + e.turn) + '</span>'
+      + '<span class="twho">' + markSearch(e.turnName) + '</span><span class="tline"></span>'
+      + '<button type="button" class="turnln" data-line="' + e.i + '" title="Highlight line ' + (e.i + 1) + '">' + (e.i + 1) + '</button></div></div>';
+  }
+  const dim = !!state.searchRe && !state.onlyMatches && !match;
+  const classes = 'line ' + e.kind
+    + (state.wrap ? '' : ' nowrap')
+    + (state.compact ? ' compact' : '')
+    + (dim ? ' dim' : '')
+    + (current ? ' hit' : '');
+  return '<div class="' + classes + '" id="ln-' + e.i + '" data-i="' + e.i + '" style="--gc:' + catColor(e) + '">'
+    + '<button type="button" class="ln" data-line="' + e.i + '" title="Highlight line ' + (e.i + 1) + '">' + (e.i + 1) + '</button><span class="gut"></span>'
+    + '<span class="txt">' + highlightLine(e.text) + '</span></div>';
+}
+
+/* ----------------------------- render ----------------------------- */
+function render(opts) {
+  opts = opts || {};
+  if (!state.rec) return;
+  state.searchRe = makeSearchRe();
+  const entries = state.rec.entries;
+  const searchActive = !!state.searchRe;
+  const only = state.onlyMatches && searchActive;
+  const filterActive = state.selectedPlayers.size > 0 || state.activeCats.size > 0;
+  const noFilters = !filterActive;
+
+  const pass = new Map();
+  const match = new Map();
+  const blockVisible = new Set();
+  const blockMatch = new Set();
+
+  for (const e of entries) {
+    if (e.isTurn) continue;
+    const pf = passesFilters(e);
+    const sm = searchActive ? testSearch(e.text) : false;
+    pass.set(e.i, pf);
+    match.set(e.i, sm);
+    if (pf && (!only || sm)) {
+      blockVisible.add(e.block);
+      if (sm) blockMatch.add(e.block);
+    }
+  }
+
+  const out = [];
+  const visible = [];
+  const matchLines = [];
+  for (const e of entries) {
+    if (e.isTurn) {
+      const self = passesFilters(e);
+      const sm = searchActive ? testSearch(e.text) : false;
+      const show = only ? (blockMatch.has(e.block) || sm) : (noFilters || self || blockVisible.has(e.block));
+      if (!show) continue;
+      if (sm) matchLines.push(e.i);
+      const ctx = !noFilters && !self || only;
+      out.push(lineHTML(e, sm, false, ctx));
+      visible.push(e.i);
+      continue;
+    }
+    const pf = pass.get(e.i);
+    const sm = match.get(e.i);
+    if (!pf || (only && !sm)) continue;
+    if (sm) matchLines.push(e.i);
+    const current = false;
+    out.push(lineHTML(e, sm, current, false));
+    visible.push(e.i);
+  }
+
+  state.visible = visible;
+  state.matchLines = matchLines;
+  if (state.matchIdx >= matchLines.length) state.matchIdx = 0;
+
+  const log = $('log');
+  log.innerHTML = out.join('');
+  $('noMatch').hidden = visible.length > 0;
+  $('matchInfo').innerHTML = searchActive
+    ? (matchLines.length ? '<b>' + (state.matchIdx + 1) + '</b> / ' + matchLines.length : '0 / 0')
+    : (state.searchError ? 'bad regex' : '');
+  $('searchWrap').classList.toggle('invalid', state.searchError);
+
+  // search navigation only applies to real lines, never turn headers
+  document.querySelectorAll('.line.hit').forEach((el) => el.classList.remove('hit'));
+  if (searchActive && matchLines.length) {
+    const cur = $('ln-' + matchLines[state.matchIdx]);
+    if (cur) cur.classList.add('hit');
+  }
+
+  renderFilterbar();
+  renderStats();
+}
+
+function renderPlayers() {
+  const rec = state.rec;
+  if (!rec) return;
+  $('playerCount').textContent = rec.players.length + ' NAMES';
+  const rows = rec.players.map((p) => {
+    let n = 0;
+    for (const e of rec.entries) {
+      if (!e.isTurn && e.players.some((x) => x.toLowerCase() === p.name.toLowerCase()) && catPass(e)) n++;
+    }
+    const on = state.selectedPlayers.size === 0 || state.selectedPlayers.has(p.name);
+    return '<button class="chip' + (on ? '' : ' off') + '" data-player="' + esc(p.name) + '" aria-pressed="' + on + '" style="--pc:' + p.color + '">'
+      + '<span class="dot"></span><span class="nm">' + esc(p.name) + '</span><span class="ct">' + n + '</span></button>';
+  });
+  $('playerChips').innerHTML = rows.join('') || '<span style="color:#6f8480;font-size:11px">No names detected — add one below.</span>';
+}
+
+function renderCats() {
+  const rec = state.rec;
+  if (!rec) return;
+  const rows = CATS.map((c) => {
+    let n = 0;
+    for (const e of rec.entries) {
+      if (e.cats.has(c.id) && playerPass(e)) n++;
+    }
+    const on = state.activeCats.size === 0 || state.activeCats.has(c.id);
+    return '<button class="cat" data-cat="' + c.id + '" aria-pressed="' + on + '" style="--cc:' + c.color + '">'
+      + '<span class="cdot"></span><span class="cn">' + esc(c.label) + '</span><span class="cc">' + n + '</span></button>';
+  });
+  $('catList').innerHTML = rows.join('');
+}
+
+function renderFilterbar() {
+  const bits = [];
+  for (const p of state.selectedPlayers) {
+    bits.push('<span class="fchip" style="--fc:' + playerColor(p) + '"><span class="dot"></span>' + esc(p)
+      + ' <button data-unfilter="p" data-value="' + esc(p) + '" title="Remove player filter">×</button></span>');
+  }
+  for (const id of state.activeCats) {
+    const c = CAT_BY_ID[id];
+    if (!c) continue;
+    bits.push('<span class="fchip" style="--fc:' + c.color + '"><span class="dot"></span>' + esc(c.label)
+      + ' <button data-unfilter="c" data-value="' + id + '" title="Remove event filter">×</button></span>');
+  }
+  if (state.q) {
+    bits.push('<span class="fchip"><span class="dot" style="--fc:#ffd166;background:#ffd166"></span>“' + esc(state.q) + '”'
+      + ' <button data-unfilter="q" title="Clear search">×</button></span>');
+  }
+  const bar = $('filterbar');
+  bar.hidden = bits.length === 0;
+  bar.innerHTML = bits.length ? '<span style="letter-spacing:1.5px">FILTERS</span>' + bits.join('') : '';
+}
+
+function renderStats() {
+  const rec = state.rec;
+  if (!rec) return;
+  const shown = state.visible.filter((i) => !rec.entries[i].isTurn).length;
+  const total = rec.entries.filter((e) => !e.isTurn).length;
+  const range = rec.turnCount ? ('T' + rec.firstTurn + '–T' + rec.lastTurn) : 'no turn headers';
+  $('stats').innerHTML = 'LINES <b>' + fmt(total) + '</b><br>SHOWING <b>' + fmt(shown) + '</b>'
+    + '<br>TURN BREAKS <b>' + fmt(rec.turnCount) + '</b> · ' + range
+    + '<br>TABLE <b>' + fmt(rec.players.length) + '</b> · ' + fmt(rec.lines.length) + ' raw lines';
+  $('statusLeft').innerHTML = 'SHOWING <b>' + fmt(shown) + '</b> OF <b>' + fmt(total) + '</b> LINES'
+    + (rec.turnCount ? ' · ' + range : '') + ' · <b>' + rec.players.length + '</b> AT THE TABLE';
+}
+
+function renderJump() {
+  const rec = state.rec;
+  if (!rec) return;
+  const opts = ['<option value="">— pick a turn —</option>'];
+  for (const t of rec.turns) {
+    opts.push('<option value="' + t.line + '">T' + t.n + ' · ' + esc(t.name) + '</option>');
+  }
+  $('jumpTurn').innerHTML = opts.join('');
+}
+
+function renderAll() {
+  if (!state.rec) return;
+  renderPlayers();
+  renderCats();
+  renderJump();
+  render();
+}
+
+function focusMatch(delta, scroll) {
+  if (!state.matchLines.length) return;
+  const n = state.matchLines.length;
+  state.matchIdx = ((state.matchIdx + delta) % n + n) % n;
+  document.querySelectorAll('.line.hit').forEach((el) => el.classList.remove('hit'));
+  const el = $('ln-' + state.matchLines[state.matchIdx]);
+  if (el) {
+    el.classList.add('hit');
+    if (scroll) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+  $('matchInfo').innerHTML = '<b>' + (state.matchIdx + 1) + '</b> / ' + n;
+}
+
+function jumpToLine(i) {
+  const el = $('ln-' + i);
+  if (!el) { toast('That turn is hidden by the current filters.', true); return; }
+  el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1200);
+}
+
+/* ----------------------------- record lifecycle ----------------------------- */
+const PREFS_KEY = 'bigcon.logs.prefs';
+const LAST_KEY = 'bigcon.logs.last';
+
+function saveLast() {
+  if (!state.rec) return;
+  saveJSON(LAST_KEY, {
+    t: state.rec.text,
+    p: state.rec.players.map((p) => ({ n: p.name, c: p.color })),
+    at: Date.now()
+  });
+}
+
+function alertMsg(msg) {
+  const el = $('alert');
+  el.textContent = msg;
+  el.hidden = false;
+}
+
+function loadRecord(raw, meta, opts) {
+  opts = opts || {};
+  $('alert').hidden = true;
+  const rec = parseRecord(raw, meta);
+  if (!rec) {
+    alertMsg('That did not look like a record — paste at least one line of “the record” first.');
+    return false;
+  }
+
+  state.rec = rec;
+  state.meta = meta || null;
+  reindex(rec);
+  state.selectedPlayers.clear();
+  state.activeCats.clear();
+  state.q = '';
+  state.searchRe = null;
+  state.searchError = false;
+  state.matchIdx = 0;
+  state.visible = [];
+  state.matchLines = [];
+
+  $('search').value = '';
+  $('addPlayer').value = '';
+  $('raw').value = rec.text;
+  $('intake').hidden = true;
+  $('viewer').hidden = false;
+  $('btnShare').disabled = false;
+  $('btnDownload').disabled = false;
+  document.querySelector('.side').classList.remove('open');
+  $('btnSide').setAttribute('aria-expanded', 'false');
+  $('btnSide').textContent = '☰ FILTERS';
+  document.querySelector('.back').textContent = '← BACK TO THE TABLE';
+
+  syncControls();
+  saveLast();
+  renderAll();
+  $('logwrap').scrollTop = 0;
+
+  if (!opts.keepHash) {
+    try { history.replaceState(null, '', location.href.split('#')[0]); } catch (_) {}
+  }
+  if (opts.announce) toast(opts.announce);
+  return true;
+}
+
+function showIntake() {
+  $('intake').hidden = false;
+  $('viewer').hidden = true;
+  $('btnShare').disabled = true;
+  $('btnDownload').disabled = true;
+  $('alert').hidden = true;
+  if (state.rec) $('raw').value = state.rec.text;
+  seekRaw();
+}
+
+function seekRaw() {
+  const raw = $('raw');
+  try { raw.focus({ preventScroll: true }); } catch (_) { raw.focus(); }
+  raw.scrollTop = 0;
+}
+
+function visibleText() {
+  if (!state.rec) return '';
+  return state.visible.map((i) => state.rec.entries[i].text).join('\n');
+}
+
+function addManualPlayer(rawName) {
+  if (!state.rec) return;
+  const name = cleanName(rawName);
+  if (!name) return;
+  if (state.rec.players.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+    toast('Already at the table.', true);
+    return;
+  }
+  const used = new Set(state.rec.players.map((p) => p.color.toLowerCase()));
+  const color = PALETTE.find((c) => !used.has(c.toLowerCase())) || PALETTE[state.rec.players.length % PALETTE.length];
+  state.rec.players.push({ name, color });
+  reindex(state.rec);
+  $('addPlayer').value = '';
+  saveLast();
+  renderAll();
+  toast('Added ' + name + ' to the table.');
+}
+
+async function readFile(file) {
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    alertMsg('That file is over 8 MB. The record is normally a few dozen KB.');
+    return;
+  }
+  try {
+    const text = await file.text();
+    $('raw').value = text;
+    loadRecord(text, null, { announce: 'Loaded ' + file.name + '.' });
+  } catch (_) {
+    alertMsg('Could not read that file. Try a plain .txt or .log export.');
+  }
+}
+
+async function copyText(text, message) {
+  if (!text) { toast('Nothing to copy.', true); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(message || 'Copied to the clipboard.');
+  } catch (_) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      toast(ok ? (message || 'Copied to the clipboard.') : 'Clipboard blocked by the browser.', !ok);
+    } catch (e) {
+      toast('Clipboard blocked by the browser.', true);
+    }
+  }
+}
+
+/* ----------------------------- share links ----------------------------- */
+function bytesToB64url(bytes) {
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function b64urlToBytes(str) {
+  const b = String(str).replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b + '='.repeat((4 - (b.length % 4)) % 4);
+  const bin = atob(padded);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function encodePayload(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  if (typeof CompressionStream === 'function') {
+    try {
+      const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'));
+      const buf = await new Response(stream).arrayBuffer();
+      return 'd.' + bytesToB64url(new Uint8Array(buf));
+    } catch (_) {}
+  }
+  return 'b.' + bytesToB64url(bytes);
+}
+async function decodePayload(payload) {
+  const dot = payload.indexOf('.');
+  if (dot < 1) throw new Error('bad payload');
+  const kind = payload.slice(0, dot);
+  const bytes = b64urlToBytes(payload.slice(dot + 1));
+  if (kind === 'd') {
+    if (typeof DecompressionStream !== 'function') throw new Error('no decompression support');
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+    return await new Response(stream).text();
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+/* ----------------------------- display prefs ----------------------------- */
+function syncControls() {
+  $('optNums').checked = !!state.showNums;
+  $('optWrap').checked = !!state.wrap;
+  $('optCompact').checked = !!state.compact;
+  $('optOnly').checked = !!state.onlyMatches;
+  $('btnCase').setAttribute('aria-pressed', state.caseSensitive ? 'true' : 'false');
+  $('btnRegex').setAttribute('aria-pressed', state.regex ? 'true' : 'false');
+  applyDisplay();
+}
+function applyDisplay() {
+  const log = $('log');
+  log.classList.toggle('hide-ln', !state.showNums);
+}
+function savePrefs() {
+  saveJSON(PREFS_KEY, {
+    showNums: state.showNums,
+    wrap: state.wrap,
+    compact: state.compact,
+    onlyMatches: state.onlyMatches
+  });
+}
+function loadPrefs() {
+  const p = readJSON(PREFS_KEY) || {};
+  if (typeof p.showNums === 'boolean') state.showNums = p.showNums;
+  if (typeof p.wrap === 'boolean') state.wrap = p.wrap;
+  if (typeof p.compact === 'boolean') state.compact = p.compact;
+  if (typeof p.onlyMatches === 'boolean') state.onlyMatches = p.onlyMatches;
+}
+
+/* ----------------------------- share / download ----------------------------- */
+async function shareRecord() {
+  if (!state.rec) return;
+  const btn = $('btnShare');
+  btn.disabled = true;
+  try {
+    const payload = await encodePayload({
+      v: 1,
+      t: state.rec.text,
+      p: state.rec.players.map((p) => ({ n: p.name, c: p.color }))
+    });
+    const url = location.href.split('#')[0] + '#r=' + payload;
+    const msg = url.length > 120000
+      ? 'Link copied, but it is very long — some apps may truncate it.'
+      : 'Share link copied — the whole record rides in the fragment.';
+    await copyText(url, msg);
+  } catch (_) {
+    toast('Could not build a share link in this browser.', true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function downloadRecord() {
+  const text = visibleText();
+  if (!text) { toast('No visible lines to download.', true); return; }
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+    + '-' + pad(d.getHours()) + pad(d.getMinutes());
+  const blob = new Blob([text + '\n'], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'bigcon-record-' + stamp + '.txt';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  toast('Downloaded ' + state.visible.length + ' visible lines.');
+}
+
+/* ----------------------------- wiring ----------------------------- */
+function bindEvents() {
+  const raw = $('raw');
+  raw.addEventListener('input', () => { $('alert').hidden = true; });
+  raw.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      loadRecord(raw.value, null);
+    }
+  });
+
+  $('btnLoad').onclick = () => loadRecord(raw.value, null);
+  $('btnSample').onclick = () => { raw.value = SAMPLE; loadRecord(SAMPLE, null, { announce: 'Sample record loaded.' }); };
+  $('btnRestore').onclick = () => {
+    const last = readJSON(LAST_KEY);
+    if (!last || typeof last.t !== 'string') { toast('No saved record in this browser.', true); return; }
+    loadRecord(last.t, { p: last.p }, { announce: 'Restored your last record.' });
+  };
+  $('file').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    readFile(f);
+  });
+
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => {
+    e.preventDefault(); e.stopPropagation(); drop.classList.add('drag');
+  }));
+  drop.addEventListener('dragleave', (e) => {
+    if (!drop.contains(e.relatedTarget)) drop.classList.remove('drag');
+  });
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    drop.classList.remove('drag');
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) { readFile(f); return; }
+    const t = e.dataTransfer.getData('text/plain');
+    if (t) { raw.value = t; loadRecord(t, null); }
+  });
+  // stop a stray drop from replacing the viewer with the file
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => e.preventDefault());
+
+  $('btnNew').onclick = () => { showIntake(); $('btnRestore').hidden = !readJSON(LAST_KEY); };
+  $('btnShare').onclick = shareRecord;
+  $('btnDownload').onclick = downloadRecord;
+  $('btnSide').onclick = () => {
+    const side = document.querySelector('.side');
+    const open = side.classList.toggle('open');
+    $('btnSide').setAttribute('aria-expanded', open ? 'true' : 'false');
+    $('btnSide').textContent = open ? '× HIDE FILTERS' : '☰ FILTERS';
+  };
+
+  $('btnAddPlayer').onclick = () => addManualPlayer($('addPlayer').value);
+  $('addPlayer').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addManualPlayer($('addPlayer').value); }
+  });
+  $('btnAllPlayers').onclick = () => { state.selectedPlayers.clear(); state.matchIdx = 0; renderAll(); };
+  $('playerChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-player]');
+    if (!b) return;
+    const name = b.getAttribute('data-player');
+    if (!state.selectedPlayers.size) state.selectedPlayers.add(name);
+    else if (state.selectedPlayers.has(name)) state.selectedPlayers.delete(name);
+    else state.selectedPlayers.add(name);
+    state.matchIdx = 0;
+    renderAll();
+  });
+
+  $('btnAllCats').onclick = () => { state.activeCats.clear(); state.matchIdx = 0; renderAll(); };
+  $('catList').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-cat]');
+    if (!b) return;
+    const id = b.getAttribute('data-cat');
+    if (!state.activeCats.size) state.activeCats.add(id);
+    else if (state.activeCats.has(id)) state.activeCats.delete(id);
+    else state.activeCats.add(id);
+    state.matchIdx = 0;
+    renderAll();
+  });
+
+  $('filterbar').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-unfilter]');
+    if (!b) return;
+    const kind = b.getAttribute('data-unfilter');
+    const value = b.getAttribute('data-value') || '';
+    if (kind === 'p') state.selectedPlayers.delete(value);
+    else if (kind === 'c') state.activeCats.delete(value);
+    else { state.q = ''; $('search').value = ''; }
+    state.matchIdx = 0;
+    renderAll();
+  });
+
+  let searchTimer = 0;
+  $('search').addEventListener('input', () => {
+    state.q = $('search').value.trim();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { state.matchIdx = 0; render(); }, 90);
+  });
+  $('btnCase').onclick = () => {
+    state.caseSensitive = !state.caseSensitive;
+    $('btnCase').setAttribute('aria-pressed', state.caseSensitive ? 'true' : 'false');
+    state.matchIdx = 0;
+    render();
+  };
+  $('btnRegex').onclick = () => {
+    state.regex = !state.regex;
+    $('btnRegex').setAttribute('aria-pressed', state.regex ? 'true' : 'false');
+    state.matchIdx = 0;
+    render();
+  };
+  $('prevMatch').onclick = () => focusMatch(-1, true);
+  $('nextMatch').onclick = () => focusMatch(1, true);
+  $('btnClearFilters').onclick = () => {
+    state.selectedPlayers.clear();
+    state.activeCats.clear();
+    state.q = '';
+    $('search').value = '';
+    state.matchIdx = 0;
+    renderAll();
+  };
+  $('btnCopy').onclick = () => copyText(visibleText(), 'Copied ' + state.visible.length + ' visible lines.');
+  $('log').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-line]');
+    if (!b) return;
+    jumpToLine(Number(b.getAttribute('data-line')));
+  });
+
+  $('jumpTurn').onchange = () => {
+    const v = $('jumpTurn').value;
+    if (v !== '') jumpToLine(Number(v));
+  };
+
+  $('optNums').onchange = (e) => { state.showNums = e.target.checked; applyDisplay(); savePrefs(); };
+  $('optWrap').onchange = (e) => { state.wrap = e.target.checked; render(); savePrefs(); };
+  $('optCompact').onchange = (e) => { state.compact = e.target.checked; render(); savePrefs(); };
+  $('optOnly').onchange = (e) => { state.onlyMatches = e.target.checked; state.matchIdx = 0; render(); savePrefs(); };
+
+  document.addEventListener('keydown', (e) => {
+    const tag = (e.target.tagName || '').toLowerCase();
+    const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
+    if (e.key === '/' && !typing) {
+      e.preventDefault();
+      if (!$('viewer').hidden) { $('search').focus(); $('search').select(); }
+      else seekRaw();
+      return;
+    }
+    if (e.key === 'Escape' && document.activeElement === $('search')) {
+      $('search').value = '';
+      state.q = '';
+      state.matchIdx = 0;
+      render();
+      $('search').blur();
+      return;
+    }
+    if (!$('viewer').hidden && document.activeElement === $('search') && e.key === 'Enter') {
+      e.preventDefault();
+      focusMatch(e.shiftKey ? -1 : 1, true);
+    }
+  });
+
+  // A share link opened in an already-loaded tab is a same-document
+  // navigation, so pick the payload up here as well as on boot.
+  window.addEventListener('hashchange', () => {
+    if (location.hash.indexOf('#r=') === 0) bootFromHash();
+  });
+}
+
+/* ----------------------------- boot ----------------------------- */
+async function bootFromHash() {
+  const hash = location.hash;
+  if (!hash || hash.indexOf('#r=') !== 0) return false;
+  try {
+    let payload = hash.slice(3);
+    try { payload = decodeURIComponent(payload); } catch (_) {}
+    const json = await decodePayload(payload);
+    const obj = JSON.parse(json);
+    if (!obj || typeof obj.t !== 'string') throw new Error('bad record');
+    return loadRecord(obj.t, { p: obj.p }, { keepHash: true, announce: 'Record loaded from the link.' });
+  } catch (_) {
+    const msg = 'That share link could not be read. It may have been truncated — paste the record instead.';
+    alertMsg(msg);
+    toast(msg, true);
+    return false;
+  }
+}
+
+async function boot() {
+  loadPrefs();
+  syncControls();
+  bindEvents();
+
+  if (await bootFromHash()) return;
+
+  const pending = readJSON('bigcon-record-pending');
+  if (pending && typeof pending.t === 'string') {
+    try { localStorage.removeItem('bigcon-record-pending'); } catch (_) {}
+    if (loadRecord(pending.t, { p: pending.p }, { announce: 'Loaded from the game.' })) return;
+  }
+
+  const last = readJSON(LAST_KEY);
+  if (last && typeof last.t === 'string') $('btnRestore').hidden = false;
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+else boot();
+</script>
+</body>
+</html>

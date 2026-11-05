@@ -252,7 +252,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = '553cd43';
+const BUILD_COMMIT = 'ecf7bdb';
 const IS_DISCORD_ACTIVITY = new URLSearchParams(location.search).get('discord') === '1' || location.hostname.endsWith('.discordsays.com') || new URLSearchParams(location.search).has('instance_id');
 if(IS_DISCORD_ACTIVITY)window.__BIGCON_DISCORD_ACTIVITY__=true;
 const $=id=>document.getElementById(id);
@@ -2181,7 +2181,7 @@ function renderSide(){
   +'<div class="setcard"><span class="st">🎯 WIN SET</span>'+setHtml+'<span style="flex-basis:100%;color:#9ad">'+(Net.spect?'the spectacle is the point':(myMissing.length?'still need: '+myMissing.join(', ')+' · and $'+goalAmount():'full set held — now bank $'+goalAmount()))+'</span></div>'
   +'<div class="phasecard">'+phaseHtml+'</div>'
   +'<div class="paneltitle">THE SYNDICATE — '+S.players.length+' AT THE TABLE</div><div>'+prows+'</div>'
-  +'<div class="paneltitle">THE RECORD</div><div class="log" id="logbox">'+S.log.map(l=>'<div>'+l+'</div>').join('')+'</div>'
+  +'<div class="paneltitle">THE RECORD<span style="float:right;display:inline-flex;gap:6px;margin-top:-4px"><button class="mini" data-act="copyrecord" style="flex:0 0 auto;padding:3px 8px;font-size:10px">COPY</button><button class="mini" data-act="reviewlog" style="flex:0 0 auto;padding:3px 8px;font-size:10px" title="Open this record in the log reviewer">🔬 REVIEW</button></span></div><div class="log" id="logbox">'+S.log.map(l=>'<div>'+l+'</div>').join('')+'</div>'
   +'<div class="paneltitle">THE WIRE (chat)</div><div class="chatbox"><div class="chatlist" id="chatbox">'+chatHtml+'</div><div class="chatrow"><input id="chatInput" maxlength="140" placeholder="talk your book…" value="'+esc(chatVal)+'"><button id="chatSend">SEND</button></div></div>'
   +'<div class="footbtns"><button class="mini" data-act="notifications">🔔 TURN ALERTS: '+(turnAlertsEnabled()?'ON':'OFF')+'</button><button class="mini" data-act="rules">📖 RULES</button><a class="mini" href="exhibits.html" target="_blank" rel="noopener">▦ EXHIBITS</a><button class="mini" data-act="leave">↺ LEAVE</button></div>';
  const lb=$('logbox');if(lb)lb.scrollTop=lb.scrollHeight;
@@ -2321,6 +2321,20 @@ function handleNodeTap(t){
  const act=b.dataset.act;
  if(act==='rules'){showRules();return}
  if(act==='notifications'){toggleTurnAlerts();return}
+ if(act==='copyrecord'){
+  const rec=(S.log||[]).join('\n');
+  try{navigator.clipboard.writeText(rec).then(()=>toast('Record copied.')).catch(()=>toast('Could not copy the record.'))}catch(e){toast('Could not copy the record.')}
+  return;
+ }
+ if(act==='reviewlog'){
+  const meta={t:(S.log||[]).join('\n'),p:S.players.map(pl=>({n:pl.name,c:pl.color}))};
+  let saved=false;
+  try{localStorage.setItem('bigcon-record-pending',JSON.stringify(meta));saved=true}catch(e){}
+  const w=window.open('logs.html','_blank');
+  if(!w)toast('Allow pop-ups to open the log reviewer.');
+  else if(!saved)toast('Could not hand the record over — use COPY and paste it into the reviewer.');
+  return;
+ }
  if(act==='tolobby'){if(Net.role==='host')backToLobby();return}
  if(act==='leave'){
   if(Net.role==='host'){const v=await modal({title:'END THE GAME?',body:'This will disconnect everyone and return all players to the lobby screen. Proceed?',options:[{label:'Yes — end it',v:1},{label:'Keep scheming',v:0}]});if(v){sendAll({t:'reload'});setTimeout(()=>location.reload(),300)}}
