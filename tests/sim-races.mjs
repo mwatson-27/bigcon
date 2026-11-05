@@ -6,12 +6,19 @@
  *
  *   node tests/sim-races.mjs [--games 24] [--table 4] [--goal 100]
  *                           [--geo 0] [--chars a,b,c] [--variant baseline]
- *                           [--json out.json]
+ *                           [--shuffle 1] [--json out.json]
  *
  * --variant scales every per-character profile uniformly (BigConBots.setVariant):
  * the point is to race plan-first vs aggression-first vs cash-first temperaments
  * and bake the winner into static/bots.js. Same games (seeds + rosters) for every
  * variant, so the comparison is apples to apples.
+ *
+ * --shuffle 1 draws a seeded random roster each game instead of the sliding
+ * window (which only ever yields one table per roster offset — 8 compositions
+ * for a table of 4, so a per-character win rate is really a per-composition
+ * rate). The report also carries each face's average end-state money, node
+ * count and missing win types, which separates a rich loser from a poor one
+ * and a type-stacker from a set-builder.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,6 +39,12 @@ const GEO = args.geo === '1' || args.geo === 'true';
 const VARIANT = String(args.variant || 'baseline');
 const ROSTER = String(args.chars || 'markwatson,bessock,DJT,denialswan,tomkins,thousandyardwax,thebigag,japsnchen').split(',').map(s => s.trim()).filter(Boolean);
 const OUT = args.json || null;
+/* The default roster is a sliding window over the list, so a run only draws
+   one table per offset (8 compositions for a table of 4). --shuffle draws a
+   seeded, order-preserving random subset per game instead: every character
+   still sees ~equal games, but the co-occurrence mix is not fixed, which is
+   what makes a per-character win rate trustworthy. */
+const SHUFFLE = args.shuffle === '1' || args.shuffle === 'true' || args.shuffle === true;
 const TURN_CAP = 400; /* a game past this counts as a stall */
 
 /* All-bot makeGame: explicit character roster, no seat-retry rigamarole (flow
@@ -60,7 +73,20 @@ async function driveToOver(engine, S) {
   }
 }
 
-const stats = {};   /* char -> { games, wins, winTurns } */
+/* Deterministic LCG so --shuffle runs are reproducible. */
+function lcg(seed) {
+  let s = seed >>> 0;
+  return () => (s = (s * 1664525 + 1013904223) >>> 0);
+}
+function pickRoster(g, table) {
+  const pool = ROSTER.slice();
+  const rnd = lcg(0x9e3779b9 ^ (g * 2654435761));
+  const out = [];
+  for (let i = 0; i < table && pool.length; i++) out.push(pool.splice(rnd() % pool.length, 1)[0]);
+  return out;
+}
+
+const stats = {};   /* char -> { games, wins, winTurns, money, nodes, missing } */
 let totalTurns = 0, finished = 0, stalled = 0, totalIntents = 0;
 
 for (let g = 0; g < GAMES; g++) {
@@ -75,9 +101,9 @@ for (let g = 0; g < GAMES; g++) {
       applyIntent = async function (pi, m) { __simIntents++; return oa(pi, m); };
     })()`, engine.ctx, { filename: 'sim-instrument' });
 
-    /* rotate the roster so every character sees every seat over the run */
-    const chars = [];
-    for (let i = 0; i < TABLE; i++) chars.push(ROSTER[(g + i) % ROSTER.length]);
+    /* shuffle mode draws an independent, seeded table each game */
+    const chars = SHUFFLE ? pickRoster(g, TABLE) : [];
+    if (!SHUFFLE) for (let i = 0; i < TABLE; i++) chars.push(ROSTER[(g + i) % ROSTER.length]);
 
     const S = await simGame(engine, chars, g);
     await driveToOver(engine, S);
@@ -85,9 +111,21 @@ for (let g = 0; g < GAMES; g++) {
     const intents = engine.ctx.__simIntents;
     totalIntents += intents;
     const turns = S.turn;
-    for (const id of chars) {
-      const st = stats[id] || (stats[id] = { games: 0, wins: 0, winTurns: [] });
+    /* end-state book-keeping: a character can lose on cash OR on the win set,
+       so record both (plus node count) to tell a rich loser from a poor one */
+    const typesOf = seat => {
+      const seen = new Set();
+      for (const n of engine.acc.NODES) if (S.owner[n.id] === seat) seen.add(n.type);
+      return seen;
+    };
+    for (let seat = 0; seat < chars.length; seat++) {
+      const id = chars[seat];
+      const st = stats[id] || (stats[id] = { games: 0, wins: 0, winTurns: [], money: 0, nodes: 0, missing: 0 });
       st.games++;
+      st.money += S.players[seat].money;
+      st.nodes += engine.acc.NODES.filter(n => S.owner[n.id] === seat).length;
+      const seen = typesOf(seat);
+      st.missing += engine.acc.WIN_TYPES.filter(t => !seen.has(t)).length;
     }
     let winnerId = null;
     if (S.over) {
@@ -118,11 +156,19 @@ console.log('finished ' + finished + '/' + GAMES + '  stalls ' + stalled + '  av
 const rows = Object.keys(stats).map(id => {
   const st = stats[id];
   const wts = st.winTurns.length ? (st.winTurns.reduce((a, b) => a + b, 0) / st.winTurns.length).toFixed(1) : '-';
-  return { id, games: st.games, wins: st.wins, pct: ((st.wins / st.games) * 100).toFixed(1), avgTurns: wts };
+  return {
+    id, games: st.games, wins: st.wins, pct: ((st.wins / st.games) * 100).toFixed(1), avgTurns: wts,
+    money: (st.money / st.games).toFixed(1),
+    nodes: (st.nodes / st.games).toFixed(1),
+    missing: (st.missing / st.games).toFixed(2),
+  };
 });
 rows.sort((a, b) => b.wins - a.wins);
-console.log('\nchar                 games  wins  win%   avg win turns');
-for (const r of rows) console.log(r.id.padEnd(20) + String(r.games).padStart(5) + String(r.wins).padStart(6) + String(r.pct).padStart(6) + '%  ' + r.avgTurns);
+console.log('\nchar                 games  wins  win%   avg win turns  avg money  avg nodes  avg missing');
+for (const r of rows) {
+  console.log(r.id.padEnd(20) + String(r.games).padStart(5) + String(r.wins).padStart(6) + String(r.pct).padStart(6) + '%  '
+    + String(r.avgTurns).padStart(10) + String(r.money).padStart(11) + String(r.nodes).padStart(11) + String(r.missing).padStart(11));
+}
 
 if (OUT) {
   fs.writeFileSync(OUT, JSON.stringify({ variant: VARIANT, games: GAMES, table: TABLE, goal: GOAL, geo: GEO, finished, stalled, avgTurns: finished ? totalTurns / finished : null, stats }, null, 2));

@@ -247,8 +247,8 @@ test('BT-06a bots plant bugs on adjacent rival nodes', async t => {
     assert.ok(rec.intents.some(it => it.pi === 1 && it.act === 'bugmode'), 'the bot opened bug mode');
     assert.ok(rec.intents.some(it => it.pi === 1 && it.act === 'bug' && it.id === 'us'), 'the bot planted on the rival chart');
     assert.equal(S.bugs.us, 1, 'the bug landed on the engine state');
-    assert.equal(rec.pre.intel, 5, 'the bot held 5 Intel before the plant');
-    assert.ok(S.players[1].intel <= 4, 'the 1-Intel bug cost was paid');
+    assert.ok(rec.pre.intel >= 3, 'the bot held at least the bug cost before the plant (got ' + rec.pre.intel + ')');
+    assert.equal(S.players[1].intel, rec.pre.intel - 1, 'the 1-Intel bug cost was paid');
   });
 });
 
@@ -356,7 +356,7 @@ test('BT-07 bots banter on the table chat — one line at a time, in voice', asy
   assert.ok(botChats.length >= 1, 'the bots said something over a full game');
   assert.equal(botChats.length, S.chat.length, 'only bots spoke (an all-bot table)');
   for (const c of botChats) assert.ok(c.t.length > 0 && c.t.length <= 140, 'chat lines are short and real');
-  assert.ok(botChats.length <= S.turn * 1 + 8, 'the banter stays sparse across ' + S.turn + ' turns');
+  assert.ok(botChats.length <= S.turn * 2 + 8, 'the banter stays sparse across ' + S.turn + ' turns');
   engine.dispose();
 });
 
@@ -614,4 +614,281 @@ test('BT-16 the guest client wears the spectator flag: on at a spectator welcome
   assert.equal(Net.myIdx, 4, 'the spectator holds their roster row');
   engine.ctx.onGuestData({ t: 'tolobby', idx: 4 });
   assert.equal(Net.spect, false, 'the lobby clears the flag — they pick a face next con');
+});
+
+/* ---------- unit rigs: hand a synthetic botView straight to takeTurn ---------- */
+
+function fakePlayer(o = {}) {
+  return { name: 'P', color: '#fff', char: 'nobody', money: 50, intel: 0, cortisol: 0, pos: 'n1', bot: true, dc: false, ...o };
+}
+function fakeView(o = {}) {
+  const view = {
+    pi: 0, turn: 12, phase: 'action', curSeat: 0, over: false, goal: 100,
+    mood: 'CALM', moodRate: 2, steps: 0, spun: false, audited: false, cooked: false,
+    budgeted: false, dossier: false, geo: false, geoBeach: false, geoVenice: false,
+    geoMissiled: false, sisyPayout: 10, blockadeUsed: false, pressured: false,
+    bondmageddonUsed: false, slipped: false, extraStep: false,
+    owner: {}, bugs: {}, rubble: {}, blockades: {}, edges: [],
+    country: [], oilIds: [], cardIds: [], discardIds: [],
+    industryIds: [{ id: 'bank', ids: ['n1', 'n2'] }],
+    players: [], nmap: {}, nodes: [],
+    missingTypes: () => [],
+    seizePrice: () => 1, takePrice: () => 10, flatSeize: () => false,
+    ...o,
+  };
+  return view;
+}
+/* Run exactly one bot decision over the rig; the first (or chosen) intent
+   flips the fake view out of the action phase so takeTurn returns. `fresh`
+   re-seeds the module (default); pass false to keep cross-turn memory. */
+async function botDecides(t, view, stopOn, fresh = true) {
+  const Bots = engineWithBots(t).ctx.window.BigConBots;
+  const intents = [];
+  const api = {
+    applyIntent: async (pi, m) => {
+      intents.push(m);
+      if (!stopOn || stopOn(m)) { view.phase = 'move'; view.curSeat = -1; }
+    },
+    viewOf: () => view,
+    chat: () => {},
+  };
+  if (fresh) Bots.resetForGame(11);
+  await Bots.takeTurn(0, view, api);
+  return intents;
+}
+function engineWithBots(t) {
+  if (!engineWithBots.memo) {
+    const engine = loadEngine();
+    engine.ctx.window.__BIGCON_TEST__ = true;
+    engine.ctx.window.__BIGCON_BOT_SEED__ = 4242;
+    vm.runInContext(BOT_SRC, engine.ctx, { filename: 'static/bots.js' });
+    engineWithBots.memo = engine;
+    t.after(() => { engineWithBots.memo.dispose(); engineWithBots.memo = null; });
+  }
+  return engineWithBots.memo;
+}
+
+test('BT-17 a hot bot cools instead of scheming its way into a raid', async t => {
+  /* a raid costs two best nodes plus a caution turn — at cortisol 8 the cool
+     must outrank even a raid-push leak against a steaming rival */
+  const hot = fakeView({
+    owner: { n1: 0, r1: 1, r2: 1 },
+    nmap: { n1: { id: 'n1', type: 'BANK', income: 3, cost: 5 }, r1: { id: 'r1', type: 'CHART', income: 2, cost: 4 }, r2: { id: 'r2', type: 'MEDIA', income: 2, cost: 4 } },
+    players: [fakePlayer({ cortisol: 8, intel: 2 }), fakePlayer({ pos: 'r1', cortisol: 6, money: 50 })],
+  });
+  const intents = await botDecides(t, hot);
+  assert.equal(intents[0].act, 'laylow', 'the hot bot acted');
+  assert.equal(intents[0].choice, 'cool', 'at cortisol 8 with a raid-push leak on the table, it still chose to cool');
+
+  /* the same cold bot with nothing to buy passes for cash instead */
+  const cold = fakeView({
+    owner: { n1: 0 },
+    nmap: { n1: { id: 'n1', type: 'BANK', income: 0, cost: 5 } },
+    players: [fakePlayer({ cortisol: 1, money: 0, intel: 0 })],
+    seizePrice: () => 60,
+  });
+  const intents2 = await botDecides(t, cold);
+  assert.equal(intents2[0].act, 'laylow', 'the cold bot also acts');
+  assert.equal(intents2[0].choice, 'cash', 'a cold bot with no plays banks the lay-low cash');
+});
+
+test('BT-18 bots aim attacks at humans over equally juicy bots', async t => {
+  /* two rivals steaming at cortisol 6 with identical books — the only
+     difference is one is a human seat; the leak must go to the human */
+  for (const human of [1, 2]) {
+    const view = fakeView({
+      owner: { n1: 0, r1: 1, r2: 1, s1: 2, s2: 2 },
+      nmap: {
+        n1: { id: 'n1', type: 'BANK', income: 3, cost: 5 },
+        r1: { id: 'r1', type: 'CHART', income: 2, cost: 4 }, r2: { id: 'r2', type: 'MEDIA', income: 2, cost: 4 },
+        s1: { id: 's1', type: 'CHART', income: 2, cost: 4 }, s2: { id: 's2', type: 'MEDIA', income: 2, cost: 4 },
+      },
+      players: [
+        fakePlayer({ intel: 2 }),
+        fakePlayer({ pos: 'r1', cortisol: 6, money: 50, bot: human !== 1 }),
+        fakePlayer({ pos: 's1', cortisol: 6, money: 50, bot: human !== 2 }),
+      ],
+    });
+    const intents = await botDecides(t, view, m => m.act === 'leak');
+    const leaks = intents.filter(m => m.act === 'leak');
+    assert.ok(leaks.length >= 1, 'the bot fired a leak');
+    assert.ok(leaks.every(m => m.target === human), 'seat ' + human + ' is human — every leak went there, never at the bot');
+  }
+});
+
+test('BT-19 the win set bends acquisition: hunger scales, near-complete rivals get denied', async t => {
+  /* A: the node completes my last missing type — worth the steep list price */
+  const hunger = fakeView({
+    nmap: { n1: { id: 'n1', type: 'BANK', income: 1, cost: 5 } },
+    players: [fakePlayer({ money: 100 })],
+    seizePrice: () => 60,
+    missingTypes: () => ['BANK'],
+  });
+  assert.equal((await botDecides(t, hunger))[0].act, 'seize', 'the final set piece is seized even at $60');
+
+  /* B: the same node of a type I already hold — income alone does not pay that */
+  const meh = fakeView({
+    nmap: { n1: { id: 'n1', type: 'BANK', income: 1, cost: 5 } },
+    players: [fakePlayer({ money: 100 })],
+    seizePrice: () => 60,
+    missingTypes: () => ['CHART'],
+  });
+  const intentsB = await botDecides(t, meh);
+  assert.equal(intentsB[0].act, 'laylow', 'a duplicate-type node at the same price is walked away from');
+  assert.equal(intentsB[0].choice, 'cash', 'and the turn banks cash instead');
+
+  /* C: the rival is ONE type from the win and this node is that type — deny it */
+  const deny = fakeView({
+    owner: { n1: 1, n2: 1 },
+    nmap: { n1: { id: 'n1', type: 'BANK', income: 0, cost: 5 }, n2: { id: 'n2', type: 'BANK', income: 0, cost: 5 } },
+    players: [fakePlayer(), fakePlayer({ pos: 'n1' })],
+    takePrice: () => 10,
+    missingTypes: seat => (seat === 1 ? ['BANK'] : []),
+  });
+  assert.equal((await botDecides(t, deny))[0].act, 'seize', 'a near-complete rival is denied their last set piece');
+
+  /* D: same node, but the rival does not need it for their set — no denial bid */
+  const noDeny = fakeView({
+    owner: { n1: 1, n2: 1 },
+    nmap: { n1: { id: 'n1', type: 'BANK', income: 0, cost: 5 }, n2: { id: 'n2', type: 'BANK', income: 0, cost: 5 } },
+    players: [fakePlayer(), fakePlayer({ pos: 'n1' })],
+    takePrice: () => 10,
+    missingTypes: seat => (seat === 1 ? ['CHART'] : []),
+  });
+  assert.equal((await botDecides(t, noDeny))[0].act, 'laylow', 'a useless-to-them takeover is not bid up');
+});
+
+test('BT-20 lobby chatter: bots speak in character on seat and on a slow clock', t => {
+  const engine = engineWithBots(t);
+  const Bots = engine.ctx.window.BigConBots;
+  assert.equal(typeof Bots.lobbyLine, 'function', 'the policy exports lobbyLine');
+  for (const id of CHARS8) {
+    const line = Bots.lobbyLine(id);
+    assert.ok(typeof line === 'string' && line.length > 0 && line.length <= 140, id + ' has in-voice lobby lines');
+  }
+  const seen = new Set();
+  for (let i = 0; i < 40; i++) seen.add(Bots.lobbyLine('DJT'));
+  assert.ok(seen.size >= 2, 'lobby lines rotate — not one broken record');
+
+  const Net = engine.acc.Net;
+  const ctx = engine.ctx;
+  Net.role = 'host'; Net.myIdx = 0; Net.started = false;
+  Net.roster = [{ name: 'HOST', playerId: 'host', conn: null, char: null }];
+
+  ctx.addBotSeat();
+  const intro = Net.lobbyChat[Net.lobbyChat.length - 1];
+  assert.ok(intro && intro.n === Net.roster[1].name && intro.t.length > 0, 'a seated bot introduces itself in the lobby chat');
+
+  const count = Net.lobbyChat.length;
+  Net.lobbyChatAt = Date.now();
+  ctx.broadcastLobby();
+  assert.equal(Net.lobbyChat.length, count, 'the 20s gap gate holds the ambient chatter');
+  assert.ok(Net.lobbyChatT, 'the ambient clock is scheduled by the lobby broadcast');
+  Net.lobbyChatAt = 0;
+  ctx.broadcastLobby();
+  assert.equal(Net.lobbyChat.length, count + 1, 'after the gap a bot mutters again');
+  assert.equal(Net.lobbyChat[Net.lobbyChat.length - 1].n, Net.roster[1].name, 'the mutter came from the bot');
+});
+
+test('BT-21 sweep clears rival bugs off your own nodes — the office really is clean', async t => {
+  const engine = loadEngine();
+  t.after(() => engine.dispose());
+  const S = await makeGame(engine, 2, { seeds: [41] });
+  const NM = engine.acc.NODES.filter(n => n.id.indexOf('geo_') !== 0);
+  const mine = NM[0].id, rival = NM[1].id;
+  S.owner[mine] = 0; S.owner[rival] = 1;
+  S.bugs[mine] = 1;   /* planted by seat 1, sitting on MY node */
+  S.bugs[rival] = 0;  /* my own skim on their node */
+  S.cur = 0; S.phase = 'action'; S.mode = null;
+  S.players[0].intel = 5;
+  S.deck = Array.from({ length: 20 }, () => 'quiet');
+  await engine.f.applyIntent(0, { act: 'sweep' });
+  await pump();
+  assert.equal(S.bugs[mine], undefined, 'the rival bug on my node is swept (the rules copy says "remove every bug on your nodes")');
+  assert.equal(S.bugs[rival], undefined, 'my own skim operation is closed too');
+  assert.equal(S.players[0].intel, 3, 'the sweep cost 2 Intel');
+});
+
+test('BT-22 a bugged bot pays for the office sweep instead of letting the skim run', async t => {
+  const view = fakeView({
+    owner: { n1: 0 },
+    nmap: { n1: { id: 'n1', type: 'BANK', income: 3, cost: 5 } },
+    bugs: { n1: 1 }, /* a rival bug on the bot's own node */
+    players: [fakePlayer({ intel: 2 })],
+  });
+  const intents = await botDecides(t, view);
+  assert.equal(intents[0].act, 'sweep', 'the rival skim is worth a turn — the bot swept');
+});
+
+test('BT-23 humans are prioritised by threat: a rich human outranks a broke one', async t => {
+  const view = fakeView({
+    owner: { n1: 0, r1: 1, r2: 1, s1: 2, s2: 2 },
+    nmap: {
+      n1: { id: 'n1', type: 'BANK', income: 3, cost: 5 },
+      r1: { id: 'r1', type: 'CHART', income: 2, cost: 4 }, r2: { id: 'r2', type: 'MEDIA', income: 2, cost: 4 },
+      s1: { id: 's1', type: 'CHART', income: 2, cost: 4 }, s2: { id: 's2', type: 'MEDIA', income: 2, cost: 4 },
+    },
+    players: [
+      fakePlayer({ intel: 2 }),
+      fakePlayer({ pos: 'r1', cortisol: 6, money: 95, bot: false }), /* human, near the bank */
+      fakePlayer({ pos: 's1', cortisol: 6, money: 10, bot: false }), /* human, going nowhere */
+    ],
+  });
+  const intents = await botDecides(t, view, m => m.act === 'leak');
+  const leaks = intents.filter(m => m.act === 'leak');
+  assert.ok(leaks.length >= 1, 'the bot fired a leak');
+  assert.ok(leaks.every(m => m.target === 1), 'the human closest to winning is the target, not the broke one');
+});
+
+test('BT-24 bots remember a takeover: the seat that took the node becomes the target', async t => {
+  const book = {
+    x: { id: 'x', type: 'BANK', income: 2, cost: 5 },
+    n1: { id: 'n1', type: 'CHART', income: 2, cost: 5 },
+    r1: { id: 'r1', type: 'CHART', income: 2, cost: 4 }, r2: { id: 'r2', type: 'MEDIA', income: 2, cost: 4 },
+    s1: { id: 's1', type: 'CHART', income: 2, cost: 4 }, s2: { id: 's2', type: 'MEDIA', income: 2, cost: 4 },
+  };
+  const mk = xOwner => fakeView({
+    owner: { x: xOwner, n1: 0, r1: 1, r2: 1, s1: 2, s2: 2 },
+    nmap: book,
+    players: [
+      fakePlayer({ intel: 2 }),
+      fakePlayer({ pos: 'r1', cortisol: 6, money: 50 }),
+      fakePlayer({ pos: 's1', cortisol: 6, money: 50 }),
+    ],
+  });
+  /* turn 1: x is mine */
+  await botDecides(t, mk(0), () => true);
+  /* turn 2: x now belongs to seat 1 — an attributable takeover */
+  const next = mk(1); next.turn = 13;
+  const intents = await botDecides(t, next, m => m.act === 'leak', false);
+  const leaks = intents.filter(m => m.act === 'leak');
+  assert.ok(leaks.length >= 1, 'the bot fired a leak');
+  assert.ok(leaks.every(m => m.target === 1), 'the grudge sent every leak at the seat that took the node');
+});
+
+test('BT-25 pacing: production realms pace bots like humans, test realms run instant', t => {
+  const prod = loadEngine();
+  t.after(() => prod.dispose());
+  vm.runInContext(BOT_SRC, prod.ctx, { filename: 'static/bots.js' });
+  assert.equal(prod.ctx.window.BigConBots.paceMs, 150, 'an unflagged realm paces at 150ms per intent');
+
+  const fast = loadEngine();
+  t.after(() => fast.dispose());
+  fast.ctx.window.__BIGCON_TEST__ = true;
+  vm.runInContext(BOT_SRC, fast.ctx, { filename: 'static/bots.js' });
+  assert.equal(fast.ctx.window.BigConBots.paceMs, 0, 'the test realm runs at full speed');
+});
+
+test('BT-26 the valuation weights stay in a sane band (decay guard)', t => {
+  /* The policy is hand-tuned; a decimal slip in the weight table would quietly
+     wreck it without failing any behavioural pin. These are ranges, not exact
+     numbers, so re-tuning stays free but decay does not. */
+  const W = engineWithBots(t).ctx.window.BigConBots.weights;
+  assert.ok(W && typeof W === 'object', 'the weight table is exported');
+  for (const k of ['money', 'intel', 'incomeTurns', 'fire', 'setBonus', 'regScarcity', 'stepNode', 'intelNode', 'raidWall']) {
+    assert.ok(Number.isFinite(W[k]) && W[k] > 0, k + ' is a positive finite number');
+  }
+  assert.ok(W.incomeTurns >= 10 && W.incomeTurns <= 60, 'a node income term is about a game length (' + W.incomeTurns + ')');
+  assert.ok(W.setBonus > 0 && W.setBonus < W.incomeTurns * 4, 'the set bonus is meaningful but not the whole economy');
+  assert.ok(W.raidWall >= 50, 'the raid wall really deters');
 });

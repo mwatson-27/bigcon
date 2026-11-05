@@ -252,7 +252,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = 'e873020';
+const BUILD_COMMIT = '553cd43';
 const IS_DISCORD_ACTIVITY = new URLSearchParams(location.search).get('discord') === '1' || location.hostname.endsWith('.discordsays.com') || new URLSearchParams(location.search).has('instance_id');
 if(IS_DISCORD_ACTIVITY)window.__BIGCON_DISCORD_ACTIVITY__=true;
 const $=id=>document.getElementById(id);
@@ -1205,6 +1205,7 @@ function botView(pi){
  out.oilIds=OIL_IDS.slice();
  out.edges=EDGES.map(e=>e.slice());
  out.nodes=NODES.map(n=>({id:n.id,type:n.type,income:n.income,cost:n.cost}));
+ out.industryIds=INDUSTRIES.map(g=>({id:g.id,ids:industryNodes(g).map(n=>n.id)}));
  out.nmap={};NODES.forEach(n=>{out.nmap[n.id]={id:n.id,type:n.type,income:n.income,cost:n.cost}});
  out.moodRate=(MOODS[S.mood]||{rate:2}).rate;
  out.geo={qantasGrounded:!!(S.dlcGeo&&qantasGrounded())};
@@ -1468,8 +1469,15 @@ async function applyIntent(pi,m){
   }
   else if(act==='sweep'&&S.phase==='action'&&!S.mode&&p.intel>=2){
    p.intel-=2;fxAt(pi,'🛈−2','#55c1ff');
-   const mine=Object.keys(S.bugs).filter(nid=>S.bugs[nid]===pi);
-   if(mine.length){mine.forEach(nid=>{delete S.bugs[nid];const n=NMAP[nid];fx(n.x,n.y-60,'🧹','#8fbf7f')});log('🧹 '+pname(pi)+' sweeps '+mine.length+' bug'+(mine.length>1?'s':'')+' — the office is clean.')}
+   /* "remove every bug on your nodes" — the office sweep clears rival bugs
+      off nodes YOU own (that rival skim is funding their race), and also
+      closes your own skim operation on nodes you no longer hold. */
+   const cleaned=Object.keys(S.bugs).filter(nid=>S.bugs[nid]===pi||S.owner[nid]===pi);
+   const enemy=cleaned.filter(nid=>S.bugs[nid]!==pi).length;
+   if(cleaned.length){
+    cleaned.forEach(nid=>{delete S.bugs[nid];const n=NMAP[nid];fx(n.x,n.y-60,'🧹','#8fbf7f')});
+    log('🧹 '+pname(pi)+' sweeps '+cleaned.length+' bug'+(cleaned.length>1?'s':'')+(enemy?' — '+enemy+' rival bug'+(enemy>1?'s':'')+' off their own nodes':'')+' — the office is clean.');
+   }
    else log('🧹 '+pname(pi)+' sweeps the office — nothing found. Paranoia is free; the sweep cost 2 Intel.');
    await endOfTurn();
   }
@@ -2762,9 +2770,37 @@ function onHostClose(c){
   sync(true);
  }
 }
+/* Bots keep the lobby alive: a rate-limited ambient line in their own
+   character's voice. Cosmetic only (the lobby is pre-game), so Date.now and
+   Math.random are fine here — none of it touches the game's streams. */
+function lobbyChatter(){
+ if(Net.role!=='host'||Net.started||!Net.roster||Net.roster.length<2)return;
+ const now=Date.now();
+ if(Net.lobbyChatAt&&now-Net.lobbyChatAt<20000)return;
+ const bots=Net.roster.map((e,i)=>({e,i})).filter(x=>x.e&&x.e.bot&&x.e.char);
+ if(!bots.length)return;
+ Net.lobbyChatAt=now;
+ const pick=bots[Math.floor(Math.random()*bots.length)];
+ const line=botLobbyLine(pick.e.char);
+ if(line)addLobbyChat(pick.i,line);
+}
+/* Ambient chatter must not depend on somebody clicking: a self-rescheduling
+   chain keeps the room murmuring while it is open, and stops with the con
+   (or with the host leaving). The virtual clock runs it in tests. */
+function startLobbyChatter(){
+ if(Net.role!=='host'||Net.started||Net.lobbyChatT)return;
+ Net.lobbyChatT=setTimeout(function tick(){
+  Net.lobbyChatT=null;
+  if(Net.role!=='host'||Net.started)return;
+  lobbyChatter();
+  startLobbyChatter();
+ },20000);
+}
 function broadcastLobby(){
  sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,chat:Net.lobbyChat.slice(-40)});
  renderLobbyList();renderLobbyChat();
+ lobbyChatter();
+ startLobbyChatter();
  const n=Net.roster.length;
  const ready=n>=1&&Net.roster.every(e=>e.char);
  const allBots=n>=1&&Net.roster.every(e=>e.bot);
@@ -2794,15 +2830,23 @@ function renderLobbyList(){
    A bot is a roster entry with bot:true and no connection. It picks a free
    face immediately so the start button unlocks, plays through the same
    applyIntent gate as everyone else, and never counts as connected. */
+function botLobbyLine(charId){
+  try{const b=window.BigConBots;return b&&b.lobbyLine?b.lobbyLine(charId):null}catch(e){return null}
+}
 function addBotSeat(){
  if(Net.role!=='host'||!Net.roster)return;
  if(Net.roster.length>=MAXPLAYERS){toast('The table is full — no seat for a bot.');return}
  const used=new Set(Net.roster.map(e=>e.char));
- const pick=CHARS.filter(ch=>!used.has(ch.id))[0];
- if(!pick){toast('Every face is already at the table.');return}
+ const free=CHARS.filter(ch=>!used.has(ch.id));
+ if(!free.length){toast('Every face is already at the table.');return}
+ /* the lobby is cosmetic — Math.random is fine here and keeps every table
+    from being the same four faces in roster order */
+ const pick=free[Math.floor(Math.random()*free.length)];
  const n=Net.roster.filter(e=>e.bot).length+1;
  Net.roster.push({name:'BOT '+(pick.name||pick.id).toUpperCase(),playerId:'bot'+n+'-'+pick.id,conn:null,char:pick.id,bot:true});
  broadcastLobby();
+ const line=botLobbyLine(pick.id);
+ if(line)addLobbyChat(Net.roster.length-1,line);
 }
 function kickBotSeat(i){
  if(Net.role!=='host'||!Net.roster||!Net.roster[i]||!Net.roster[i].bot||i===0)return;

@@ -350,3 +350,28 @@ Open-table pass — mid-game joins and the quiet all-bot table, new copy pins:
 | Help modal, "Online play" | gains: "The table plays on: joining **mid-con** deals you in fresh at **Quikstop** — $15 and 2 Intel, the same stake every first turn gets — or you can take the **spectator rail** and just watch." | EXTENDED |
 
 All-bot market events run without the popup — behaviour, not copy (the `🎴 EVENT —` log line and mood-strip swings are unchanged). Automated validation: 155 tests, 154 pass, 1 documented skip, 0 fail (BT-13..BT-16 added).
+
+## Bot smarts pass copy status (2026-11-05)
+
+No rules copy changed — every new string is bot voice, and all of it lives in `static/bots.js` (the `CHAT` table gains nothing; a new sibling `LOBBY_LINES` table is added beside it). Pins for this batch:
+
+| Copy (source) | Text | Status |
+| --- | --- | --- |
+| Lobby intro + ambient lines (`LOBBY_LINES`, one bucket per face + `_generic` fallback) | e.g. markwatson "just here for the coal. the coal and the vibes." · DJT "quite frankly, this lobby has the best seats. tremendous seats." · thousandyardwax "I saw this lobby three days ago" · thebigwegrzyn "Seth Wegrzyn enters. the room improves." — 4 lines per face, lowercase register matching the table-chat buckets | NEW — surfaced via `lobbyLine(id)`; intro on `addBotSeat`, ambient once per 20 s gate while the lobby is open |
+| Table-chat rate (behaviour, not copy) | voluntary rate 0.9 → 1.7 lines/turn table-wide; `bs` bucket share 45% → 60% of flavor rolls | EXTENDED — same `CHAT` buckets, more of them |
+| ACCC voice (existing `taunt` lines, unchanged) | "the ACCC loves my paperwork. keep an eye on YOURS." | unchanged — now backed by real ACCC modelling in the policy |
+
+No tooltip, modal, log-line or rules sentence moved: the ACCC/raid mechanics copy pins from earlier sections are untouched by this batch (bot-side modelling only). Automated validation: 159 tests, 158 pass, 1 documented skip, 0 fail (BT-17..BT-20 added).
+
+## Flaw-fix pass copy status (2026-11-05)
+
+This batch contains one genuine **copy-vs-code correction** and one new engine log line; the rest is bot policy and behaviour.
+
+| Copy (source) | Text | Status |
+| --- | --- | --- |
+| Help modal, "Intel ops" (1787) + sweep action title (2146) | "**Sweep for bugs** (2 🛈, your action) — remove every bug on your nodes." · title="Your action — remove all bugs on your nodes" | **CODE NOW MATCHES THE COPY.** This was the reverse of the usual direction: the copy promised a cleanse of *your nodes*, but the engine filtered `S.bugs[nid] === pi` — it removed only bugs the sweeper had planted, so a rival's skim on your node could never be cleared by anyone. `sweep` now removes every bug on nodes you own (and your own skim on nodes you have lost). Pinned by BT-21 (engine drive: rival bug on my node + my bug on their node both go, 2 Intel charged) and BT-22 (a bugged bot takes the sweep). |
+| Sweep result log line | `🧹 <name> sweeps 2 bugs — 1 rival bug off their own nodes — the office is clean.` (the rival clause appears only when a rival bug was cleared; the empty sweep's "Paranoia is free" line is unchanged) | NEW — the old line counted only the sweeper's own bugs, which is why the mismatch was invisible in play. |
+| Bot lobby chatter (behaviour, not copy) | the self-rescheduling 20 s ambient clock and random bot seating add no strings; `LOBBY_LINES` and the new `grudge` table-chat bucket are already pinned in the section above | BEHAVIOUR — no copy surface moved |
+| Bot grudge bucket (`CHAT.grudge`, new) | "I know who took my node. I have the receipts." · "this is a grudge match now. it always was." · "someone is about to learn what a toll feels like" · "I am not mad. I am rebuilding a list." | NEW — in the same lowercase table-chat register; plays when a remembered takeover reaches 2 strikes |
+
+No tooltip, modal or rules sentence changed beyond the sweep log. Automated validation: 165 tests, 164 pass, 1 documented skip, 0 fail (BT-21..BT-26 added; BT-25 pins the 150 ms production pacing that every other test zeroes, BT-26 guards the weight table's ranges).
