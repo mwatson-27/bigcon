@@ -143,17 +143,21 @@ test('RM-10 Ringworld places every node on concentric rings around a four-link Q
   const { NODES, NMAP, ADJ } = engine.acc;
   let gen;
   withSeed(9917, () => { gen = engine.f.generateRingworldBoard(); });
+  const metrics = engine.f.ringworldMetrics(NODES.length - 1);
   const positions = new Map(gen.positions.map(p => [p.id, p]));
   assert.equal(positions.size, NODES.length, 'every node has a unique layout entry');
-  assert.deepEqual([positions.get('quik').x, positions.get('quik').y], [1200, 780], 'Quikstop sits in the centre');
+  assert.deepEqual(
+    [positions.get('quik').x, positions.get('quik').y],
+    [metrics.cx, metrics.cy],
+    'Quikstop sits in the centre'
+  );
   assert.equal((ADJ.quik || []).length, 4, 'Quikstop has exactly four spokes');
-  const ringRadii = [{x:1050,y:630},{x:780,y:465},{x:510,y:300}];
   for (const node of NODES) {
     if (node.id === 'quik') continue;
     const p = positions.get(node.id);
     assert.ok(p, node.id + ' is present');
-    const matchesRing = ringRadii.some(r => {
-      const norm = ((p.x - 1200) / r.x) ** 2 + ((p.y - 780) / r.y) ** 2;
+    const matchesRing = metrics.radii.some(r => {
+      const norm = ((p.x - metrics.cx) / r.x) ** 2 + ((p.y - metrics.cy) / r.y) ** 2;
       return Math.abs(norm - 1) < 0.01;
     });
     assert.ok(matchesRing, node.id + ' lies on one of the three ring tracks');
@@ -161,6 +165,63 @@ test('RM-10 Ringworld places every node on concentric rings around a four-link Q
   const reached = bfs(ADJ, 'quik');
   assert.equal(reached.size, NODES.length, 'all ring tracks are reachable from Quikstop');
   assert.equal(gen.edges.filter(e => e.includes('quik')).length, 4, 'wire layout preserves the four Quikstop spokes');
+});
+
+test('RM-12 Ringworld sizes its tracks from the roster and keeps clear gaps at every seat count', { timeout: 30000 }, t => {
+  const engine = loadEngine();
+  t.after(() => engine.dispose());
+
+  for (const geo of [false, true]) {
+    engine.f.rebuildWorld(geo);
+    const { NODES, NMAP } = engine.acc;
+    let gen;
+    withSeed(20261106 + (geo ? 1 : 0), () => { gen = engine.f.generateRingworldBoard(); });
+    const nodeCount = NODES.length - 1;
+    const metrics = engine.f.ringworldMetrics(nodeCount);
+    const positions = new Map(gen.positions.map(p => [p.id, p]));
+
+    assert.equal(gen.positions.length, NODES.length, 'every exhibit has a position');
+    assert.deepEqual(Array.from(metrics.counts), [Math.ceil(nodeCount / 3), Math.floor((nodeCount + 1) / 3), Math.floor(nodeCount / 3)],
+      'nodes are split evenly across the three tracks');
+
+    /* Measure the gap between the actual rotated image rectangles for every
+       pair on the board, not just the two neighbours joined by an edge. */
+    for (let i = 0; i < NODES.length; i++) {
+      for (let j = i + 1; j < NODES.length; j++) {
+        const a = NMAP[NODES[i].id], b = NMAP[NODES[j].id];
+        const pa = positions.get(a.id), pb = positions.get(b.id);
+        const dx = pb.x - pa.x, dy = pb.y - pa.y;
+        const distance = Math.hypot(dx, dy);
+        const axis = Math.atan2(dy, dx);
+        const projectedHalf = node => {
+          const [w, h] = engine.f.nodeBox(node);
+          const rotation = node.rot * Math.PI / 180;
+          const diff = axis - rotation;
+          return (Math.abs(Math.cos(diff)) * w + Math.abs(Math.sin(diff)) * h) / 2;
+        };
+        const clearance = distance - projectedHalf(a) - projectedHalf(b);
+        assert.ok(clearance >= 24,
+          `${geo ? 'DLC' : 'base'} ring pair ${a.id}–${b.id} has only ${clearance.toFixed(1)}px of image clearance`);
+      }
+    }
+
+    for (const p of gen.positions) {
+      const n = NMAP[p.id];
+      const [w, h] = engine.f.nodeBox(n);
+      assert.ok(p.x - Math.max(w, h) / 2 >= 0, p.id + ' remains inside the left/top map margin');
+      assert.ok(p.x + Math.max(w, h) / 2 <= metrics.w, p.id + ' remains inside the map width');
+      assert.ok(p.y - Math.max(w, h) / 2 >= 0, p.id + ' remains inside the map height');
+      assert.ok(p.y + Math.max(w, h) / 2 <= metrics.h, p.id + ' remains inside the map height');
+    }
+
+    engine.acc.S = { layoutKind: 'ringworld', boardLayout: gen.positions };
+    const bounds = engine.f.boardViewBounds();
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(bounds)),
+      { x: 0, y: 0, w: metrics.w, h: metrics.h },
+      'the viewport bounds expand to fit the whole ringworld'
+    );
+  }
 });
 
 test('RM-11 Mega Ring keeps clear gaps between rotated nodes and auto-fits the expanded canvas', t => {
