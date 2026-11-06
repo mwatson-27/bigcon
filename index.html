@@ -2355,10 +2355,18 @@ function resetBoardView(){
  VB={x:b.x,y:b.y,w:b.w,h:b.h};
  applyVB();
 }
+function boardDisplayMetrics(){
+ const rect=svgEl.getBoundingClientRect();
+ const scale=Math.min(rect.width/VB.w,rect.height/VB.h);
+ const displayWidth=VB.w*scale,displayHeight=VB.h*scale;
+ return {rect,scale,offsetX:(rect.width-displayWidth)/2,offsetY:(rect.height-displayHeight)/2};
+}
 function zoomAt(f,cx,cy){
  const bounds=boardViewBounds();
- const rect=svgEl.getBoundingClientRect();
- const bx=VB.x+(cx-rect.left)/rect.width*VB.w, by=VB.y+(cy-rect.top)/rect.height*VB.h;
+ const m=boardDisplayMetrics();
+ if(!m.scale)return;
+ const bx=VB.x+(cx-m.rect.left-m.offsetX)/m.scale;
+ const by=VB.y+(cy-m.rect.top-m.offsetY)/m.scale;
  const nw=Math.min(bounds.w,Math.max(280,VB.w*f)), nh=nw*bounds.h/bounds.w;
  VB.x=bx-(bx-VB.x)*(nw/VB.w);VB.y=by-(by-VB.y)*(nh/VB.h);
  VB.w=nw;VB.h=nh;clampVB();applyVB();
@@ -2380,8 +2388,8 @@ svgEl.addEventListener('pointermove',e=>{
   svgEl.classList.add('panning');
  }
  if(drag.moved){
-  const rect=svgEl.getBoundingClientRect();
-  VB.x-=dx*VB.w/rect.width;VB.y-=dy*VB.h/rect.height;clampVB();applyVB();
+  const m=boardDisplayMetrics();
+  if(m.scale){VB.x-=dx/m.scale;VB.y-=dy/m.scale;clampVB();applyVB()}
   drag.x=e.clientX;drag.y=e.clientY;
  }
 });
@@ -2411,8 +2419,8 @@ function handleNodeTap(t){
   else if(S.mode==='blockade')dispatch({act:'blockade',id});
  }
 }
- $('zin').onclick=()=>zoomAt(0.8,innerWidth/2,innerHeight/2);
- $('zout').onclick=()=>zoomAt(1.25,innerWidth/2,innerHeight/2);
+ $('zin').onclick=()=>{const r=svgEl.getBoundingClientRect();zoomAt(0.8,r.left+r.width/2,r.top+r.height/2)};
+ $('zout').onclick=()=>{const r=svgEl.getBoundingClientRect();zoomAt(1.25,r.left+r.width/2,r.top+r.height/2)};
  $('zreset').onclick=()=>resetBoardView();
 /* The syndicate hover card: hold the cursor over a rival's row and the table
    shows exactly which pins they hold and which win types they still need. */
