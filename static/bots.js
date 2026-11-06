@@ -1453,12 +1453,14 @@
         }
         if (bo && bo.val > 2) list.push(bo);
       }
-      /* REBUILD — only with heavy spare cash: the node returns unowned, so the
-         value is mostly re-opening the graph (and a missing set type) */
+      /* REBUILD — favour reopening routes and completing missing sets */
       if (v.rubble[me.pos]) {
         const n = v.nmap[me.pos];
-        if (n && me.money >= n.cost * 2 + 10) {
-          list.push({ kind: 'rebuild', val: nodeOwnValue(v, pi, me.pos) * 0.35 - n.cost * W.money - 2 });
+        if (n && me.money >= n.cost) {
+          /* Prefer rebuild when it opens the graph or fills a set; value the unowned return */
+          const openVal = nodeOwnValue(v, pi, me.pos) * 0.6;
+          const setBonus = (v.nmap[me.pos] && !mineWhere(v, pi, nn => nn.type === n.type).length) ? W.setBonus * 0.4 : 0;
+          list.push({ kind: 'rebuild', val: openVal + setBonus - n.cost * W.money * 0.8 });
         }
       }
     }
