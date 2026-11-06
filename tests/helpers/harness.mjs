@@ -243,7 +243,7 @@ export function loadEngine(opts = {}) {
   /* Function declarations become global properties of the vm realm. */
   const fns = [
     'applyIntent','startTurn','endOfTurn','nextTurn','winCheck','initGame','income','addCortisol','raid','madePay',
-    'acccInvestigate','concentratedIndustries','ownedInIndustry','industryNodes','generateRandomBoard','rebuildAdj',
+    'acccInvestigate','concentratedIndustries','ownedInIndustry','industryNodes','generateRandomBoard','generateRingworldBoard','generateMegaRingBoard','megaRingMetrics','boardViewBounds','resetBoardView','rebuildAdj',
     'separateNodes','applyQuikSlot','nodeBox','pubState','adoptState','mergeTail','sendLogParts','adoptLogPart','flushState','sendAll','sendTo',
     'sysTo','askPlayer','announceAll','revealAll','drawCard','handleHello','onHostClose','onHostData','broadcastLobby','setGeoUI',
     'addLobbyChat','addChat','applyChar','lobbyPlayers','clampGoal','matchBuzzword','codeSlug','codeLabel','genCode',

@@ -214,6 +214,10 @@ body.game-open{overflow:hidden}
     <div class="gn" style="margin-top:6px">THE FULL SET: BANK · REGULATOR · CHART · WILD · CORPORATE · COMMODITY · MEDIA</div>
    </div>
    <div class="goalrow">
+    <div class="cl">BOARD LAYOUT</div>
+    <div class="goalctl"><select id="boardLayoutSelect" style="flex:1;min-width:180px;background:#000;color:#fff;border:1px solid #168388;padding:8px;font:inherit"><option value="random">Random board (default)</option><option value="ringworld">RINGWORLD — concentric rings</option><option value="megaring">MEGA RING — single big ring + Quikstop hub</option></select><span class="gn" id="boardLayoutNote">the host chooses the map</span></div>
+   </div>
+   <div class="goalrow">
     <div class="goalctl"><label style="display:flex;align-items:center;gap:10px;font:inherit;cursor:pointer"><input id="geoToggle" type="checkbox" style="width:20px;height:20px;accent-color:#168388;cursor:pointer"><span style="white-space:nowrap">ENABLE THE GEOGRAPHY DLC</span></label></div>
     <div class="goalctl"><label style="display:flex;align-items:center;gap:10px;font:inherit;cursor:pointer"><input id="fogToggle" type="checkbox" style="width:20px;height:20px;accent-color:#168388;cursor:pointer"><span>FOG OF WAR</span></label></div>
    </div>
@@ -252,7 +256,7 @@ body.game-open{overflow:hidden}
 <script>
 'use strict';
 /* Keep this equal to the parent commit's 7-character SHA; CI enforces updates. */
-const BUILD_COMMIT = '9f782f8';
+const BUILD_COMMIT = '57c927d';
 const IS_DISCORD_ACTIVITY = new URLSearchParams(location.search).get('discord') === '1' || location.hostname.endsWith('.discordsays.com') || new URLSearchParams(location.search).has('instance_id');
 if(IS_DISCORD_ACTIVITY)window.__BIGCON_DISCORD_ACTIVITY__=true;
 const $=id=>document.getElementById(id);
@@ -702,7 +706,7 @@ const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);
 /* ================= STATE, NET & HELPERS ================= */
 let S=null;
 const GOAL_MIN=20,GOAL_MAX=999,GOAL_DEF=100;
-const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,roomLabel:null,lobbyChat:[],lobbyPlayers:[],started:false,begun:false,spect:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,dlcGeo:false,fogOfWar:false,hbTimer:null,lastSeen:0};
+const Net={role:null,peer:null,conn:null,conns:[],roster:[],myIdx:0,myName:'',playerId:null,roomCode:null,roomLabel:null,lobbyChat:[],lobbyPlayers:[],started:false,begun:false,spect:false,lock:false,lockTimer:null,pendingPrompts:new Map(),acks:null,promptSeq:0,evSeq:0,autoT:null,goal:GOAL_DEF,dlcGeo:false,fogOfWar:false,ringworld:false,boardLayout:'random',hbTimer:null,lastSeen:0};
 function clampGoal(v){const n=Math.round(Number(v)||0);if(!n)return GOAL_DEF;return Math.max(GOAL_MIN,Math.min(GOAL_MAX,n))}
 let fxSeq=0;
 const shownFx=new Set();
@@ -1075,10 +1079,88 @@ function generateRandomBoard(slot){
  EDGES=edges;rebuildAdj();separateNodes();
  return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
 }
+function generateRingworldBoard(){
+ const q=NMAP.quik;
+ const cx=1200,cy=780;
+ q.x=cx;q.y=cy;q.rot=0;
+ const ids=shuffle(NODES.map(n=>n.id).filter(id=>id!=='quik'));
+ const rings=[[],[],[]];
+ ids.forEach((id,i)=>rings[i%rings.length].push(id));
+ const radii=[{x:1050,y:630},{x:780,y:465},{x:510,y:300}];
+ const phases=[0,Math.PI/Math.max(1,rings[1].length),Math.PI/Math.max(1,rings[2].length)*0.65];
+ rings.forEach((ring,ri)=>{
+  const r=radii[ri];
+  ring.forEach((id,i)=>{
+   const angle=(Math.PI*2*i/ring.length)+phases[ri];
+   const x=cx+Math.cos(angle)*r.x;
+   const y=cy+Math.sin(angle)*r.y;
+   const tangent=Math.atan2(r.y*Math.cos(angle),-r.x*Math.sin(angle))*180/Math.PI;
+   const n=NMAP[id];n.x=Math.round(x);n.y=Math.round(y);n.rot=Math.round(tangent*10)/10;
+  });
+ });
+ const edges=[],seen=new Set();
+ const add=(a,b)=>{
+  if(!a||!b||a===b)return;
+  const key=[a,b].sort().join('|');
+  if(seen.has(key))return;
+  seen.add(key);edges.push([a,b]);
+ };
+ // Each track is a closed loop.
+ rings.forEach(ring=>{
+  for(let i=0;i<ring.length;i++)add(ring[i],ring[(i+1)%ring.length]);
+ });
+ // Radial links connect the three loops into one traversable network.
+ for(let ri=0;ri<rings.length-1;ri++){
+  const outer=rings[ri],inner=rings[ri+1];
+  outer.forEach((id,i)=>add(id,inner[Math.round(i*inner.length/outer.length)%inner.length]));
+ }
+ // Quikstop is the central hub, with four evenly spaced spokes to the inner ring.
+ const inner=rings[2];
+ for(let k=0;k<4;k++)add('quik',inner[Math.floor(k*inner.length/4)]);
+ EDGES=edges;rebuildAdj();
+ return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
+}
+/* Size the ring from the widest exhibit so every neighbour keeps an
+   image-to-image gap, including when the Geography DLC adds more nodes. */
+function megaRingMetrics(nodeCount){
+ const n=Math.max(3,nodeCount|0);
+ const nodePitch=202; /* 170px maximum image width + at least 32px clear space */
+ const radius=Math.max(2500,nodePitch/(2*Math.sin(Math.PI/n)));
+ const margin=380;
+ const size=Math.ceil((radius+margin)*2/100)*100;
+ return {x:0,y:0,w:size,h:size,cx:size/2,cy:size/2,radius,margin};
+}
+function generateMegaRingBoard(){
+ const ids=shuffle(NODES.map(n=>n.id).filter(id=>id!=='quik'));
+ const n=ids.length;
+ const map=megaRingMetrics(n);
+ const q=NMAP.quik;
+ q.x=map.cx;q.y=map.cy;q.rot=0;
+ if(n===0){EDGES=[];rebuildAdj();return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:[]};}
+ ids.forEach((id,i)=>{
+  const angle=(Math.PI*2*i/n);
+  const x=map.cx+Math.cos(angle)*map.radius;
+  const y=map.cy+Math.sin(angle)*map.radius;
+  const tangent=(angle+Math.PI/2)*180/Math.PI;
+  const node=NMAP[id];node.x=Math.round(x);node.y=Math.round(y);node.rot=Math.round(tangent*10)/10;
+ });
+ const edges=[],seen=new Set();
+ const add=(a,b)=>{
+  if(!a||!b||a===b)return;
+  const key=[a,b].sort().join('|');
+  if(seen.has(key))return;
+  seen.add(key);edges.push([a,b]);
+ };
+ for(let i=0;i<n;i++)add(ids[i],ids[(i+1)%n]);
+ for(let k=0;k<4;k++)add('quik',ids[Math.floor(k*n/4)]);
+ EDGES=edges;rebuildAdj();
+ return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
+}
 function initGame(defs){
  Net.gameEpoch=(Net.gameEpoch||0)+1;
  rebuildWorld(!!Net.dlcGeo);
- const quikSlot=Math.floor(Math.random()*QUIK_SLOTS.length);
+ const boardLayout=Net.boardLayout||(Net.ringworld?'ringworld':'random');
+ const quikSlot=(boardLayout==='ringworld'||boardLayout==='megaring')?0:Math.floor(Math.random()*QUIK_SLOTS.length);
  const order=defs.map((_,i)=>i);
  for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=order[i];order[i]=order[j];order[j]=t}
  const seated=order.map(i=>defs[i]);
@@ -1089,19 +1171,22 @@ function initGame(defs){
   Net.myIdx=order.indexOf(hostWas);
  }
  const goal=clampGoal(Net.goal);
- S={backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:(charMeta(d.char)||{}).color||PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',visited:{quik:true},dc:false,bot:!!d.bot})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null,dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,rubble:{},ov:null,geoMissiled:false,geoBeach:false,geoBoeing:false,geoCrash:false,geoStage5:false,geoVenice:false,bondmageddonUsed:false,blockades:{},blockadeUsed:false,missileProbe:null,qantasGroundUntil:0,decline:null};
+ S={backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:(charMeta(d.char)||{}).color||PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',visited:{quik:true},dc:false,bot:!!d.bot})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null,layoutKind:boardLayout,ringworld:boardLayout==='ringworld',dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,rubble:{},ov:null,geoMissiled:false,geoBeach:false,geoBoeing:false,geoCrash:false,geoStage5:false,geoVenice:false,bondmageddonUsed:false,blockades:{},blockadeUsed:false,missileProbe:null,qantasGroundUntil:0,decline:null};
  const slot=QUIK_SLOTS[quikSlot];
  if(typeof window!=='undefined'&&window.BigConBots&&window.BigConBots.resetForGame)window.BigConBots.resetForGame((window.__BIGCON_BOT_SEED__|0)||((Math.random()*0x7fffffff)|0));
- const generated=generateRandomBoard(slot);S.boardLayout=generated.positions;S.boardEdges=generated.edges;
+ const generated=boardLayout==='megaring'?generateMegaRingBoard():(boardLayout==='ringworld'?generateRingworldBoard():generateRandomBoard(slot));S.boardLayout=generated.positions;S.boardEdges=generated.edges;
  applyLayoutFromState();
  Net.started=true;
  log('🌅 A new board is dealt — '+NODES.length+' exhibits, '+EDGES.length+' freshly rebuilt connections, '+S.players.length+' at the table.');
- log('🧭 High-value targets are seeded further from Quikstop; the board and routes are reshuffled every game.');
+ if(boardLayout==='ringworld')log('⭕ RINGWORLD — every exhibit is arranged around central Quikstop in three concentric rings.');
+ else if(boardLayout==='megaring')log('⭕ MEGA RING — every exhibit sits on one large ring, connected to the central Quikstop hub.');
+ else log('🧭 High-value targets are seeded further from Quikstop; the board and routes are reshuffled every game.');
  if(S.dlcGeo)log('🌍 GEOGRAPHY DLC — 12 extra exhibits are on the board: missiles, resorts, disputed waters, ESG pillars, the hermit kingdom and one free country.');
  log('🎲 Seating was shuffled. First to move: '+S.players[0].name+'.');
  log('⛽ Quikstop opened '+slot.label+' this game. Everyone starts there with $15 and 2 Intel.');
  log('🏆 WIN CONDITION: $'+goal+' in the bank AND one of every node type ('+WIN_TYPES.join(', ')+'). The host set the target.');
  $('setup').style.display='none';$('app').style.display='flex';document.body.classList.add('game-open');
+ resetBoardView();
  const pub=pubState(true);
  for(let i=0;i<Net.conns.length;i++){
   const c=Net.conns[i];
@@ -1975,12 +2060,15 @@ function renderBoard(){
   svg.appendChild(root);svg.appendChild(fxg);
  }
  const md=MOODS[S.mood]||MOODS.CALM;
+ const mega=!!(S&&S.layoutKind==='megaring');
+ const bounds=boardViewBounds();
+ const metrics=mega?megaRingMetrics(Math.max(3,(S.boardLayout||[]).length-1)):null;
  const curpos=S?S.players[S.cur].pos:null;
  let s='';
- s+='<defs><pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="rgba(22,131,136,0.18)"/></pattern></defs>';
- s+='<rect width="2400" height="1560" fill="#1d201f"/><rect width="2400" height="1560" fill="url(#dots)"/>';
- s+='<rect width="2400" height="1560" fill="'+md.tint+'" pointer-events="none"/>';
- s+='<rect x="7" y="7" width="2386" height="1546" rx="0" fill="none" stroke="#168388" stroke-width="3" opacity=".7"/>';
+ s+='<defs><pattern id="dots" width="'+(mega?56:26)+'" height="'+(mega?56:26)+'" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="rgba(22,131,136,0.18)"/></pattern></defs>';
+ s+='<rect x="0" y="0" width="'+bounds.w+'" height="'+bounds.h+'" fill="#1d201f"/><rect x="0" y="0" width="'+bounds.w+'" height="'+bounds.h+'" fill="url(#dots)"/>';
+ s+='<rect x="0" y="0" width="'+bounds.w+'" height="'+bounds.h+'" fill="'+md.tint+'" pointer-events="none"/>';
+ s+='<rect x="7" y="7" width="'+(bounds.w-14)+'" height="'+(bounds.h-14)+'" rx="0" fill="none" stroke="#168388" stroke-width="'+(mega?8:3)+'" opacity=".7"/>';
  EDGES.forEach((e,i)=>{
   if(S&&S.fogOfWar){const me=S.players[Net.myIdx],seen=me&&me.visited||{},pos=me&&me.pos,knownA=!!seen[e[0]],knownB=!!seen[e[1]],frontier=(e[0]===pos&&!knownB)||(e[1]===pos&&!knownA);if(!(knownA&&knownB)&&!frontier)return;}
   const A=NMAP[e[0]],B=NMAP[e[1]];
@@ -1995,14 +2083,21 @@ function renderBoard(){
   s+='<path d="'+d+'" fill="none" stroke="#08383a" stroke-width="'+(hot?6:long?3.5:5)+'" opacity="'+(hot?'.7':'.35')+'"/>';
   s+='<path d="'+d+'" fill="none" stroke="'+(hot?'#7ff6fb':'#168388')+'" stroke-width="'+(hot?3:long?1.6:2)+'" stroke-dasharray="'+(long?'11 8':'')+'" opacity="'+(hot?'1':'.9')+'"/>';
  });
- s+=scribble(1830,860,100,64,4)+scribble(1150,540,95,72,-3)+scribble(1000,1380,92,62,5)+scribble(1630,930,96,62,-4)+scribble(1500,470,98,62,3)+scribble(2020,185,92,66,-5)+scribble(390,1200,102,68,3);
- s+=redArrow(2090,330,1140,310)+redArrow(1965,235,1580,440)+redArrow(1080,585,480,1140)+redArrow(1130,1170,420,640);
- s+=scribText(1930,392,-4,'CASH RATE ↑')+scribText(1150,390,3,'“BOND…”')+scribText(1715,448,-6,'WTI +12%')+scribText(455,295,2,'TOO BIG TO FAIL')+scribText(1930,745,-3,'GOLD ↑')+scribText(1050,1150,4,'RATES ON HOLD')+scribText(640,810,-5,'INSIDER TRADING?');
- s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="268" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.13</text></g>';
- /* the market wire — the mood, live */
- s+='<g transform="translate(1230,30)"><rect x="-700" y="-13" width="1400" height="26" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-682" cy="0" r="5" fill="'+md.color+'"/><text x="-668" y="4" font-size="11" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="-20" y="4" text-anchor="middle" font-size="10.5" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,88))+'</text><text x="688" y="4" text-anchor="end" font-size="10" font-weight="800" fill="#9ad">1🛈=$'+md.rate+'</text></g>';
- let lx=560;
- s+='<g transform="translate(0,62)">';
+ if(mega){
+  s+='<circle cx="'+metrics.cx+'" cy="'+metrics.cy+'" r="'+metrics.radius+'" fill="none" stroke="#168388" stroke-width="3" stroke-dasharray="18 20" opacity=".22"/>';
+  s+='<circle cx="'+metrics.cx+'" cy="'+metrics.cy+'" r="'+(metrics.radius-175)+'" fill="none" stroke="#168388" stroke-width="2" stroke-dasharray="4 18" opacity=".14"/>';
+  s+='<g transform="translate('+metrics.cx+',95)"><rect x="-330" y="-27" width="660" height="48" fill="#168388" stroke="#000" stroke-width="2"/><text text-anchor="middle" y="5" font-size="22" font-weight="900" letter-spacing="3" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.13 · MEGA RING</text></g>';
+  s+='<g transform="translate('+metrics.cx+',175)"><rect x="-1050" y="-15" width="2100" height="30" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-1028" cy="0" r="6" fill="'+md.color+'"/><text x="-1008" y="4" font-size="13" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="0" y="4" text-anchor="middle" font-size="12" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,100))+'</text><text x="1028" y="4" text-anchor="end" font-size="12" font-weight="800" fill="#9ad">1🛈=$'+md.rate+'</text></g>';
+ }else{
+  s+=scribble(1830,860,100,64,4)+scribble(1150,540,95,72,-3)+scribble(1000,1380,92,62,5)+scribble(1630,930,96,62,-4)+scribble(1500,470,98,62,3)+scribble(2020,185,92,66,-5)+scribble(390,1200,102,68,3);
+  s+=redArrow(2090,330,1140,310)+redArrow(1965,235,1580,440)+redArrow(1080,585,480,1140)+redArrow(1130,1170,420,640);
+  s+=scribText(1930,392,-4,'CASH RATE ↑')+scribText(1150,390,3,'“BOND…”')+scribText(1715,448,-6,'WTI +12%')+scribText(455,295,2,'TOO BIG TO FAIL')+scribText(1930,745,-3,'GOLD ↑')+scribText(1050,1150,4,'RATES ON HOLD')+scribText(640,810,-5,'INSIDER TRADING?');
+  s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="268" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.13</text></g>';
+  /* the market wire — the mood, live */
+  s+='<g transform="translate(1230,30)"><rect x="-700" y="-13" width="1400" height="26" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-682" cy="0" r="5" fill="'+md.color+'"/><text x="-668" y="4" font-size="11" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="-20" y="4" text-anchor="middle" font-size="10.5" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,88))+'</text><text x="688" y="4" text-anchor="end" font-size="10" font-weight="800" fill="#9ad">1🛈=$'+md.rate+'</text></g>';
+ }
+ let lx=mega?metrics.cx-360:560;
+ s+='<g transform="translate(0,'+(mega?245:62)+')">';
  Object.keys(TYPE_COLORS).forEach(k=>{
   s+='<rect x="'+lx+'" y="-7" width="10" height="10" rx="2" fill="'+TYPE_COLORS[k]+'"/><text x="'+(lx+14)+'" y="2" font-size="9" font-weight="800" fill="#cbb992">'+k+'</text>';
   lx+=14+k.length*6.2+16;
@@ -2010,8 +2105,9 @@ function renderBoard(){
  s+='</g>';
  const goalNow=goalAmount();
  const leader=S.players.reduce((a,b)=>b.money>a.money?b:a,S.players[0]);
- s+='<g transform="translate(1200,1490)"><rect x="-580" y="-14" width="1160" height="25" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10.5" font-weight="700" letter-spacing="1" fill="#fff">WIN CONDITION: FIRST TO $'+goalNow+' TAKES THE CON</text></g>';
- s+='<g transform="translate(1200,1526)"><rect x="-580" y="-12" width="1160" height="23" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10" font-weight="700" letter-spacing="1" fill="aqua">FRONT RUNNER: '+esc(String(leader.name).toUpperCase())+' — $'+leader.money+' · $'+Math.max(0,goalNow-leader.money)+' TO GO</text></g>';
+ const footerX=mega?metrics.cx:1200,footerY=mega?bounds.h-155:1490;
+ s+='<g transform="translate('+footerX+','+footerY+')"><rect x="-800" y="-14" width="1600" height="25" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="'+(mega?14:10.5)+'" font-weight="700" letter-spacing="1" fill="#fff">WIN CONDITION: FIRST TO $'+goalNow+' TAKES THE CON</text></g>';
+ s+='<g transform="translate('+footerX+','+(footerY+38)+')"><rect x="-800" y="-12" width="1600" height="23" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="'+(mega?13:10)+'" font-weight="700" letter-spacing="1" fill="aqua">FRONT RUNNER: '+esc(String(leader.name).toUpperCase())+' — $'+leader.money+' · $'+Math.max(0,goalNow-leader.money)+' TO GO</text></g>';
  NODES.forEach(n=>{
   let cls='';
   if(S&&!S.over){
@@ -2245,15 +2341,41 @@ function dispatch(m){
 /* ================= INPUT — pan, zoom & taps ================= */
 const svgEl=$('board');
 let VB={x:0,y:0,w:2400,h:1560};
+function boardViewBounds(){
+ if(S&&S.layoutKind==='megaring'){
+  const count=Math.max(3,(S.boardLayout||[]).length-1||NODES.length-1);
+  const m=megaRingMetrics(count);
+  return {x:m.x,y:m.y,w:m.w,h:m.h};
+ }
+ return {x:0,y:0,w:2400,h:1560};
+}
 function applyVB(){svgEl.setAttribute('viewBox',VB.x+' '+VB.y+' '+VB.w+' '+VB.h)}
-function zoomAt(f,cx,cy){
+function resetBoardView(){
+ const b=boardViewBounds();
+ VB={x:b.x,y:b.y,w:b.w,h:b.h};
+ applyVB();
+}
+function boardDisplayMetrics(){
  const rect=svgEl.getBoundingClientRect();
- const bx=VB.x+(cx-rect.left)/rect.width*VB.w, by=VB.y+(cy-rect.top)/rect.height*VB.h;
- const nw=Math.min(2400,Math.max(280,VB.w*f)), nh=nw*1560/2400;
+ const scale=Math.min(rect.width/VB.w,rect.height/VB.h);
+ const displayWidth=VB.w*scale,displayHeight=VB.h*scale;
+ return {rect,scale,offsetX:(rect.width-displayWidth)/2,offsetY:(rect.height-displayHeight)/2};
+}
+function zoomAt(f,cx,cy){
+ const bounds=boardViewBounds();
+ const m=boardDisplayMetrics();
+ if(!m.scale)return;
+ const bx=VB.x+(cx-m.rect.left-m.offsetX)/m.scale;
+ const by=VB.y+(cy-m.rect.top-m.offsetY)/m.scale;
+ const nw=Math.min(bounds.w,Math.max(280,VB.w*f)), nh=nw*bounds.h/bounds.w;
  VB.x=bx-(bx-VB.x)*(nw/VB.w);VB.y=by-(by-VB.y)*(nh/VB.h);
  VB.w=nw;VB.h=nh;clampVB();applyVB();
 }
-function clampVB(){VB.x=Math.min(2400-VB.w,Math.max(0,VB.x));VB.y=Math.min(1560-VB.h,Math.max(0,VB.y))}
+function clampVB(){
+ const b=boardViewBounds();
+ VB.x=Math.min(b.x+b.w-VB.w,Math.max(b.x,VB.x));
+ VB.y=Math.min(b.y+b.h-VB.h,Math.max(b.y,VB.y));
+}
 svgEl.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY>0?1.13:0.885,e.clientX,e.clientY)},{passive:false});
 let drag=null,lastTapTarget=null;
 svgEl.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,moved:false};lastTapTarget=e.target;});
@@ -2266,8 +2388,8 @@ svgEl.addEventListener('pointermove',e=>{
   svgEl.classList.add('panning');
  }
  if(drag.moved){
-  const rect=svgEl.getBoundingClientRect();
-  VB.x-=dx*VB.w/rect.width;VB.y-=dy*VB.h/rect.height;clampVB();applyVB();
+  const m=boardDisplayMetrics();
+  if(m.scale){VB.x-=dx/m.scale;VB.y-=dy/m.scale;clampVB();applyVB()}
   drag.x=e.clientX;drag.y=e.clientY;
  }
 });
@@ -2297,9 +2419,9 @@ function handleNodeTap(t){
   else if(S.mode==='blockade')dispatch({act:'blockade',id});
  }
 }
- $('zin').onclick=()=>zoomAt(0.8,innerWidth/2,innerHeight/2);
- $('zout').onclick=()=>zoomAt(1.25,innerWidth/2,innerHeight/2);
- $('zreset').onclick=()=>{VB={x:0,y:0,w:2400,h:1560};applyVB()};
+ $('zin').onclick=()=>{const r=svgEl.getBoundingClientRect();zoomAt(0.8,r.left+r.width/2,r.top+r.height/2)};
+ $('zout').onclick=()=>{const r=svgEl.getBoundingClientRect();zoomAt(1.25,r.left+r.width/2,r.top+r.height/2)};
+ $('zreset').onclick=()=>resetBoardView();
 /* The syndicate hover card: hold the cursor over a rival's row and the table
    shows exactly which pins they hold and which win types they still need. */
 (function(){
@@ -2715,7 +2837,7 @@ function handleHello(c,name,playerId){
    Net.roster[existing].spect=true;
    c.send({t:'welcome',idx:existing,spect:true,s:pubState(true)});sync(true);return;
   }
-  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,chat:Net.lobbyChat.slice(-40)});broadcastLobby();return;
+  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,boardLayout:Net.boardLayout||(Net.ringworld?'ringworld':'random'),ringworld:!!Net.ringworld,chat:Net.lobbyChat.slice(-40)});broadcastLobby();return;
  }
  if(Net.started&&S){
   const idx=S.players.findIndex(pl=>pl.dc&&pl.name.toLowerCase()===name.toLowerCase());
@@ -2744,7 +2866,7 @@ function joinLobby(c,name,playerId){
  Net.roster.push({name,playerId:playerId||crypto.randomUUID(),conn:c,char:null});
  Net.conns=Net.roster.map(e=>e.conn);
  c.__lastSeen=Date.now();
- c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,chat:Net.lobbyChat.slice(-40)});
+ c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,boardLayout:Net.boardLayout||(Net.ringworld?'ringworld':'random'),ringworld:!!Net.ringworld,chat:Net.lobbyChat.slice(-40)});
  broadcastLobby();
 }
 /* Mid-con joiners: the game does not stop for them. A new player gets the
@@ -2850,7 +2972,7 @@ function startLobbyChatter(){
  },20000);
 }
 function broadcastLobby(){
- sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,chat:Net.lobbyChat.slice(-40)});
+ sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,boardLayout:Net.boardLayout||(Net.ringworld?'ringworld':'random'),ringworld:!!Net.ringworld,chat:Net.lobbyChat.slice(-40)});
  renderLobbyList();renderLobbyChat();
  lobbyChatter();
  startLobbyChatter();
@@ -3050,6 +3172,7 @@ function onGuestData(d){
    if(d.goal)setGoalUI(d.goal);
    if(d.dlcGeo!==undefined)setGeoUI(!!d.dlcGeo);
    if(d.fogOfWar!==undefined)setFogUI(!!d.fogOfWar);
+   if(d.boardLayout!==undefined)setBoardLayout(d.boardLayout);else if(d.ringworld!==undefined)setBoardLayout(d.ringworld?'ringworld':'random');
    if(d.s){S=null;adoptState(d.s);Net.begun=true;enterGame()}
    else showLobby(false);
    break;
@@ -3060,6 +3183,7 @@ function onGuestData(d){
    if(d.goal)setGoalUI(d.goal);
    if(d.dlcGeo!==undefined)setGeoUI(!!d.dlcGeo);
    if(d.fogOfWar!==undefined)setFogUI(!!d.fogOfWar);
+   if(d.boardLayout!==undefined)setBoardLayout(d.boardLayout);else if(d.ringworld!==undefined)setBoardLayout(d.ringworld?'ringworld':'random');
    renderLobbyList();
    break;
   case 'begin':S=null;Net.spect=false;adoptState(d.s);if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
@@ -3077,7 +3201,7 @@ function onGuestData(d){
 }
 function enterGame(){
  $('setup').style.display='none';$('app').style.display='flex';document.body.classList.add('game-open');
- VB={x:0,y:0,w:2400,h:1560};applyVB();
+ resetBoardView();
  render();
 }
 
@@ -3100,6 +3224,18 @@ function setFogUI(v){
  Net.fogOfWar=!!v;
  const t=$('fogToggle');
  if(t)t.checked=!!v;
+}
+function setBoardLayout(val){
+ const allowed=['random','ringworld','megaring'];
+ Net.boardLayout=allowed.includes(val)?val:'random';
+ Net.ringworld=Net.boardLayout==='ringworld';
+ const t=$('boardLayoutSelect');
+ if(t){t.value=Net.boardLayout;t.disabled=Net.role!=='host'}
+ const note=$('boardLayoutNote');
+ if(note)note.textContent=Net.role==='host'?'the host chooses the map':(Net.boardLayout==='megaring'?'Mega Ring selected by the host':(Net.ringworld?'Ringworld selected by the host':'random board selected by the host'));
+}
+function setRingworldUI(v){
+ setBoardLayout(v?'ringworld':'random');
 }
 /* After the payout the table keeps its room: everyone is walked back to the
    lobby with the same code, roster and faces — no reload, no rejoin. The
@@ -3127,7 +3263,9 @@ function showLobby(asHost){
  $('btnCopy').style.display=asHost?'inline-block':'none';
  const gi=$('goalInput');
  if(gi)gi.disabled=!asHost;
+ const layout=$('boardLayoutSelect');if(layout)layout.disabled=!asHost;
  setGoalUI(Net.goal);
+ setBoardLayout(Net.boardLayout||(Net.ringworld?'ringworld':'random'));
  if(!asHost)setNetStatus('In the lobby. Pick a face — the host starts when everyone is in.');
  renderLobbyList();renderLobbyChat();
  const inp=$('lobbyChatInput'),btn=$('lobbyChatSend');
@@ -3178,6 +3316,8 @@ function showLobby(asHost){
  if(gt)gt.onchange=()=>{if(Net.role!=='host'){gt.checked=Net.dlcGeo;toast('The host decides whether the Geography DLC is played.');return}setGeoUI(gt.checked);broadcastLobby()};
  const ft=$('fogToggle');
  if(ft)ft.onchange=()=>{if(Net.role!=='host'){ft.checked=Net.fogOfWar;toast('The host decides whether Fog of War is enabled.');return}setFogUI(ft.checked);broadcastLobby()};
+ const layout=$('boardLayoutSelect');
+ if(layout)layout.onchange=()=>{if(Net.role!=='host'){setBoardLayout(Net.boardLayout);toast('The host decides which board layout is played.');return}setBoardLayout(layout.value);broadcastLobby()};
 })();
  $('btnCopy').onclick=()=>{
  const code=Net.roomLabel||Net.roomCode||'';
