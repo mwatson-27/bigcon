@@ -137,6 +137,32 @@ test('RM-01..RM-07 the generated board is a valid connected collage across 200 s
   assert.equal(violations, 0);
 });
 
+test('RM-10 Ringworld places every node on concentric rings around a four-link Quikstop hub', { timeout: 30000 }, t => {
+  const engine = loadEngine();
+  t.after(() => engine.dispose());
+  const { NODES, NMAP, ADJ } = engine.acc;
+  let gen;
+  withSeed(9917, () => { gen = engine.f.generateRingworldBoard(); });
+  const positions = new Map(gen.positions.map(p => [p.id, p]));
+  assert.equal(positions.size, NODES.length, 'every node has a unique layout entry');
+  assert.deepEqual([positions.get('quik').x, positions.get('quik').y], [1200, 780], 'Quikstop sits in the centre');
+  assert.equal((ADJ.quik || []).length, 4, 'Quikstop has exactly four spokes');
+  const ringRadii = [{x:1050,y:630},{x:780,y:465},{x:510,y:300}];
+  for (const node of NODES) {
+    if (node.id === 'quik') continue;
+    const p = positions.get(node.id);
+    assert.ok(p, node.id + ' is present');
+    const matchesRing = ringRadii.some(r => {
+      const norm = ((p.x - 1200) / r.x) ** 2 + ((p.y - 780) / r.y) ** 2;
+      return Math.abs(norm - 1) < 0.01;
+    });
+    assert.ok(matchesRing, node.id + ' lies on one of the three ring tracks');
+  }
+  const reached = bfs(ADJ, 'quik');
+  assert.equal(reached.size, NODES.length, 'all ring tracks are reachable from Quikstop');
+  assert.equal(gen.edges.filter(e => e.includes('quik')).length, 4, 'wire layout preserves the four Quikstop spokes');
+});
+
 test('RM-08 a full initGame deals a legal board: everyone starts at quik, layouts match the live graph', { timeout: 60000 }, async t => {
   for (const seed of [3001, 3002, 3003, 3004, 3005, 3006]) {
     const engine = loadEngine();
