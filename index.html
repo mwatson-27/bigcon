@@ -1120,19 +1120,28 @@ function generateRingworldBoard(){
  EDGES=edges;rebuildAdj();
  return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
 }
+/* Size the ring from the widest exhibit so every neighbour keeps an
+   image-to-image gap, including when the Geography DLC adds more nodes. */
+function megaRingMetrics(nodeCount){
+ const n=Math.max(3,nodeCount|0);
+ const nodePitch=202; /* 170px maximum image width + at least 32px clear space */
+ const radius=Math.max(2500,nodePitch/(2*Math.sin(Math.PI/n)));
+ const margin=380;
+ const size=Math.ceil((radius+margin)*2/100)*100;
+ return {x:0,y:0,w:size,h:size,cx:size/2,cy:size/2,radius,margin};
+}
 function generateMegaRingBoard(){
- const q=NMAP.quik;
- const cx=1200,cy=780;
- q.x=cx;q.y=cy;q.rot=0;
  const ids=shuffle(NODES.map(n=>n.id).filter(id=>id!=='quik'));
  const n=ids.length;
+ const map=megaRingMetrics(n);
+ const q=NMAP.quik;
+ q.x=map.cx;q.y=map.cy;q.rot=0;
  if(n===0){EDGES=[];rebuildAdj();return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:[]};}
- const rx=1150, ry=720;
  ids.forEach((id,i)=>{
   const angle=(Math.PI*2*i/n);
-  const x=cx+Math.cos(angle)*rx;
-  const y=cy+Math.sin(angle)*ry;
-  const tangent=Math.atan2(ry*Math.cos(angle),-rx*Math.sin(angle))*180/Math.PI;
+  const x=map.cx+Math.cos(angle)*map.radius;
+  const y=map.cy+Math.sin(angle)*map.radius;
+  const tangent=(angle+Math.PI/2)*180/Math.PI;
   const node=NMAP[id];node.x=Math.round(x);node.y=Math.round(y);node.rot=Math.round(tangent*10)/10;
  });
  const edges=[],seen=new Set();
@@ -1143,11 +1152,7 @@ function generateMegaRingBoard(){
   seen.add(key);edges.push([a,b]);
  };
  for(let i=0;i<n;i++)add(ids[i],ids[(i+1)%n]);
- const spokes=4;
- for(let k=0;k<spokes;k++){
-  const idx=Math.floor(k*n/spokes);
-  add('quik',ids[idx]);
- }
+ for(let k=0;k<4;k++)add('quik',ids[Math.floor(k*n/4)]);
  EDGES=edges;rebuildAdj();
  return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
 }
@@ -1181,6 +1186,7 @@ function initGame(defs){
  log('⛽ Quikstop opened '+slot.label+' this game. Everyone starts there with $15 and 2 Intel.');
  log('🏆 WIN CONDITION: $'+goal+' in the bank AND one of every node type ('+WIN_TYPES.join(', ')+'). The host set the target.');
  $('setup').style.display='none';$('app').style.display='flex';document.body.classList.add('game-open');
+ resetBoardView();
  const pub=pubState(true);
  for(let i=0;i<Net.conns.length;i++){
   const c=Net.conns[i];
@@ -2054,12 +2060,15 @@ function renderBoard(){
   svg.appendChild(root);svg.appendChild(fxg);
  }
  const md=MOODS[S.mood]||MOODS.CALM;
+ const mega=!!(S&&S.layoutKind==='megaring');
+ const bounds=boardViewBounds();
+ const metrics=mega?megaRingMetrics(Math.max(3,(S.boardLayout||[]).length-1)):null;
  const curpos=S?S.players[S.cur].pos:null;
  let s='';
- s+='<defs><pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="rgba(22,131,136,0.18)"/></pattern></defs>';
- s+='<rect width="2400" height="1560" fill="#1d201f"/><rect width="2400" height="1560" fill="url(#dots)"/>';
- s+='<rect width="2400" height="1560" fill="'+md.tint+'" pointer-events="none"/>';
- s+='<rect x="7" y="7" width="2386" height="1546" rx="0" fill="none" stroke="#168388" stroke-width="3" opacity=".7"/>';
+ s+='<defs><pattern id="dots" width="'+(mega?56:26)+'" height="'+(mega?56:26)+'" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="rgba(22,131,136,0.18)"/></pattern></defs>';
+ s+='<rect x="0" y="0" width="'+bounds.w+'" height="'+bounds.h+'" fill="#1d201f"/><rect x="0" y="0" width="'+bounds.w+'" height="'+bounds.h+'" fill="url(#dots)"/>';
+ s+='<rect x="0" y="0" width="'+bounds.w+'" height="'+bounds.h+'" fill="'+md.tint+'" pointer-events="none"/>';
+ s+='<rect x="7" y="7" width="'+(bounds.w-14)+'" height="'+(bounds.h-14)+'" rx="0" fill="none" stroke="#168388" stroke-width="'+(mega?8:3)+'" opacity=".7"/>';
  EDGES.forEach((e,i)=>{
   if(S&&S.fogOfWar){const me=S.players[Net.myIdx],seen=me&&me.visited||{},pos=me&&me.pos,knownA=!!seen[e[0]],knownB=!!seen[e[1]],frontier=(e[0]===pos&&!knownB)||(e[1]===pos&&!knownA);if(!(knownA&&knownB)&&!frontier)return;}
   const A=NMAP[e[0]],B=NMAP[e[1]];
@@ -2074,14 +2083,1586 @@ function renderBoard(){
   s+='<path d="'+d+'" fill="none" stroke="#08383a" stroke-width="'+(hot?6:long?3.5:5)+'" opacity="'+(hot?'.7':'.35')+'"/>';
   s+='<path d="'+d+'" fill="none" stroke="'+(hot?'#7ff6fb':'#168388')+'" stroke-width="'+(hot?3:long?1.6:2)+'" stroke-dasharray="'+(long?'11 8':'')+'" opacity="'+(hot?'1':'.9')+'"/>';
  });
- s+=scribble(1830,860,100,64,4)+scribble(1150,540,95,72,-3)+scribble(1000,1380,92,62,5)+scribble(1630,930,96,62,-4)+scribble(1500,470,98,62,3)+scribble(2020,185,92,66,-5)+scribble(390,1200,102,68,3);
- s+=redArrow(2090,330,1140,310)+redArrow(1965,235,1580,440)+redArrow(1080,585,480,1140)+redArrow(1130,1170,420,640);
- s+=scribText(1930,392,-4,'CASH RATE ↑')+scribText(1150,390,3,'“BOND…”')+scribText(1715,448,-6,'WTI +12%')+scribText(455,295,2,'TOO BIG TO FAIL')+scribText(1930,745,-3,'GOLD ↑')+scribText(1050,1150,4,'RATES ON HOLD')+scribText(640,810,-5,'INSIDER TRADING?');
- s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="268" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.13</text></g>';
- /* the market wire — the mood, live */
- s+='<g transform="translate(1230,30)"><rect x="-700" y="-13" width="1400" height="26" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-682" cy="0" r="5" fill="'+md.color+'"/><text x="-668" y="4" font-size="11" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="-20" y="4" text-anchor="middle" font-size="10.5" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,88))+'</text><text x="688" y="4" text-anchor="end" font-size="10" font-weight="800" fill="#9ad">1🛈=$'+md.rate+'</text></g>';
- let lx=560;
- s+='<g transform="translate(0,62)">';
+ if(mega){
+  s+='<circle cx="'+metrics.cx+'" cy="'+metrics.cy+'" r="'+metrics.radius+'" fill="none" stroke="#168388" stroke-width="3" stroke-dasharray="18 20" opacity=".22"/>';
+  s+='<circle cx="'+metrics.cx+'" cy="'+metrics.cy+'" r="'+(metrics.radius-175)+'" fill="none" stroke="#168388" stroke-width="2" stroke-dasharray="4 18" opacity=".14"/>';
+  s+='<g transform="translate('+metrics.cx+',95)"><rect x="-330" y="-27" width="660" height="48" fill="#168388" stroke="#000" stroke-width="2"/><text text-anchor="middle" y="5" font-size="22" font-weight="900" letter-spacing="3" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.13 · MEGA RING</text></g>';
+  s+='<g transform="translate('+metrics.cx+',175)"><rect x="-1050" y="-15" width="2100" height="30" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-1028" cy="0" r="6" fill="'+md.color+'"/><text x="-1008" y="4" font-size="13" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="0" y="4" text-anchor="middle" font-size="12" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,100))+'</text><text x="1028" y="4" text-anchor="end" font-size="12" font-weight="800" fill="#9ad">1🛈=
+ Object.keys(TYPE_COLORS).forEach(k=>{
+  s+='<rect x="'+lx+'" y="-7" width="10" height="10" rx="2" fill="'+TYPE_COLORS[k]+'"/><text x="'+(lx+14)+'" y="2" font-size="9" font-weight="800" fill="#cbb992">'+k+'</text>';
+  lx+=14+k.length*6.2+16;
+ });
+ s+='</g>';
+ const goalNow=goalAmount();
+ const leader=S.players.reduce((a,b)=>b.money>a.money?b:a,S.players[0]);
+ const footerX=mega?metrics.cx:1200,footerY=mega?bounds.h-155:1490;
+ s+='<g transform="translate('+footerX+','+footerY+')"><rect x="-800" y="-14" width="1600" height="25" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="'+(mega?14:10.5)+'" font-weight="700" letter-spacing="1" fill="#fff">WIN CONDITION: FIRST TO 
+ NODES.forEach(n=>{
+  let cls='';
+  if(S&&!S.over){
+   if(S.mode==='fly')cls=canReach(n.id)?'click':'';
+   else if(S.mode!=='missile'&&S.phase==='move'&&S.cur===Net.myIdx&&S.steps>0&&(ADJ[curpos]||[]).includes(n.id)&&canReach(n.id))cls='click reach';
+   else if(bugTargetable(n))cls='click target';
+   else if(missileTargetable(n))cls='click target';
+   else if(overtourTargetable(n))cls='click target';
+   else if(blockadeTargetable(n))cls='click target';
+  }
+  s+=nodeSVG(n,cls);
+ });
+ if(S)s+=tokenLayer();
+ root.innerHTML=s;
+ /* floating fx — animate each exactly once, on every screen */
+ const fxg=$('fxg');
+ const present=new Set(S.fx.map(f=>f.id));
+ shownFx.forEach(id=>{if(!present.has(id))shownFx.delete(id)});
+ S.fx.forEach(f=>{
+  if(shownFx.has(f.id))return;
+  shownFx.add(f.id);
+  if(f.proj){
+   /* 🌍 a flying warhead or jet: SMIL slides the rig along the route, the static
+      inner rig keeps it nose-first (mirrored on leftward flights), CSS fades it */
+   const outer=document.createElementNS('http://www.w3.org/2000/svg','g');
+   outer.setAttribute('class','fxproj');
+   const mover=document.createElementNS('http://www.w3.org/2000/svg','g');
+   const anim=document.createElementNS('http://www.w3.org/2000/svg','animateTransform');
+   anim.setAttribute('attributeName','transform');anim.setAttribute('type','translate');
+   anim.setAttribute('from',f.x0+' '+f.y0);anim.setAttribute('to',f.x1+' '+f.y1);
+   anim.setAttribute('dur','1.1s');anim.setAttribute('begin','indefinite');anim.setAttribute('fill','freeze');
+   mover.appendChild(anim);
+   const rig=document.createElementNS('http://www.w3.org/2000/svg','g');
+   rig.setAttribute('transform',projRig(f));
+   const img=document.createElementNS('http://www.w3.org/2000/svg','image');
+   img.setAttribute('href',f.img);
+   img.setAttribute('x',-f.w/2);img.setAttribute('y',-f.h/2);
+   img.setAttribute('width',f.w);img.setAttribute('height',f.h);
+   rig.appendChild(img);mover.appendChild(rig);outer.appendChild(mover);fxg.appendChild(outer);
+   setTimeout(()=>{try{anim.beginElement()}catch(e){}},30);
+   setTimeout(()=>{try{outer.remove()}catch(e){}},1600);
+   return;
+  }
+  const outer=document.createElementNS('http://www.w3.org/2000/svg','g');
+  outer.setAttribute('transform','translate('+f.x+','+f.y+')');
+  const inner=document.createElementNS('http://www.w3.org/2000/svg','g');
+  inner.setAttribute('class',f.b?'fxb':'fxt');
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('text-anchor','middle');
+  t.setAttribute('font-size',f.b?54:20);
+  t.setAttribute('font-weight','900');
+  t.setAttribute('fill',f.c);
+  t.setAttribute('stroke','#0f0a05');
+  t.setAttribute('stroke-width',f.b?4:2.5);
+  t.setAttribute('paint-order','stroke');
+  t.textContent=f.t;
+  inner.appendChild(t);outer.appendChild(inner);fxg.appendChild(outer);
+  setTimeout(()=>{try{outer.remove()}catch(e){}},f.b?3600:2900);
+ });
+}+goalNow+' TAKES THE CON</text></g>';
+ s+='<g transform="translate('+footerX+','+(footerY+38)+')"><rect x="-800" y="-12" width="1600" height="23" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="'+(mega?13:10)+'" font-weight="700" letter-spacing="1" fill="aqua">FRONT RUNNER: '+esc(String(leader.name).toUpperCase())+' — 
+ NODES.forEach(n=>{
+  let cls='';
+  if(S&&!S.over){
+   if(S.mode==='fly')cls=canReach(n.id)?'click':'';
+   else if(S.mode!=='missile'&&S.phase==='move'&&S.cur===Net.myIdx&&S.steps>0&&(ADJ[curpos]||[]).includes(n.id)&&canReach(n.id))cls='click reach';
+   else if(bugTargetable(n))cls='click target';
+   else if(missileTargetable(n))cls='click target';
+   else if(overtourTargetable(n))cls='click target';
+   else if(blockadeTargetable(n))cls='click target';
+  }
+  s+=nodeSVG(n,cls);
+ });
+ if(S)s+=tokenLayer();
+ root.innerHTML=s;
+ /* floating fx — animate each exactly once, on every screen */
+ const fxg=$('fxg');
+ const present=new Set(S.fx.map(f=>f.id));
+ shownFx.forEach(id=>{if(!present.has(id))shownFx.delete(id)});
+ S.fx.forEach(f=>{
+  if(shownFx.has(f.id))return;
+  shownFx.add(f.id);
+  if(f.proj){
+   /* 🌍 a flying warhead or jet: SMIL slides the rig along the route, the static
+      inner rig keeps it nose-first (mirrored on leftward flights), CSS fades it */
+   const outer=document.createElementNS('http://www.w3.org/2000/svg','g');
+   outer.setAttribute('class','fxproj');
+   const mover=document.createElementNS('http://www.w3.org/2000/svg','g');
+   const anim=document.createElementNS('http://www.w3.org/2000/svg','animateTransform');
+   anim.setAttribute('attributeName','transform');anim.setAttribute('type','translate');
+   anim.setAttribute('from',f.x0+' '+f.y0);anim.setAttribute('to',f.x1+' '+f.y1);
+   anim.setAttribute('dur','1.1s');anim.setAttribute('begin','indefinite');anim.setAttribute('fill','freeze');
+   mover.appendChild(anim);
+   const rig=document.createElementNS('http://www.w3.org/2000/svg','g');
+   rig.setAttribute('transform',projRig(f));
+   const img=document.createElementNS('http://www.w3.org/2000/svg','image');
+   img.setAttribute('href',f.img);
+   img.setAttribute('x',-f.w/2);img.setAttribute('y',-f.h/2);
+   img.setAttribute('width',f.w);img.setAttribute('height',f.h);
+   rig.appendChild(img);mover.appendChild(rig);outer.appendChild(mover);fxg.appendChild(outer);
+   setTimeout(()=>{try{anim.beginElement()}catch(e){}},30);
+   setTimeout(()=>{try{outer.remove()}catch(e){}},1600);
+   return;
+  }
+  const outer=document.createElementNS('http://www.w3.org/2000/svg','g');
+  outer.setAttribute('transform','translate('+f.x+','+f.y+')');
+  const inner=document.createElementNS('http://www.w3.org/2000/svg','g');
+  inner.setAttribute('class',f.b?'fxb':'fxt');
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('text-anchor','middle');
+  t.setAttribute('font-size',f.b?54:20);
+  t.setAttribute('font-weight','900');
+  t.setAttribute('fill',f.c);
+  t.setAttribute('stroke','#0f0a05');
+  t.setAttribute('stroke-width',f.b?4:2.5);
+  t.setAttribute('paint-order','stroke');
+  t.textContent=f.t;
+  inner.appendChild(t);outer.appendChild(inner);fxg.appendChild(outer);
+  setTimeout(()=>{try{outer.remove()}catch(e){}},f.b?3600:2900);
+ });
+}+leader.money+' · 
+ NODES.forEach(n=>{
+  let cls='';
+  if(S&&!S.over){
+   if(S.mode==='fly')cls=canReach(n.id)?'click':'';
+   else if(S.mode!=='missile'&&S.phase==='move'&&S.cur===Net.myIdx&&S.steps>0&&(ADJ[curpos]||[]).includes(n.id)&&canReach(n.id))cls='click reach';
+   else if(bugTargetable(n))cls='click target';
+   else if(missileTargetable(n))cls='click target';
+   else if(overtourTargetable(n))cls='click target';
+   else if(blockadeTargetable(n))cls='click target';
+  }
+  s+=nodeSVG(n,cls);
+ });
+ if(S)s+=tokenLayer();
+ root.innerHTML=s;
+ /* floating fx — animate each exactly once, on every screen */
+ const fxg=$('fxg');
+ const present=new Set(S.fx.map(f=>f.id));
+ shownFx.forEach(id=>{if(!present.has(id))shownFx.delete(id)});
+ S.fx.forEach(f=>{
+  if(shownFx.has(f.id))return;
+  shownFx.add(f.id);
+  if(f.proj){
+   /* 🌍 a flying warhead or jet: SMIL slides the rig along the route, the static
+      inner rig keeps it nose-first (mirrored on leftward flights), CSS fades it */
+   const outer=document.createElementNS('http://www.w3.org/2000/svg','g');
+   outer.setAttribute('class','fxproj');
+   const mover=document.createElementNS('http://www.w3.org/2000/svg','g');
+   const anim=document.createElementNS('http://www.w3.org/2000/svg','animateTransform');
+   anim.setAttribute('attributeName','transform');anim.setAttribute('type','translate');
+   anim.setAttribute('from',f.x0+' '+f.y0);anim.setAttribute('to',f.x1+' '+f.y1);
+   anim.setAttribute('dur','1.1s');anim.setAttribute('begin','indefinite');anim.setAttribute('fill','freeze');
+   mover.appendChild(anim);
+   const rig=document.createElementNS('http://www.w3.org/2000/svg','g');
+   rig.setAttribute('transform',projRig(f));
+   const img=document.createElementNS('http://www.w3.org/2000/svg','image');
+   img.setAttribute('href',f.img);
+   img.setAttribute('x',-f.w/2);img.setAttribute('y',-f.h/2);
+   img.setAttribute('width',f.w);img.setAttribute('height',f.h);
+   rig.appendChild(img);mover.appendChild(rig);outer.appendChild(mover);fxg.appendChild(outer);
+   setTimeout(()=>{try{anim.beginElement()}catch(e){}},30);
+   setTimeout(()=>{try{outer.remove()}catch(e){}},1600);
+   return;
+  }
+  const outer=document.createElementNS('http://www.w3.org/2000/svg','g');
+  outer.setAttribute('transform','translate('+f.x+','+f.y+')');
+  const inner=document.createElementNS('http://www.w3.org/2000/svg','g');
+  inner.setAttribute('class',f.b?'fxb':'fxt');
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('text-anchor','middle');
+  t.setAttribute('font-size',f.b?54:20);
+  t.setAttribute('font-weight','900');
+  t.setAttribute('fill',f.c);
+  t.setAttribute('stroke','#0f0a05');
+  t.setAttribute('stroke-width',f.b?4:2.5);
+  t.setAttribute('paint-order','stroke');
+  t.textContent=f.t;
+  inner.appendChild(t);outer.appendChild(inner);fxg.appendChild(outer);
+  setTimeout(()=>{try{outer.remove()}catch(e){}},f.b?3600:2900);
+ });
+}+Math.max(0,goalNow-leader.money)+' TO GO</text></g>';
+ NODES.forEach(n=>{
+  let cls='';
+  if(S&&!S.over){
+   if(S.mode==='fly')cls=canReach(n.id)?'click':'';
+   else if(S.mode!=='missile'&&S.phase==='move'&&S.cur===Net.myIdx&&S.steps>0&&(ADJ[curpos]||[]).includes(n.id)&&canReach(n.id))cls='click reach';
+   else if(bugTargetable(n))cls='click target';
+   else if(missileTargetable(n))cls='click target';
+   else if(overtourTargetable(n))cls='click target';
+   else if(blockadeTargetable(n))cls='click target';
+  }
+  s+=nodeSVG(n,cls);
+ });
+ if(S)s+=tokenLayer();
+ root.innerHTML=s;
+ /* floating fx — animate each exactly once, on every screen */
+ const fxg=$('fxg');
+ const present=new Set(S.fx.map(f=>f.id));
+ shownFx.forEach(id=>{if(!present.has(id))shownFx.delete(id)});
+ S.fx.forEach(f=>{
+  if(shownFx.has(f.id))return;
+  shownFx.add(f.id);
+  if(f.proj){
+   /* 🌍 a flying warhead or jet: SMIL slides the rig along the route, the static
+      inner rig keeps it nose-first (mirrored on leftward flights), CSS fades it */
+   const outer=document.createElementNS('http://www.w3.org/2000/svg','g');
+   outer.setAttribute('class','fxproj');
+   const mover=document.createElementNS('http://www.w3.org/2000/svg','g');
+   const anim=document.createElementNS('http://www.w3.org/2000/svg','animateTransform');
+   anim.setAttribute('attributeName','transform');anim.setAttribute('type','translate');
+   anim.setAttribute('from',f.x0+' '+f.y0);anim.setAttribute('to',f.x1+' '+f.y1);
+   anim.setAttribute('dur','1.1s');anim.setAttribute('begin','indefinite');anim.setAttribute('fill','freeze');
+   mover.appendChild(anim);
+   const rig=document.createElementNS('http://www.w3.org/2000/svg','g');
+   rig.setAttribute('transform',projRig(f));
+   const img=document.createElementNS('http://www.w3.org/2000/svg','image');
+   img.setAttribute('href',f.img);
+   img.setAttribute('x',-f.w/2);img.setAttribute('y',-f.h/2);
+   img.setAttribute('width',f.w);img.setAttribute('height',f.h);
+   rig.appendChild(img);mover.appendChild(rig);outer.appendChild(mover);fxg.appendChild(outer);
+   setTimeout(()=>{try{anim.beginElement()}catch(e){}},30);
+   setTimeout(()=>{try{outer.remove()}catch(e){}},1600);
+   return;
+  }
+  const outer=document.createElementNS('http://www.w3.org/2000/svg','g');
+  outer.setAttribute('transform','translate('+f.x+','+f.y+')');
+  const inner=document.createElementNS('http://www.w3.org/2000/svg','g');
+  inner.setAttribute('class',f.b?'fxb':'fxt');
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('text-anchor','middle');
+  t.setAttribute('font-size',f.b?54:20);
+  t.setAttribute('font-weight','900');
+  t.setAttribute('fill',f.c);
+  t.setAttribute('stroke','#0f0a05');
+  t.setAttribute('stroke-width',f.b?4:2.5);
+  t.setAttribute('paint-order','stroke');
+  t.textContent=f.t;
+  inner.appendChild(t);outer.appendChild(inner);fxg.appendChild(outer);
+  setTimeout(()=>{try{outer.remove()}catch(e){}},f.b?3600:2900);
+ });
+}
+function renderSide(){
+ const side=$('side');
+ const me=Net.myIdx;const p=S.players[S.cur];const isTurn=S.cur===me;
+ const md=MOODS[S.mood]||MOODS.CALM;
+ const ownedIcons=NODES.filter(n=>S.owner[n.id]===me).map(n=>'<span title="'+n.name.join(' ')+'">'+(n.icon||({BANK:'🏦',COMMODITY:'🛢️',MEDIA:'🗞️',CORPORATE:'🏢',REGULATOR:'⚖️',CHART:'📈',WILD:'🎭'}[n.type]||'◆'))+'</span>').join('')||'<span style="opacity:.4">—</span>';
+ const curN=NMAP[p.pos];
+ let phaseHtml='';
+ if(S.phase==='over'){
+  phaseHtml='<div class="phlabel">GAME OVER</div><p>The con is complete. Check the record below.</p>'
+   +(Net.role==='host'
+    ?'<button class="act primary" data-act="tolobby">🃏 BACK TO THE LOBBY — same room, deal the next con</button><p class="fine" style="margin-top:8px">Nobody is going anywhere — the table keeps the room, the record and the chat. LEAVE is the only button that ends the night.</p>'
+    :'<p class="fine">Stick around — the host can deal the next con. Nobody has to leave.</p>');
+ } else if(!isTurn){
+  if(Net.spect)phaseHtml='<div class="phlabel">SPECTATING</div><p>You joined mid-con — the table plays on without you. The chat is open and the record below is the play-by-play.</p>';
+  else if(S.phase==='event')phaseHtml='<div class="phlabel">MARKET EVENT</div><p>The market moves whether anyone likes it or not…</p>';
+  else phaseHtml='<div class="phlabel">STANDBY</div><p>⏳ Waiting for <b style="color:'+p.color+'">'+esc(p.name)+'</b>'+(p.dc?' <i>(away — auto-playing)</i>':'')+'…</p><p>Scheme in the chat. Hover exhibits to study their powers.</p>';
+ } else if(S.phase==='move'){
+  const maxSteps=S.caution?1:3+(S.owner.coal===me?1:0)+((S.owner.train===me||S.owner.bullet===me)?1:0)+(S.owner.asics===me?1:0)+(S.extraStep?1:0)+(S.slipped?2:0);
+  const dots='●'.repeat(Math.max(0,S.steps))+'○'.repeat(Math.max(0,maxSteps-S.steps));
+  if(S.mode==='fly'){phaseHtml='<div class="phlabel">PHASE 1 · MOVE — FLYING</div><p><b>FLYING:</b> click <b>any node</b> on the board to land there ($3).</p><button class="act" data-act="cancel">Cancel flight</button>'}
+  else if(S.mode==='missile'){phaseHtml='<div class="phlabel">🚀 MISSILE AWAY — $4 + 1 🛈</div><p><b>LAUNCHING:</b> click <b>any node</b> on the board to strike it. The launch <b>ends your move</b>, and your action phase still follows.</p><button class="act" data-act="cancel">Abort the launch</button>'}
+  else{
+   phaseHtml='<div class="phlabel">PHASE 1 · MOVE</div>'
+    +'<p>Click a <b>highlighted node</b> to move along the red threads (3 steps now — the board is wider). Tolls: <b>$1</b> entering a rival’s node (<b>$2</b> if they hold ALBANESE, <b>free</b> if you hold JAMES BOND).</p>'
+    +'<div class="dots">'+dots+' <span>'+S.steps+' step'+(S.steps!==1?'s':'')+' left</span></div>'
+    +'<button class="act" data-act="endmove">Stay put — end movement</button>'
+    +((!S.extraStep&&p.intel>=1)?'<button class="act" data-act="favor">🛈 Burn a favor — 1 🛈 (+1 step this turn)</button>':'')
+    +((S.owner.qantas===me)?'<button class="act" data-act="flymode"'+(p.money>=3?'':' disabled')+'>✈️ Fly the Qantas jet — $3 (anywhere)</button>':'')
+    +((S.owner.f1===me&&!S.slipped)?'<button class="act" data-act="slip"'+(p.money>=2?'':' disabled')+'>🏎️ Slipstream — $2 (+2 steps, $2 off next seizure)</button>':'')
+    +((S.dlcGeo&&ownsMissileLauncher(me)&&canFireMissileFrom(me))?'<button class="act" data-act="missilemode"'+((p.money>=4&&p.intel>=1&&!S.geoMissiled)?'':' disabled')+' title="From either launcher (anywhere with Kim Jong Un): strike any node that still stands — the launch ends your move; your action still follows ($4 + 1 Intel, once per turn)">🚀 Launch a missile — $4 + 1🛈 (ends the move)</button>':'');
+    if(S.owner.back===me&&!S.backroomAbilityUsed){
+     phaseHtml+='<div class="sublabel">BACKROOM DEALS · ONE NODE ABILITY · COSTS 2 MOVEMENT STEPS</div><div class="btns">';
+     const backroomStepLock=S.steps<2?' disabled':'';
+     if(S.owner.trump===me)phaseHtml+='<button class="act" data-act="tweetmode"'+((p.money>=2?'':' disabled')+backroomStepLock)+'>🦅 The Tweet — $2 · 2 steps</button>';
+     phaseHtml+='<button class="act" data-act="pressure"'+backroomStepLock+'>🤝 Lean on the table · 2 steps</button>';
+     if(S.owner.gov===me)phaseHtml+='<button class="act" data-act="budget"'+((p.money>=3?'':' disabled')+backroomStepLock)+'>🦘 Budget night — $3 · 2 steps</button>';
+     if(S.owner.rock===me)phaseHtml+='<button class="act" data-act="cook"'+((p.money>=3?'':' disabled')+backroomStepLock)+'>💪 Cook the books — $3 · 2 steps</button>';
+     if(S.owner.asic===me)phaseHtml+='<button class="act" data-act="auditmode"'+((p.money>=4&&!S.audited?'':' disabled')+backroomStepLock)+'>⚖️ Audit — $4 · 2 steps</button>';
+     if(S.owner.press===me)phaseHtml+='<button class="act" data-act="spin" data-kind="press"'+((p.money>=3&&!S.spun?'':' disabled')+backroomStepLock)+'>🗞️ Spin the press — $3 · 2 steps</button>';
+     if(S.owner.fox===me)phaseHtml+='<button class="act" data-act="spin" data-kind="fox"'+((p.money>=2?'':' disabled')+backroomStepLock)+'>🦊 Fox spin — $2 · 2 steps</button>';
+     if(S.owner.sisy===me&&p.pos==='sisy')phaseHtml+='<button class="act" data-act="push"'+backroomStepLock+'>🪨 Push the boulder — +$'+(S.sisyPayout||10)+' · 2 steps</button>';
+     if(S.owner.asics===me&&p.pos==='asics')phaseHtml+='<button class="act" data-act="jog"'+backroomStepLock+'>👟 Jog a lap — −1 🔥 · 2 steps</button>';
+     if(S.dlcGeo&&S.owner.geo_boeing===me)phaseHtml+='<button class="act" data-act="qantasdown"'+((p.money>=4&&!S.geoBoeing&&S.owner.qantas!==me?'':' disabled')+backroomStepLock)+' title="Ground a rival or unowned Qantas for two full turns; unavailable if you own Qantas">🛩️ Ground Qantas — $4 · 2 steps</button>';
+     if(S.dlcGeo&&S.owner.geo_scs===me)phaseHtml+='<button class="act" data-act="oilcrash"'+((p.money>=3&&!S.geoCrash?'':' disabled')+backroomStepLock)+'>🌊 Oil crash — $3 · 2 steps</button>';
+     if(S.dlcGeo&&S.owner.geo_stage5===me)phaseHtml+='<button class="act" data-act="stage5"'+((p.intel>=2&&!S.geoStage5?'':' disabled')+backroomStepLock)+'>📉 Stage 5 — 2🛈 · 2 steps</button>';
+     phaseHtml+='</div>';
+    }
+
+  }
+ } else if(S.phase==='action'){
+  const nid=p.pos,n=curN,prev=S.owner[nid];
+  const powline='<div class="pow"><b>'+n.name.join(' ')+'</b> — '+n.sp+'</div>';
+  if(S.mode==='bug'){
+   phaseHtml='<div class="phlabel">PLANT A BUG</div>'+powline+'<p>Click a <b>highlighted rival node next to you</b> on the board. You will skim <b>$1/turn</b> off it.</p><button class="act" data-act="cancel">Cancel</button>';
+  } else if(S.mode==='missile'){
+   phaseHtml='<div class="phlabel">🚀 LAUNCH A MISSILE — $4 + 1 🛈 (once per turn)</div>'+powline+'<p>Click <b>any node</b> on the board. An owned node is expropriated with <b>no payout</b>; either way it becomes <b>rubble</b> — no income, nothing to seize, until someone stands there and pays its list price to rebuild (a rebuild is an action of its own).</p><button class="act" data-act="cancel">Abort the launch</button>';
+  } else if(S.mode==='blockade'){
+   phaseHtml='<div class="phlabel">🚧 ALBANESE BLOCKADE — FREE · ONCE PER TURN</div>'+powline+'<p>Click any <b>highlighted node</b> to block entry for one full rotation. Blocked nodes display a 🚧 marker. Nobody can walk or fly into one, including you; income and missiles are unaffected. Rubble and already-blocked nodes cannot be selected.</p><button class="act" data-act="cancel">Cancel</button>';
+  } else if(S.mode==='overtour'){
+   phaseHtml='<div class="phlabel">🛳️ OVERTOURISM — $2</div>'+powline+'<p>Click a <b>rival-owned node</b>. While you own Venice and the ships keep coming, its owner takes <b>+1 Cortisol</b> at the start of each of their turns.</p><button class="act" data-act="cancel">Cancel</button>';
+  } else if(S.mode==='leak'||S.mode==='audit'||S.mode==='tweet'||S.mode==='roast'){
+   const lab={leak:'LEAK DIRT — 2 🛈 (rival +2 🔥)',audit:'AUDIT — $4 (rival +1 🔥)',tweet:'THE TWEET — $2 (rival loses Intel)',roast:(S.spinKind==='fox'?'FOX SPIN — $2 (rival +1 🔥)':'SPIN THE PRESS — $3 (rival +1 🔥)')}[S.mode];
+   phaseHtml='<div class="phlabel">'+lab+'</div>'+powline+'<p>Click a <b>rival</b> in THE SYNDICATE list below.</p><button class="act" data-act="cancel">Cancel</button>';
+  } else {
+   let base=seizeListPrice(me,n);
+   const isTake=prev!=null&&prev!==me;
+   const cost=isTake?takeoverCost(me,nid,base):base;
+   const maxPay=p.money+(S.owner.back===me?Math.min(3,p.intel):0);
+   const btns=[];
+   if(prev===me){
+    btns.push('<div class="ownnote">You already control <b>'+n.name.join(' ')+'</b>.</div>');
+    if(nid==='sisy')btns.push('<button class="act primary" data-act="push">Push the boulder — +$'+(S.sisyPayout||10)+' (next push doubles)</button>');
+    if(nid==='asics')btns.push('<button class="act primary" data-act="jog">Jog a lap — free −1 🔥</button>');
+   }else if(S.dlcGeo&&S.rubble&&S.rubble[nid]){
+    btns.push('<button class="act primary" data-act="rebuild"'+(p.money>=cost?'':' disabled')+'>♻️ Rebuild '+n.name.join(' ')+' — $'+cost+' (returns unowned — first bids from next turn)</button>');
+    btns.push('<div class="ownnote">Rubble since a missile strike — no income, nothing to seize, until it is rebuilt.</div>');
+   }else{
+    const afford=maxPay>=cost;
+    const lbl=isTake?('Hostile takeover — $'+cost+(flatSeize(nid)?' (never inflates)':S.dossier?' (DOSSIER: list price)':' (takeover '+(S.seizeCount[nid]||0)+'×)')):('Seize '+n.name.join(' ')+' — $'+cost);
+    btns.push('<button class="act primary" data-act="seize"'+(afford?'':' disabled')+'>'+lbl+(afford?'':' — can’t afford')+'</button>');
+   }
+   const bugCost=(S.owner.insider===me)?0:1;
+   const bugTargets=(ADJ[nid]||[]).filter(m=>S.owner[m]!=null&&S.owner[m]!==me&&S.bugs[m]==null).length>0;
+   btns.push('<button class="act" data-act="bugmode"'+((p.intel>=bugCost&&bugTargets)?'':' disabled')+'>Plant a bug — '+(bugCost===0?'FREE (insider trading graphic)':'1 🛈')+'</button>');
+   btns.push('<button class="act" data-act="leakmode"'+(p.intel>=2?'':' disabled')+'>Leak dirt — 2 🛈 (rival +2 🔥)</button>');
+   if(S.owner.asic===me)btns.push('<button class="act" data-act="auditmode"'+((p.money>=4&&!S.audited)?'':' disabled')+'>⚖️ Audit — $4 (rival +1 🔥)</button>');
+   if(S.owner.press===me)btns.push('<button class="act" data-act="spin" data-kind="press"'+((p.money>=3&&!S.spun)?'':' disabled')+'>🗞️ Spin the press — $3 (−2 🔥 or roast)</button>');
+   if(S.owner.fox===me)btns.push('<button class="act" data-act="spin" data-kind="fox"'+((p.money>=2&&!S.spun)?'':' disabled')+'>🦊 Fox spin — $2 (−3 🔥 or roast)</button>');
+   if(S.owner.rock===me)btns.push('<button class="act" data-act="cook"'+((p.money>=3&&!S.cooked)?'':' disabled')+'>💪 Cook the books — $3 (−3 🔥)</button>');
+   if(S.owner.trump===me)btns.push('<button class="act" data-act="tweetmode"'+(p.money>=2?'':' disabled')+'>🦅 The Tweet — $2 (rival +1 🔥)</button>');
+   if(S.owner.gov===me)btns.push('<button class="act" data-act="budget"'+((p.money>=3&&!S.budgeted)?'':' disabled')+'>🦘 Budget night — $3 (rivals each pay you $1, +1 🛈)</button>');
+   if(S.owner.back===me)btns.push('<button class="act" data-act="pressure"'+(!S.pressured?'':' disabled')+'>🤝 Lean on the table — rivals each +1 🔥</button>');
+   /* ---- 🌍 GEOGRAPHY DLC ---- */
+   if(S.dlcGeo&&ownsMissileLauncher(me)&&canFireMissileFrom(me))btns.push('<button class="act" data-act="missilemode"'+((p.money>=4&&p.intel>=1&&!S.geoMissiled)?'':' disabled')+' title="Stand on either launcher to fire (owning Kim Jong Un arms either from anywhere): strike any node — the owner is expropriated with no payout; the node becomes rubble ($4 + 1 Intel, once per turn)">🚀 Launch a missile — $4 + 1 🛈 (expropriate &amp; rubble)</button>');
+   if(S.dlcGeo&&S.owner.geo_boeing===me)btns.push('<button class="act" data-act="qantasdown"'+((p.money>=4&&!S.geoBoeing&&S.owner.qantas!==me)?'':' disabled')+' title="QANTAS grounded for two full turns — no jet, no income ($4, once per turn)">🛩️ Shut down Qantas — $4 (grounded two turns)</button>');
+   if(S.dlcGeo&&S.owner.geo_scs===me)btns.push('<button class="act" data-act="oilcrash"'+((p.money>=3&&!S.geoCrash)?'':' disabled')+' title="PANIC mood; everyone pays $2 per oil node owned — Pillars exempt ($3, once per turn)">🌊 Trigger an oil crash — $3 (oil pays underwater)</button>');
+   if(S.dlcGeo&&S.owner.geo_stage5===me)btns.push('<button class="act" data-act="stage5"'+((p.intel>=2&&!S.geoStage5)?'':' disabled')+' title="The richest player (not you) makes no income on their next turn (2 Intel, once per turn)">📉 Call Stage 5 decline — 2 🛈</button>');
+   if(S.dlcGeo&&S.owner.geo_venice===me&&nid==='geo_venice')btns.push('<button class="act" data-act="venicecool"'+(!S.geoVenice?'':' disabled')+' title="Free — once per turn, either this or Overtourism">🚤 Gondola therapy — free −1 🔥</button>');
+   if(S.dlcGeo&&S.owner.geo_venice===me){
+    const ot=NODES.filter(nn=>S.owner[nn.id]!=null&&S.owner[nn.id]!==me&&!(S.rubble&&S.rubble[nn.id])).length;
+    btns.push('<button class="act" data-act="overmode"'+((p.money>=2&&!S.geoVenice&&ot>0)?'':' disabled')+' title="Pick any rival-owned node, including ESG holdings. It remains active for one full table rotation and applies +1 Cortisol when the target takes their turn ($2, once per turn, either/or)">🛳️ Overtourism — $2 (one full turn cycle)</button>');
+   }
+   if(S.dlcGeo&&S.owner.geo_wonsan===me&&nid==='geo_wonsan')btns.push('<button class="act primary" data-act="beach"'+(!S.geoBeach?'':' disabled')+' title="Free — once per turn">🏖️ Beach day — free −2 🔥</button>');
+   if(S.owner.albo===me){const blockadeTargets=NODES.some(nn=>!S.rubble[nn.id]&&!blockaded(nn.id));btns.push('<button class="act" data-act="blockmode"'+(!S.blockadeUsed&&blockadeTargets?'':' disabled')+' title="Free, once per turn: wall off any unblocked, non-rubble node for one full rotation. Blocks walking and Qantas landings; shown by a 🚧 marker on the board.">🚧 Blockade — free (once per turn)</button>');}
+   /* ---- INTEL OPS ---- */
+   btns.push('<div class="sublabel">INTEL OPS · you hold 🛈 '+p.intel+' · market rate $'+md.rate+'/🛈</div>');
+   btns.push('<button class="act" data-act="spy"'+(p.intel>=2?'':' disabled')+' title="Free action — see the next event card, anywhere">🛈 Spy on the deck — 2 🛈 (see next event)</button>');
+   btns.push('<button class="act" data-act="dossier"'+((p.intel>=3&&!S.dossier)?'':' disabled')+' title="Free action — hostile takeovers cost list price this turn">📂 The Dossier — 3 🛈 (takeovers at list price)</button>');
+   btns.push('<button class="act" data-act="divestmade"'+((p.intel>=5&&p.money>=7&&S.owner.made!=null&&S.owner.made!==me)?'':' disabled')+' title="Pay 5 Intel and $7 compensation to remove MADE from any rival">🟣 Divest MADE — 5 🛈 + $7 compensation</button>');
+   btns.push('<button class="act" data-act="sweep"'+(p.intel>=2?'':' disabled')+' title="Your action — remove all bugs on your nodes">🧹 Sweep for bugs — 2 🛈 (cleanse your nodes)</button>');
+    btns.push('<button class="act" data-act="masspanic"'+(p.intel>=5?'':' disabled')+' title="Your action — every player gains 2 Cortisol">🔥 Mass panic — 5 🛈 (+2 Cortisol to everyone)</button>');
+   btns.push('<button class="act" data-act="targetpanic"'+(p.intel>=30&&S.players.length>1?'':' disabled')+' title="Choose one rival to receive +6 Cortisol; costs 30 Intel">🔥 Overload a rival — 30 🛈 (+6 Cortisol)</button>');
+   if(S.owner.bond===me&&S.owner.leak===me){btns.push('<button class="act" data-act="bondmageddon"'+(p.money>=16&&p.intel>=4&&!S.bondmageddonUsed&&S.players.length>1?'':' disabled')+' title="Four missiles against the rival with the most CHART holdings. If they own ESG, three hit ESG and the fourth hits another holding. Costs $16 + 4 Intel; once per turn.">💥 BONDMAGEDDON — 4 missiles ($16 + 4 🛈)</button>');}
+   for(let k=1;k<=3;k++){
+    btns.push('<button class="act" data-act="sell" data-n="'+k+'"'+(p.intel>=k?'':' disabled')+' title="Your action — sell Intel at the current market rate">💰 Sell '+k+' 🛈 → $'+(k*md.rate)+'</button>');
+   }
+   btns.push('<button class="act" data-act="sellall"'+(p.intel>0?'':' disabled')+' title="Exchange every Intel point you hold at the current market rate">💰 Sell ALL '+p.intel+' 🛈 → $'+(p.intel*md.rate)+'</button>');
+   btns.push('<button class="act" data-act="laylowcash">Lay low — pocket $1</button>');
+   btns.push('<button class="act" data-act="laylowcool">Lay low — cool 2 🔥</button>');
+   phaseHtml='<div class="phlabel">PHASE 2 · ONE ACTION</div>'+powline+'<div class="btns">'+btns.join('')+'</div>';
+  }
+ } else if(S.phase==='event'){
+  phaseHtml='<div class="phlabel">PHASE 3 · MARKET EVENT</div><p>Resolve the event… and watch the mood.</p>';
+ }
+ const prows=S.players.map((pl,i)=>{
+  const nodes=NODES.filter(nn=>S.owner[nn.id]===i).length;
+  const targetable=isTurn&&(S.phase==='action'||(S.phase==='move'&&S.owner.back===me&&!S.backroomAbilityUsed))&&(S.mode==='leak'||S.mode==='audit'||S.mode==='tweet'||S.mode==='roast')&&i!==me;
+  const face=charSrc(pl.char);
+  return '<div class="prow'+(i===me?' me':'')+(targetable?' targetable':'')+(pl.cortisol>=6?' hot':'')+'" data-rival="'+i+'" style="--pc:'+pl.color+'">'
+   +(face?'<img class="pface" src="'+face+'" alt="">':'<span class="pnum">'+(i+1)+'</span><span class="pdot"></span>')
+   +'<span class="pname">'+esc(pl.name)+(i===me?' <i style="color:#9ad">(you)</i>':'')+(pl.dc?' 💤':'')+'</span>'
+   +'<span class="pstats">$'+pl.money+' · 🛈'+pl.intel+' · 🔥'+pl.cortisol+'</span>'
+   +'<span class="pnodes">'+nodes+' node'+(nodes!==1?'s':'')+' · set '+(WIN_TYPES.length-missingTypes(i).length)+'/'+WIN_TYPES.length+'</span></div>';
+ }).join('');
+ const myMissing=Net.spect?[]:missingTypes(me);
+ const setHtml=Net.spect?'<span style="color:#9ad">not playing — just watching</span>':WIN_TYPES.map(t=>{const has=hasType(me,t);return '<span style="color:'+(has?'#7fe08d':'#ff6b5e')+'">'+(has?'✔':'✘')+' '+t+'</span>'}).join('');
+ const chatHtml=(S.chat||[]).map(c=>'<div><b style="color:'+c.c+'">'+esc(c.n)+':</b> '+esc(c.t)+'</div>').join('')||'<div style="opacity:.4;font-style:italic">— the wire is quiet —</div>';
+ const chatVal=(window.__chatDraft)||'';
+ side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomLabel||Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':(Net.spect?'👁 SPECTATOR':'SEAT '+(Net.myIdx+1)))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
+  +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
+  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.13 · '+(S.dlcGeo?'81':'70')+' exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
+  +'<div class="turncard" style="border-color:'+p.color+'"><div class="turnlab">TURN '+S.turn+'</div><div class="turnname" style="color:'+p.color+'">'+esc(p.name)+(isTurn?' — that’s you':'')+'</div>'
+  +'<div class="resline">$ '+p.money+' &nbsp;·&nbsp; 🛈 '+p.intel+' &nbsp;·&nbsp; 🔥 '+p.cortisol+(p.cortisol>=6?' <span class="danger">RAID AT 9</span>':'')+'</div>'
+  +'<div class="holds" title="holdings of '+esc(p.name)+'">'+(isTurn?ownedIcons:'<span style="opacity:.5;font-size:12px">'+NODES.filter(n=>S.owner[n.id]===S.cur).length+' holdings</span>')+'</div></div>'
+  +'<div class="setcard"><span class="st">🎯 WIN SET</span>'+setHtml+'<span style="flex-basis:100%;color:#9ad">'+(Net.spect?'the spectacle is the point':(myMissing.length?'still need: '+myMissing.join(', ')+' · and $'+goalAmount():'full set held — now bank $'+goalAmount()))+'</span></div>'
+  +'<div class="phasecard">'+phaseHtml+'</div>'
+  +'<div class="paneltitle">THE SYNDICATE — '+S.players.length+' AT THE TABLE</div><div>'+prows+'</div>'
+  +'<div class="paneltitle">THE RECORD<span style="float:right;display:inline-flex;gap:6px;margin-top:-4px"><button class="mini" data-act="copyrecord" style="flex:0 0 auto;padding:3px 8px;font-size:10px">COPY</button><button class="mini" data-act="reviewlog" style="flex:0 0 auto;padding:3px 8px;font-size:10px" title="Open this record in the log reviewer">🔬 REVIEW</button></span></div><div class="log" id="logbox">'+(S.over?S.log:S.log.slice(-LOG_SHOWN)).map(l=>'<div>'+l+'</div>').join('')+'</div>'
+  +'<div class="paneltitle">THE WIRE (chat)</div><div class="chatbox"><div class="chatlist" id="chatbox">'+chatHtml+'</div><div class="chatrow"><input id="chatInput" maxlength="140" placeholder="talk your book…" value="'+esc(chatVal)+'"><button id="chatSend">SEND</button></div></div>'
+  +'<div class="footbtns"><button class="mini" data-act="notifications">🔔 TURN ALERTS: '+(turnAlertsEnabled()?'ON':'OFF')+'</button><button class="mini" data-act="rules">📖 RULES</button><a class="mini" href="exhibits.html" target="_blank" rel="noopener">▦ EXHIBITS</a><button class="mini" data-act="leave">↺ LEAVE</button></div>';
+ const lb=$('logbox');if(lb)lb.scrollTop=lb.scrollHeight;
+ const cb=$('chatbox');if(cb)cb.scrollTop=cb.scrollHeight;
+ const ci=$('chatInput');
+ if(ci){ci.addEventListener('input',()=>{window.__chatDraft=ci.value});
+  const send=()=>{const t=ci.value.trim();if(!t)return;window.__chatDraft='';sendChat(t)};
+  $('chatSend').onclick=send;
+  ci.addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+ }
+}
+function sendChat(t){
+ if(Net.role==='host'){addChat(Net.myIdx,t)}
+ else if(Net.conn&&Net.conn.open){Net.conn.send({t:'chat',text:t})}
+}
+function getPlayerId(){const key='bigcon-player-id';let id=sessionStorage.getItem(key);if(!id){id=crypto.randomUUID();sessionStorage.setItem(key,id)}return id;}
+function dispatch(m){
+ if(!S||S.over)return;
+ if(Net.role==='host')applyIntent(Net.myIdx,m);
+ else if(Net.conn&&Net.conn.open)Net.conn.send({t:'intent',act:m.act,id:m.id,target:m.target,kind:m.kind,choice:m.choice,n:m.n});
+}
+
+/* ================= INPUT — pan, zoom & taps ================= */
+const svgEl=$('board');
+let VB={x:0,y:0,w:2400,h:1560};
+function boardViewBounds(){
+ if(S&&S.layoutKind==='megaring'){
+  const count=Math.max(3,(S.boardLayout||[]).length-1||NODES.length-1);
+  const m=megaRingMetrics(count);
+  return {x:m.x,y:m.y,w:m.w,h:m.h};
+ }
+ return {x:0,y:0,w:2400,h:1560};
+}
+function applyVB(){svgEl.setAttribute('viewBox',VB.x+' '+VB.y+' '+VB.w+' '+VB.h)}
+function resetBoardView(){
+ const b=boardViewBounds();
+ VB={x:b.x,y:b.y,w:b.w,h:b.h};
+ applyVB();
+}
+function zoomAt(f,cx,cy){
+ const bounds=boardViewBounds();
+ const rect=svgEl.getBoundingClientRect();
+ const bx=VB.x+(cx-rect.left)/rect.width*VB.w, by=VB.y+(cy-rect.top)/rect.height*VB.h;
+ const nw=Math.min(bounds.w,Math.max(280,VB.w*f)), nh=nw*bounds.h/bounds.w;
+ VB.x=bx-(bx-VB.x)*(nw/VB.w);VB.y=by-(by-VB.y)*(nh/VB.h);
+ VB.w=nw;VB.h=nh;clampVB();applyVB();
+}
+function clampVB(){
+ const b=boardViewBounds();
+ VB.x=Math.min(b.x+b.w-VB.w,Math.max(b.x,VB.x));
+ VB.y=Math.min(b.y+b.h-VB.h,Math.max(b.y,VB.y));
+}
+svgEl.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY>0?1.13:0.885,e.clientX,e.clientY)},{passive:false});
+let drag=null,lastTapTarget=null;
+svgEl.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,moved:false};lastTapTarget=e.target;});
+svgEl.addEventListener('pointermove',e=>{
+ if(!drag)return;
+ const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
+ if(!drag.moved&&Math.abs(dx)+Math.abs(dy)>6){
+  drag.moved=true;
+  try{svgEl.setPointerCapture(e.pointerId)}catch(_){}
+  svgEl.classList.add('panning');
+ }
+ if(drag.moved){
+  const rect=svgEl.getBoundingClientRect();
+  VB.x-=dx*VB.w/rect.width;VB.y-=dy*VB.h/rect.height;clampVB();applyVB();
+  drag.x=e.clientX;drag.y=e.clientY;
+ }
+});
+svgEl.addEventListener('pointerup',()=>{
+ if(drag&&!drag.moved)handleNodeTap(lastTapTarget);
+ drag=null;svgEl.classList.remove('panning');
+});
+svgEl.addEventListener('pointercancel',()=>{drag=null;svgEl.classList.remove('panning')});
+window.addEventListener('pointerup',e=>{if(drag&&e.target&&e.target!==svgEl&&!svgEl.contains(e.target)){drag=null;svgEl.classList.remove('panning')}});
+function handleNodeTap(t){
+ if(!t||!t.closest)return;
+ const g=t.closest('g.node');
+ if(!g||!S||S.over)return;
+ if(S.cur!==Net.myIdx)return;
+ const id=g.dataset.id;
+ if(S.phase==='move'){
+  if(S.mode==='fly'){dispatch({act:'fly',id});return}
+  if(S.mode==='missile'){dispatch({act:'missile',id});return}
+  if(S.steps<=0)return;
+  if(!canReach(id)){toast(qantasGroundedReason()+'.');return}
+  if((ADJ[S.players[Net.myIdx].pos]||[]).includes(id))dispatch({act:'move',id});
+  else toast('You can only move along the red threads — click a highlighted node.');
+ } else if(S.phase==='action'){
+  if(S.mode==='bug')dispatch({act:'bug',id});
+  else if(S.mode==='missile')dispatch({act:'missile',id});
+  else if(S.mode==='overtour')dispatch({act:'overtour',id});
+  else if(S.mode==='blockade')dispatch({act:'blockade',id});
+ }
+}
+ $('zin').onclick=()=>zoomAt(0.8,innerWidth/2,innerHeight/2);
+ $('zout').onclick=()=>zoomAt(1.25,innerWidth/2,innerHeight/2);
+ $('zreset').onclick=()=>resetBoardView();
+/* The syndicate hover card: hold the cursor over a rival's row and the table
+   shows exactly which pins they hold and which win types they still need. */
+(function(){
+ let card=null;
+ function ensure(){
+  if(card)return;
+  card=document.createElement('div');card.id='nodecard';
+  card.style.cssText='position:fixed;display:none;pointer-events:none;z-index:9999;max-width:360px;background:#101418;border:1px solid #2a4a55;border-radius:10px;padding:10px 12px;font:12px/1.55 Inconsolata,monospace;color:#cfe6ee;box-shadow:0 8px 30px rgba(0,0,0,.55);white-space:normal';
+  document.body.appendChild(card);
+ }
+ function hide(){if(card)card.style.display='none'}
+ function move(e){
+  if(!card||card.style.display!=='block')return;
+  const pad=14,r=card.getBoundingClientRect();
+  let x=e.clientX+pad,y=e.clientY+pad;
+  if(x+r.width>innerWidth-8)x=e.clientX-r.width-pad;
+  if(y+r.height>innerHeight-8)y=e.clientY-r.height-pad;
+  card.style.left=Math.max(8,x)+'px';card.style.top=Math.max(8,y)+'px';
+ }
+ function show(e){
+  const row=e.target&&e.target.closest?e.target.closest('.prow[data-rival]'):null;
+  if(!row||!S){hide();return}
+  const i=+row.dataset.rival,pl=S.players[i];
+  if(!pl){hide();return}
+  ensure();
+  const owned=NODES.filter(n=>S.owner[n.id]===i);
+  const byType={};for(const n of owned){(byType[n.type]=byType[n.type]||[]).push(n.name.join(' '))}
+  const missing=missingTypes(i);
+  let h='<b style="color:'+pl.color+';font-size:13px">'+esc(pl.name)+'</b> <span style="opacity:.7">$'+pl.money+' · 🛈'+pl.intel+' · 🔥'+pl.cortisol+'</span>';
+  h+='<div style="margin-top:6px;letter-spacing:.12em;color:#7fa7b3">HOLDS '+(owned.length||'NOTHING')+'</div>';
+  if(owned.length)h+=WIN_TYPES.filter(t=>byType[t]).map(t=>'<div><span style="color:#7fe08d">✔ '+t+'</span><span style="opacity:.85"> — '+byType[t].join(', ')+'</span></div>').join('');
+  else h+='<div style="opacity:.5">no pins on the board yet</div>';
+  h+='<div style="margin-top:6px;letter-spacing:.12em;color:#7fa7b3">'+(missing.length?'STILL NEEDS':'FULL SET HELD')+'</div>';
+  h+=missing.length?missing.map(t=>'<span style="color:#ff6b5e;margin-right:10px">✘ '+t+'</span>').join(''):'<span style="color:#7fe08d">✔ every type — now it is just the cash</span>';
+  card.innerHTML=h;card.style.display='block';
+  move(e);
+ }
+ document.addEventListener('mouseover',show);
+ document.addEventListener('mousemove',e=>{
+  const row=e.target&&e.target.closest?e.target.closest('.prow[data-rival]'):null;
+  if(row)show(e);else hide();
+ });
+ document.addEventListener('mouseout',e=>{
+  const row=e.target&&e.target.closest?e.target.closest('.prow[data-rival]'):null;
+  if(row&&(!e.relatedTarget||!row.contains(e.relatedTarget)))hide();
+ });
+})();
+ $('side').addEventListener('click',async e=>{
+ if(!S)return;
+ const row=e.target.closest('.prow[data-rival]');
+ if(row&&(S.phase==='action'||(S.phase==='move'&&S.owner.back===Net.myIdx&&!S.backroomAbilityUsed))&&S.cur===Net.myIdx){
+  const ri=+row.dataset.rival;if(ri===Net.myIdx)return;
+  if(S.mode&&['leak','audit','tweet','roast'].includes(S.mode)){dispatch({act:S.mode,target:ri});return}
+ }
+ const b=e.target.closest('button[data-act]');
+ if(!b||b.disabled)return;
+ const act=b.dataset.act;
+ if(act==='rules'){showRules();return}
+ if(act==='notifications'){toggleTurnAlerts();return}
+ if(act==='copyrecord'){
+  const rec=(S.log||[]).join('\n');
+  try{navigator.clipboard.writeText(rec).then(()=>toast('Record copied.')).catch(()=>toast('Could not copy the record.'))}catch(e){toast('Could not copy the record.')}
+  return;
+ }
+ if(act==='reviewlog'){
+  const meta={t:(S.log||[]).join('\n'),p:S.players.map(pl=>({n:pl.name,c:pl.color}))};
+  let saved=false;
+  try{localStorage.setItem('bigcon-record-pending',JSON.stringify(meta));saved=true}catch(e){}
+  const w=window.open('logs.html','_blank');
+  if(!w)toast('Allow pop-ups to open the log reviewer.');
+  else if(!saved)toast('Could not hand the record over — use COPY and paste it into the reviewer.');
+  return;
+ }
+ if(act==='tolobby'){if(Net.role==='host')backToLobby();return}
+ if(act==='leave'){
+  if(Net.role==='host'){const v=await modal({title:'END THE GAME?',body:'This will disconnect everyone and return all players to the lobby screen. Proceed?',options:[{label:'Yes — end it',v:1},{label:'Keep scheming',v:0}]});if(v){sendAll({t:'reload'});setTimeout(()=>location.reload(),300)}}
+  else{const v=await modal({title:'LEAVE THE TABLE?',body:'Your seat will be held — rejoin later with the same name and room code.',options:[{label:'Yes — leave',v:1},{label:'Stay',v:0}]});if(v)location.reload()}
+  return;
+ }
+ if(S.cur!==Net.myIdx||S.over)return;
+ switch(act){
+  case 'endmove':dispatch({act:'endmove'});break;
+  case 'flymode':dispatch({act:'flymode'});break;
+  case 'slip':dispatch({act:'slip'});break;
+  case 'favor':dispatch({act:'favor'});break;
+  case 'seize':dispatch({act:'seize'});break;
+  case 'bugmode':dispatch({act:'bugmode'});break;
+  case 'leakmode':dispatch({act:'leakmode'});break;
+  case 'auditmode':dispatch({act:'auditmode'});break;
+  case 'tweetmode':dispatch({act:'tweetmode'});break;
+   case 'pressure':dispatch({act:'pressure'});break;
+   case 'missilemode':dispatch({act:'missilemode'});break;
+  case 'bondmageddon':dispatch({act:'bondmageddon'});break;
+  case 'sellall':dispatch({act:'sellall'});break;
+   case 'rebuild':dispatch({act:'rebuild'});break;
+   case 'beach':dispatch({act:'beach'});break;
+   case 'qantasdown':dispatch({act:'qantasdown'});break;
+   case 'oilcrash':dispatch({act:'oilcrash'});break;
+   case 'stage5':dispatch({act:'stage5'});break;
+   case 'overmode':dispatch({act:'overmode'});break;
+   case 'venicecool':dispatch({act:'venicecool'});break;
+   case 'blockmode':dispatch({act:'blockmode'});break;
+  case 'spin':dispatch({act:'spin',kind:b.dataset.kind});break;
+  case 'cook':dispatch({act:'cook'});break;
+  case 'budget':dispatch({act:'budget'});break;
+  case 'push':dispatch({act:'push'});break;
+  case 'jog':dispatch({act:'jog'});break;
+  case 'spy':dispatch({act:'spy'});break;
+  case 'dossier':dispatch({act:'dossier'});break;
+  case 'sweep':dispatch({act:'sweep'});break;
+  case 'masspanic':dispatch({act:'masspanic'});break;
+  case 'divestmade':dispatch({act:'divestmade'});break;
+  case 'sell':dispatch({act:'sell',n:+b.dataset.n});break;
+  case 'cancel':dispatch({act:'cancel'});break;
+  case 'laylowcash':dispatch({act:'laylow',choice:'cash'});break;
+  case 'laylowcool':dispatch({act:'laylow',choice:'cool'});break;
+ }
+});
+
+/* Initialise optional transport preferences after the setup controls exist. */
+loadTransportSettings();
+/* ================= NETWORKING ================= */
+const PFX='bigcon-oz-';
+/* Room codes are jt portal buzzwords — every one of these has its own line in
+   the jt portal news ticker, so the code is always something you can say out loud. */
+const BUZZWORDS=['WORLD ECONOMIC FORUM','NESA','JAKE TOMKINS','ELIJAH SON','SETH WEGRZYN','AIDAN NEWLING','DANIEL SWAIN','TOKTIMER','RBA','BIG BESSENT','NEW LAKEMBA','JTPORTAL','MCMETRO','CEO OF COAL','INKDIN','HORMUZ','PYONGYANG UNIVERSITY','LOW CORTISOL'];
+function codeSlug(s){return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
+function codeLabel(slug){const hit=BUZZWORDS.find(b=>codeSlug(b)===slug);return hit||slug}
+/* Typed codes are forgiving: case, spaces and punctuation are all ignored, and a
+   unique prefix of a buzzword is enough. */
+function matchBuzzword(input){
+ const s=codeSlug(input);
+ if(!s)return '';
+ if(BUZZWORDS.some(b=>codeSlug(b)===s))return s;
+ const hits=BUZZWORDS.filter(b=>codeSlug(b).startsWith(s));
+ return hits.length===1?codeSlug(hits[0]):s;
+}
+function genCode(){return codeSlug(BUZZWORDS[Math.floor(Math.random()*BUZZWORDS.length)])}
+function setNetStatus(msg,err){const el=$('netStatus');el.textContent=msg||'';el.className=err?'err':''}
+function cleanName(s){return String(s||'').replace(/[<>&"'`]/g,'').trim().slice(0,80)}
+function showFatal(msg){
+ Presence.clear();
+ const ov=document.createElement('div');ov.className='overlay';
+ const card=document.createElement('div');card.className='mcard';
+ card.innerHTML='<div class="mtitle">CONNECTION LOST</div><div class="mbody"><p>'+esc(msg)+'</p></div><div class="mopts"><button onclick="location.reload()">Reload</button></div>';
+ ov.appendChild(card);document.body.appendChild(ov);
+}
+
+/* ---- DEFAULT CLOUDFLARE DURABLE OBJECT RELAY ----
+   The deployed Worker URL is built in, so players do not need to configure it.
+   PeerJS remains available as a fallback transport if the relay is unavailable;
+   all players in a room must use the same transport. */
+const BIGCON_RELAY_URL='https://bigconhosting.wax-no-bones.workers.dev';
+function transportSettings(){
+ if(IS_DISCORD_ACTIVITY)return {mode:'cloudflare',url:'/relay'};
+ const mode=$('transportMode')?.value||'cloudflare';
+ try{localStorage.setItem('bigcon-transport-mode-v2',mode)}catch(_){}
+ return {mode,url:BIGCON_RELAY_URL.replace(/^https:/i,'wss:').replace(/^http:/i,'ws:').replace(/\/+$/,'')};
+}
+function loadTransportSettings(){
+ if(IS_DISCORD_ACTIVITY){const panel=$('transportSettings');if(panel)panel.style.display='none';return}
+ try{
+  const mode=localStorage.getItem('bigcon-transport-mode-v2')||'cloudflare';
+  if($('transportMode'))$('transportMode').value=mode;
+ }catch(_){}
+ const refresh=()=>{
+  const mode=$('transportMode')?.value||'cloudflare';
+  if($('relayHelp'))$('relayHelp').textContent=mode==='cloudflare'
+   ?'Using the built-in Cloudflare relay. No URL setup is needed.'
+   :'PeerJS / WebRTC direct or TURN fallback is active. Everyone joining the room must select the same connection system.';
+ };
+ $('transportMode')?.addEventListener('change',()=>{transportSettings();refresh()});
+ loadTransportSettings._refresh=refresh;refresh();
+}
+class RelayEvents{
+ constructor(){this.events={}}
+ on(name,fn){(this.events[name]||(this.events[name]=[])).push(fn);return this}
+ emit(name,...args){for(const fn of this.events[name]||[]){try{fn(...args)}catch(e){console.error(e)}}}
+}
+class CloudflareDataConnection extends RelayEvents{
+ constructor(peer,room,id,hostSide){super();this.peer=peer;this.room=room;this.id=id;this.hostSide=hostSide;this.open=false;this.__bigconClosed=false;this.__lastSeen=Date.now()}
+ send(data){if(!this.open||!this.peer.socket||this.peer.socket.readyState!==1)throw new Error('Relay connection is not open');this.peer.socket.send(JSON.stringify({type:'data',target:this.hostSide?this.id:'host',data}))}
+ close(){if(this.__bigconClosed)return;this.__bigconClosed=true;this.open=false;this.emit('close');if(this.peer.socket&&this.peer.socket.readyState===1)this.peer.socket.send(JSON.stringify({type:'leave',target:this.id}));}
+}
+class CloudflarePeer extends RelayEvents{
+ constructor(idOrOptions,maybeOptions){
+  super();this.id=typeof idOrOptions==='string'?idOrOptions:null;this.options=typeof idOrOptions==='string'?maybeOptions:idOrOptions;this.destroyed=false;this.disconnected=false;this.socket=null;this.connections=new Map();this.hostSide=!!this.id;
+  queueMicrotask(()=>{if(this.destroyed)return;if(this.hostSide)this._connectSocket(this.id.slice(PFX.length),'host');else this.emit('open','guest-'+crypto.randomUUID())});
+ }
+ _baseUrl(){
+  return transportSettings().url;
+ }
+ _connectSocket(room,role){
+  let base;try{base=this._baseUrl()}catch(e){this.emit('error',{type:'configuration',message:e.message});return}
+  const url=base.replace(/^https:/i,'wss:').replace(/^http:/i,'ws:')+'/ws/'+encodeURIComponent(room)+'?role='+role;
+  const ws=new WebSocket(url);this.socket=ws;
+  ws.addEventListener('open',()=>{if(this.destroyed){ws.close();return}ws.send(JSON.stringify({type:'join',role}));});
+  ws.addEventListener('message',ev=>{
+   let m;try{m=JSON.parse(ev.data)}catch(_){return}
+   if(m.type==='ready'){
+    if(role==='host'){this.emit('open',this.id);return}
+    const c=this.connections.get('outgoing');if(c&&!c.open){c.id=m.id;c.open=true;c.emit('open');}
+   }else if(m.type==='incoming'&&role==='host'){
+    const c=new CloudflareDataConnection(this,room,m.id,true);c.open=true;this.connections.set(m.id,c);this.emit('connection',c);c.emit('open');
+   }else if(m.type==='data'){
+    const c=role==='host'?this.connections.get(m.source):this.connections.get('outgoing');
+    if(c&&c.open){c.__lastSeen=Date.now();c.emit('data',m.data)}
+   }else if(m.type==='left'){
+    const c=role==='host'?this.connections.get(m.id):this.connections.get('outgoing');
+    if(c){c.open=false;c.__bigconClosed=true;c.emit('close');if(role==='host')this.connections.delete(m.id)}
+   }else if(m.type==='host_back'&&!this.hostSide){
+    const c=this.connections.get('outgoing');
+    if(c&&c.open){try{c.send({t:'hello',name:Net.myName,playerId:Net.playerId})}catch(_){}}
+   }else if(m.type==='error'){this.emit('error',{type:m.code||'network',message:m.message||'Cloudflare relay error'})}
+  });
+  let failureNotified=false;
+  ws.addEventListener('close',()=>{
+   if(this.destroyed)return;
+   this.disconnected=true;
+   for(const c of this.connections.values()){if(c.open){c.open=false;c.emit('close')}}
+   if(!failureNotified){failureNotified=true;if(this.hostSide)this.emit('disconnected');else this.emit('error',{type:'socket-closed',message:'Cloudflare relay connection closed'})}
+  });
+  ws.addEventListener('error',()=>{
+   if(this.destroyed||failureNotified)return;
+   failureNotified=true;
+   if(this.hostSide)this.emit('disconnected');
+   else this.emit('error',{type:'socket-error',message:'Cloudflare relay socket error'});
+  });
+ }
+ connect(target){
+  const room=String(target||'').startsWith(PFX)?String(target).slice(PFX.length):String(target||'');
+  const c=new CloudflareDataConnection(this,room,'outgoing',false);this.connections.set('outgoing',c);
+  try{this._connectSocket(room,'guest')}catch(e){queueMicrotask(()=>this.emit('error',{type:'configuration',message:e.message}))}
+  return c;
+ }
+ reconnect(){if(this.destroyed)return;this._connectSocket(this.id?this.id.slice(PFX.length):Net.roomCode,this.hostSide?'host':'guest')}
+ destroy(){this.destroyed=true;for(const c of this.connections.values())c.close();if(this.socket){try{this.socket.close()}catch(_){}}this.emit('close')}
+}
+function selectedPeerClass(){
+ const cfg=transportSettings();
+ if(cfg.mode!=='cloudflare')return Peer;
+ return CloudflarePeer;
+}
+
+/* ---- WEBRTC / ICE CONFIG ---- */
+/* Keep game traffic peer-to-peer. STUN discovers routes; TURN relays only when
+   a direct route is impossible. Several relays over UDP, TCP and TLS/443:
+   office firewalls and mobile carriers block different ones. */
+const BIGCON_ICE_CONFIG={
+ iceServers:[
+  {urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302','stun:global.stun.twilio.com:3478']},
+  {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478','turn:eu-0.turn.peerjs.com:3478?transport=tcp','turn:us-0.turn.peerjs.com:3478?transport=tcp'],username:'peerjs',credential:'peerjsp'},
+  {urls:['turns:eu-0.turn.peerjs.com:5349','turns:us-0.turn.peerjs.com:5349'],username:'peerjs',credential:'peerjsp'}
+ ],
+ sdpSemantics:'unified-plan',
+ iceCandidatePoolSize:4
+};
+const BIGCON_PEER_OPTIONS={config:BIGCON_ICE_CONFIG,debug:1,pingInterval:5000};
+// Tolerate short stalls on congested or filtered school networks.
+const HEARTBEAT_MS=5000,CONN_TIMEOUT_MS=35000;
+const PEER_REOPEN_BASE_MS=3500;
+let hostReopenTimer=null,hostReopenAttempt=0;
+function scheduleHostReopen(reason){
+ if(hostReopenTimer)return;
+ hostReopenAttempt++;
+ const delay=Math.min(20000,PEER_REOPEN_BASE_MS*Math.pow(2,Math.min(hostReopenAttempt-1,3)));
+ setNetStatus((reason||'Signalling connection interrupted')+' — retrying room registration in '+Math.ceil(delay/1000)+'s…',true);
+ hostReopenTimer=setTimeout(()=>{
+  hostReopenTimer=null;
+  if(Net.role==='host'&&Net.roomCode)hostOpenPeer();
+ },delay);
+}
+
+/* ---- HOST ---- */
+function hostCreate(name){
+ setNetStatus('Contacting the matchmaker…');
+ Net.role='host';Net.myName=name;Net.playerId=getPlayerId();Net.myIdx=0;Net.roster=[{name,playerId:Net.playerId,conn:null,char:null}];Net.conns=[null];
+ Net.roomCode=genCode();Net.roomLabel=codeLabel(Net.roomCode);
+ hostOpenPeer();
+ startHostHeartbeat();
+}
+function hostOpenPeer(){
+ if(hostReopenTimer){clearTimeout(hostReopenTimer);hostReopenTimer=null}
+ const code=Net.roomCode;
+ const old=Net.peer;
+ if(old&&!old.destroyed){try{old.destroy()}catch(_){}}
+ const p=new (selectedPeerClass())(PFX+code,BIGCON_PEER_OPTIONS);
+ Net.peer=p;
+ let opened=false;
+ p.on('open',()=>{
+  opened=true;
+  if(Net.peer!==p)return;
+  hostReopenAttempt=0;
+  $('btnCreate').disabled=false;
+  showLobby(true);
+  if(!Net.started)setNetStatus('Room created — seats up to 8. Waiting for co-conspirators…');
+ });
+ p.on('disconnected',()=>{
+  if(Net.peer!==p||p.destroyed)return;
+  try{p.reconnect()}catch(_){scheduleHostReopen('Signalling server disconnected')}
+ });
+ p.on('error',e=>{
+  const ty=e&&e.type;
+  if(Net.peer!==p)return;
+  if(ty==='unavailable-id'&&!opened&&!Net.started){try{p.destroy()}catch(x){}Net.roomCode=genCode();Net.roomLabel=codeLabel(Net.roomCode);hostReopenAttempt=0;hostOpenPeer();return}
+  if(ty==='unavailable-id'){scheduleHostReopen('Room ID is temporarily registered elsewhere');return}
+  if(ty==='network'||ty==='socket-error'||ty==='socket-closed'||ty==='server-error'){
+   // Back off rather than repeatedly destroying/recreating the peer in a tight loop.
+   scheduleHostReopen('Matchmaker error ('+ty+')');
+   return;
+  }
+  if(ty==='peer-unavailable')return;
+  setNetStatus('Network error: '+(ty||'unknown')+' — check your internet and try again.',true);
+ });
+ p.on('connection',c=>{
+  c.on('open',()=>{
+   c.__lastSeen=Date.now();
+   c.on('data',d=>{try{onHostData(c,d)}catch(err){console.error(err)}});
+  });
+  c.on('close',()=>onHostClose(c));
+  c.on('error',()=>onHostClose(c));
+ });
+}
+/* A quiet data channel is indistinguishable from a dead one, so the host keeps
+   pinging and drops seats that stop answering instead of stalling the table. */
+function startHostHeartbeat(){
+ clearInterval(Net.hbTimer);
+ Net.hbTimer=setInterval(()=>{
+  const now=Date.now();
+  for(let i=0;i<Net.conns.length;i++){
+   const c=Net.conns[i];
+   if(!c)continue;
+   if(!c.open){onHostClose(c);continue}
+   if(now-(c.__lastSeen||now)>CONN_TIMEOUT_MS){try{c.close()}catch(_){}onHostClose(c);continue}
+   try{c.send({t:'ping'})}catch(_){}
+  }
+ },HEARTBEAT_MS);
+}
+function onHostData(c,d){
+ if(!d||!d.t)return;
+ c.__lastSeen=Date.now();
+ if(d.t==='ping'){try{c.send({t:'pong'})}catch(_){}return}
+ if(d.t==='pong')return;
+ if(d.t==='hello'){handleHello(c,cleanName(d.name)||'Player',String(d.playerId||''));return}
+ if(d.t==='joinmode'){handleJoinMode(c,d);return}
+ if(d.t==='joinchar'){handleJoinChar(c,d);return}
+ if(d.t==='pick'){const pi=Net.conns.indexOf(c);if(pi>=0)applyChar(pi,d.char);return}
+ const pi=Net.conns.indexOf(c);
+ if(pi<0)return;
+ if(d.t==='logreq'){sendLogParts(c);return}
+ if(d.t==='intent'){applyIntent(pi,d)}
+ else if(d.t==='answer'){const pr=Net.pendingPrompts.get(d.pid);if(pr&&pr.pi===pi){Net.pendingPrompts.delete(d.pid);pr.res(d.v)}}
+ else if(d.t==='ack'){if(Net.acks&&Net.acks.eid===d.eid){Net.acks.set.delete(pi);if(!Net.acks.set.size){clearTimeout(Net.acks.timer);const r=Net.acks.res;Net.acks=null;r()}}}
+ else if(d.t==='chat'){if(S&&pi>=0)addChat(pi,String(d.text||'').slice(0,140))}
+ else if(d.t==='lchat'){if(!Net.started)addLobbyChat(pi,String(d.text||'').slice(0,140))}
+}
+/* The wire opens before the con does: chat runs in the lobby too, and whatever
+   was said there carries over into the game record. */
+function addLobbyChat(pi,text){
+ if(!text)return;
+ const e=Net.roster[pi];if(!e)return;
+ Net.lobbyChat.push({n:e.name,c:PCOLORS[pi%PCOLORS.length],t:text});
+ if(Net.lobbyChat.length>40)Net.lobbyChat.shift();
+ broadcastLobby();
+}
+function sendLobbyChat(){
+ const inp=$('lobbyChatInput');if(!inp)return;
+ const text=inp.value.trim().slice(0,140);
+ if(!text)return;
+ inp.value='';
+ if(Net.role==='host')addLobbyChat(0,text);
+ else if(Net.conn&&Net.conn.open)Net.conn.send({t:'lchat',text});
+}
+function renderLobbyChat(){
+ const box=$('lobbyChatList');if(!box)return;
+ const rows=Net.lobbyChat||[];
+ box.innerHTML=rows.map(c=>'<div><b style="color:'+c.c+'">'+esc(c.n)+':</b> '+esc(c.t)+'</div>').join('')||'<div style="opacity:.4;font-style:italic">— the wire is quiet —</div>';
+ box.scrollTop=box.scrollHeight;
+}
+function lobbyPlayers(){return (Net.role==='host'?Net.roster:(Net.lobbyPlayers||[])).map(e=>({name:e.name,char:e.char||null}))}
+function applyChar(idx,id){
+ if(!charMeta(id))return false;
+ if((Net.roster||[]).some((e,i)=>i!==idx&&e.char===id))return false;
+ if(!Net.roster[idx])return false;
+ Net.roster[idx].char=id;
+ broadcastLobby();
+ return true;
+}
+function renderCharGrid(){
+ const grid=$('charGrid');if(!grid)return;
+ const rows=Net.role==='host'?Net.roster:(Net.lobbyPlayers||[]);
+ const myIdx=Net.role==='host'?0:Net.myIdx;
+ const mine=rows[myIdx]&&rows[myIdx].char;
+ const taken=new Set(rows.filter((e,i)=>e.char&&i!==myIdx).map(e=>e.char));
+ grid.innerHTML=CHARS.map(c=>{
+  const on=mine===c.id,busy=taken.has(c.id),spect=Net.role==='host'&&rows[0]&&rows[0].bot;
+  return '<button type="button" class="charpick'+(on?' on':'')+(busy?' taken':'')+'" data-char="'+c.id+'" style="border-bottom:4px solid '+c.color+'" '+(busy?'disabled':'')+'>'
+   +'<img src="'+charSrc(c.id)+'" alt="">'
+   +'<div class="cn">'+esc(c.name)+(on?(spect?' · YOUR BOT':' · YOU'):'')+(busy?' · TAKEN':'')+'</div>'
+   +'<div class="ccolour"><span class="cswatch" style="background:'+c.color+'"></span>'+c.color.toUpperCase()+(on?' · YOUR COLOUR':'')+'</div></button>';
+ }).join('');
+}
+function handleHello(c,name,playerId){
+ const existing=playerId?Net.roster.findIndex(e=>e.playerId===playerId):-1;
+ if(existing>=0){
+  const old=Net.conns[existing];
+  if(old===c)return;
+  if(old&&old.open){c.send({t:'kick',reason:'This player is already connected in this room. Close the other tab before joining again.'});setTimeout(()=>{try{c.close()}catch(e){}},800);return;}
+  Net.roster[existing].conn=c;Net.conns[existing]=c;c.__bigconClosed=false;c.__lastSeen=Date.now();
+  if(Net.started&&S){
+   if(S.players[existing]){S.players[existing].dc=false;clearTimeout(Net.autoT);log('🔔 '+name+' reconnected to their existing seat.');c.send({t:'welcome',idx:existing,s:pubState(true)});sync(true);return}
+   /* a spectator row holds no seat at the table — back to the rail, not the door */
+   Net.roster[existing].spect=true;
+   c.send({t:'welcome',idx:existing,spect:true,s:pubState(true)});sync(true);return;
+  }
+  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,boardLayout:Net.boardLayout||(Net.ringworld?'ringworld':'random'),ringworld:!!Net.ringworld,chat:Net.lobbyChat.slice(-40)});broadcastLobby();return;
+ }
+ if(Net.started&&S){
+  const idx=S.players.findIndex(pl=>pl.dc&&pl.name.toLowerCase()===name.toLowerCase());
+  if(idx>=0&&idx!==Net.myIdx){
+   Net.conns[idx]=c;S.players[idx].dc=false;c.__bigconClosed=false;c.__lastSeen=Date.now();
+   if(Net.roster[idx]){Net.roster[idx].conn=c;Net.roster[idx].playerId=playerId||Net.roster[idx].playerId}
+   log('🔔 '+name+' is back at the table.');
+   clearTimeout(Net.autoT);
+   c.send({t:'welcome',idx:idx,s:pubState(true)});
+   sync(true);return;
+  }
+  /* dead spectator rows are not seats — sweep them so rejoiners don't pile up */
+  for(let i=Net.roster.length-1;i>=S.players.length;i--){if(Net.roster[i]&&Net.roster[i].spect&&!Net.roster[i].conn)Net.roster.splice(i,1)}
+  Net.conns=Net.roster.map(e=>e.conn);
+  /* the con is already on, so the joiner chooses: a fresh seat dealt at
+     Quikstop, or the spectator rail. The host validates every step of it. */
+  c.__midjoin={name,playerId:playerId||crypto.randomUUID()};
+  c.send({t:'midjoin',over:!!S.over});
+  return;
+ }
+ joinLobby(c,name,playerId);
+}
+function joinLobby(c,name,playerId){
+ if(Net.roster.length>=MAXPLAYERS){c.send({t:'kick',reason:'Room is full (8 players).'});setTimeout(()=>{try{c.close()}catch(e){}},800);return}
+ if(Net.roster.some(e=>e.name.toLowerCase()===name.toLowerCase()))name=name+' ★';
+ Net.roster.push({name,playerId:playerId||crypto.randomUUID(),conn:c,char:null});
+ Net.conns=Net.roster.map(e=>e.conn);
+ c.__lastSeen=Date.now();
+ c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,boardLayout:Net.boardLayout||(Net.ringworld?'ringworld':'random'),ringworld:!!Net.ringworld,chat:Net.lobbyChat.slice(-40)});
+ broadcastLobby();
+}
+/* Mid-con joiners: the game does not stop for them. A new player gets the
+   same deal every con starts with ($15, 2 Intel, standing at Quikstop); a
+   spectator gets the whole board read-only. Nothing is trusted from the wire —
+   the host re-validates the cap and the face on every step. */
+function midJoinReject(c,reason){c.send({t:'kick',reason});setTimeout(()=>{try{c.close()}catch(e){}},800)}
+function seatSpectator(c){
+ if(Net.roster.length>=MAXPLAYERS)return midJoinReject(c,'Room is full (8 players).');
+ const mj=c.__midjoin;if(!mj)return;delete c.__midjoin;
+ Net.roster.push({name:mj.name,playerId:mj.playerId,conn:c,char:null,spect:true});
+ Net.conns=Net.roster.map(e=>e.conn);
+ c.__bigconClosed=false;c.__lastSeen=Date.now();
+ log('👁 '+mj.name+' pulls up a chair — spectating the con.');
+ toast('👁 '+mj.name+' joined as a spectator.');
+ c.send({t:'welcome',idx:Net.roster.length-1,spect:true,s:pubState(true)});
+ sync(true);
+}
+function seatMidgamePlayer(c,char){
+ if(Net.roster.length>=MAXPLAYERS)return midJoinReject(c,'Room is full (8 players).');
+ if(!charMeta(char)||Net.roster.some(e=>e.char===char))return midJoinReject(c,'That face was just taken — join the room again to pick another.');
+ const mj=c.__midjoin;if(!mj)return;delete c.__midjoin;
+ const idx=Net.roster.length;
+ Net.roster.push({name:mj.name,playerId:mj.playerId,conn:c,char});
+ Net.conns=Net.roster.map(e=>e.conn);
+ c.__bigconClosed=false;c.__lastSeen=Date.now();
+ const meta=charMeta(char);
+ S.players.push({name:mj.name,color:meta.color||PCOLORS[idx%PCOLORS.length],char,money:15,intel:2,cortisol:0,raided:0,pos:'quik',visited:{quik:true},dc:false,bot:false});
+ log('🔔 '+mj.name+' joins the con — dealt in at Quikstop with $15 and 2 Intel.');
+ toast('🔔 '+mj.name+' joined — dealt in at Quikstop.');
+ c.send({t:'welcome',idx,s:pubState(true)});
+ sync(true);
+}
+function handleJoinMode(c,d){
+ const mj=c.__midjoin;if(!mj)return;
+ if(!Net.started||!S){delete c.__midjoin;joinLobby(c,mj.name,mj.playerId);return}
+ if(d.v!=='player'||S.over)return seatSpectator(c);
+ const taken=new Set(Net.roster.map(e=>e.char));
+ const free=CHARS.filter(ch=>!taken.has(ch.id));
+ if(!free.length)return seatSpectator(c);
+ c.send({t:'joinface',free:free.map(f=>f.id)});
+}
+function handleJoinChar(c,d){
+ const mj=c.__midjoin;if(!mj)return;
+ if(!Net.started||!S){delete c.__midjoin;joinLobby(c,mj.name,mj.playerId);return}
+ if(S.over)return seatSpectator(c);
+ seatMidgamePlayer(c,String(d.char||''));
+}
+function onHostClose(c){
+ if(c.__bigconClosed)return;
+ c.__bigconClosed=true;
+ const pi=Net.conns.indexOf(c);
+ if(pi<0)return;
+ if(!Net.started){
+  const nm=Net.roster[pi]?Net.roster[pi].name:'A player';
+  Net.roster.splice(pi,1);Net.conns=Net.roster.map(e=>e.conn);
+  broadcastLobby();setNetStatus(nm+' left the lobby.');
+  return;
+ }
+ if(Net.conns[pi]===c)Net.conns[pi]=null;
+ if(Net.roster[pi]&&Net.roster[pi].conn===c)Net.roster[pi].conn=null;
+ if(S&&!S.over&&S.players[pi]){
+  S.players[pi].dc=true;
+  log('🔕 '+pname(pi)+' lost connection — seat is being held.');
+  Net.pendingPrompts.forEach((p,pid)=>{if(p.pi===pi){Net.pendingPrompts.delete(pid);p.res(p.def)}});
+  if(Net.acks&&Net.acks.set.has(pi)){
+   Net.acks.set.delete(pi);
+   if(!Net.acks.set.size){clearTimeout(Net.acks.timer);const r=Net.acks.res;Net.acks=null;r()}
+  }
+  if(S.cur===pi&&(S.phase==='move'||S.phase==='action')){
+   clearTimeout(Net.autoT);
+   Net.autoT=setTimeout(()=>{
+    if(S&&!S.over&&S.cur===pi&&S.players[pi].dc){log('💤 '+pname(pi)+' is away — plays it quiet.');gain(pi,1,'away');endOfTurn()}
+   },20000);
+  }
+  sync(true);
+ }
+}
+/* Bots keep the lobby alive: a rate-limited ambient line in their own
+   character's voice. Cosmetic only (the lobby is pre-game), so Date.now and
+   Math.random are fine here — none of it touches the game's streams. */
+function lobbyChatter(){
+ if(Net.role!=='host'||Net.started||!Net.roster||Net.roster.length<2)return;
+ const now=Date.now();
+ if(Net.lobbyChatAt&&now-Net.lobbyChatAt<20000)return;
+ const bots=Net.roster.map((e,i)=>({e,i})).filter(x=>x.e&&x.e.bot&&x.e.char);
+ if(!bots.length)return;
+ Net.lobbyChatAt=now;
+ const pick=bots[Math.floor(Math.random()*bots.length)];
+ const line=botLobbyLine(pick.e.char);
+ if(line)addLobbyChat(pick.i,line);
+}
+/* Ambient chatter must not depend on somebody clicking: a self-rescheduling
+   chain keeps the room murmuring while it is open, and stops with the con
+   (or with the host leaving). The virtual clock runs it in tests. */
+function startLobbyChatter(){
+ if(Net.role!=='host'||Net.started||Net.lobbyChatT)return;
+ Net.lobbyChatT=setTimeout(function tick(){
+  Net.lobbyChatT=null;
+  if(Net.role!=='host'||Net.started)return;
+  lobbyChatter();
+  startLobbyChatter();
+ },20000);
+}
+function broadcastLobby(){
+ sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,boardLayout:Net.boardLayout||(Net.ringworld?'ringworld':'random'),ringworld:!!Net.ringworld,chat:Net.lobbyChat.slice(-40)});
+ renderLobbyList();renderLobbyChat();
+ lobbyChatter();
+ startLobbyChatter();
+ const n=Net.roster.length;
+ const ready=n>=1&&Net.roster.every(e=>e.char);
+ const allBots=n>=1&&Net.roster.every(e=>e.bot);
+ $('btnStart').disabled=!ready;
+ $('btnStart').textContent=!ready?(n<1?'START THE CON (need a player)':'START THE CON (everyone pick a face)'):
+  (allBots?'START THE CON — ALL-BOT TABLE ('+n+(n===1?' BOT':' BOTS')+' · YOU WATCH)':n===1?'START SOLO TEST — 1 PLAYER':n>=MAXPLAYERS?'START THE CON — FULL TABLE (8/8)':
+  'START THE CON — '+n+' PLAYERS · '+(MAXPLAYERS-n)+' SEATS OPEN');
+}
+function renderLobbyList(){
+ const c=$('lobbyList');if(!c)return;
+ const rows=Net.role==='host'?Net.roster:(Net.lobbyPlayers||[]);
+ c.innerHTML=rows.map((e,i)=>{
+  const face=charSrc(e.char);
+  const who=Net.role==='host'?(e.bot?(i===0?'🤖 BOT · HOST SPECTATES':'🤖 BOT'):(i===0?'HOST · YOU':'CONNECTED')):(i===Net.myIdx?'YOU':'CONNECTED');
+  return '<div class="lrow" style="border-left:4px solid '+((charMeta(e.char)||{}).color||PCOLORS[i%PCOLORS.length])+'">'+(face?'<img class="pface" src="'+face+'" alt="" style="border-color:'+((charMeta(e.char)||{}).color||PCOLORS[i%PCOLORS.length])+'">':'<span class="ld" style="background:'+PCOLORS[i%PCOLORS.length]+'"></span>')
+   +'<span class="ln">'+(i+1)+'. '+esc(e.name)+(e.char?' · '+esc((charMeta(e.char)||{}).name||''):' · pick a face')+'</span><span class="lh">'+who+(Net.role==='host'&&e.bot&&i>0?' <button class="botbtn" data-kickbot="'+i+'" title="Send this bot home">✕</button>':'')+'</span></div>';
+ }).join('')
+  +'<div class="lrow" style="background:transparent;border:1px dashed #168388;color:#9ad;font-size:12px"><span class="ln">'+rows.length+' of 8 seats filled</span>'
+  +(Net.role==='host'&&rows.length<MAXPLAYERS?'<button class="botbtn" id="btnAddBot" style="margin-left:8px;cursor:pointer;background:#000;border:1px solid #168388;color:#9ad;padding:2px 10px;font:inherit">🤖 ADD A BOT — FILLS THE NEXT EMPTY SEAT</button>':'')
+  +(Net.role==='host'&&!Net.started?'<button class="botbtn" id="btnSpectate" style="margin-left:8px;cursor:pointer;background:#000;border:1px solid #168388;color:#9ad;padding:2px 10px;font:inherit">'+(rows[0]&&rows[0].bot?'🙋 TAKE MY SEAT BACK — I’LL PLAY':'🤖 SPECTATE — LET A BOT PLAY MY SEAT')+'</button>':'')
+  +'</div>';
+ renderCharGrid();
+ const meIdx=Net.role==='host'?0:Net.myIdx;
+ Presence.lobby(Net.role==='host',Net.roomLabel||Net.roomCode,rows.length,MAXPLAYERS,rows[meIdx]&&rows[meIdx].char);
+}
+/* ---- BOTS (host lobby) ----
+   A bot is a roster entry with bot:true and no connection. It picks a free
+   face immediately so the start button unlocks, plays through the same
+   applyIntent gate as everyone else, and never counts as connected. */
+function botLobbyLine(charId){
+  try{const b=window.BigConBots;return b&&b.lobbyLine?b.lobbyLine(charId):null}catch(e){return null}
+}
+function addBotSeat(){
+ if(Net.role!=='host'||!Net.roster)return;
+ if(Net.roster.length>=MAXPLAYERS){toast('The table is full — no seat for a bot.');return}
+ const used=new Set(Net.roster.map(e=>e.char));
+ const free=CHARS.filter(ch=>!used.has(ch.id));
+ if(!free.length){toast('Every face is already at the table.');return}
+ /* the lobby is cosmetic — Math.random is fine here and keeps every table
+    from being the same four faces in roster order */
+ const pick=free[Math.floor(Math.random()*free.length)];
+ const n=Net.roster.filter(e=>e.bot).length+1;
+ Net.roster.push({name:'BOT '+(pick.name||pick.id).toUpperCase(),playerId:'bot'+n+'-'+pick.id,conn:null,char:pick.id,bot:true});
+ broadcastLobby();
+ const line=botLobbyLine(pick.id);
+ if(line)addLobbyChat(Net.roster.length-1,line);
+}
+function kickBotSeat(i){
+ if(Net.role!=='host'||!Net.roster||!Net.roster[i]||!Net.roster[i].bot||i===0)return;
+ Net.roster.splice(i,1);broadcastLobby();
+}
+/* Spectator host: hand your OWN seat to a bot and watch the con unfold. The
+   roster row stays at index 0 — the relay's seat — it just plays itself
+   through the same bot policy as every other bot. Your name, player id and
+   face are kept aside so you can take the seat back before the start. */
+function toggleSpectate(){
+ if(Net.role!=='host'||!Net.roster||!Net.roster.length||Net.started)return;
+ const me=Net.roster[0];
+ if(me.bot){
+  const back=me.spectated||{};
+  const used=new Set(Net.roster.slice(1).map(e=>e.char).filter(Boolean));
+  Net.roster[0]={name:back.name||'HOST',playerId:back.playerId||Net.playerId||'host',conn:null,char:(back.char&&!used.has(back.char))?back.char:null,bot:false};
+ }else{
+  const used=new Set(Net.roster.slice(1).map(e=>e.char).filter(Boolean));
+  const pick=(me.char&&!used.has(me.char))?CHARS.filter(ch=>ch.id===me.char)[0]||null:CHARS.filter(ch=>!used.has(ch.id))[0];
+  if(!pick){toast('Every face is already at the table — send a bot home first.');return}
+  Net.roster[0]={name:'BOT '+(pick.name||pick.id).toUpperCase(),playerId:'spectator-'+pick.id,conn:null,char:pick.id,bot:true,spectated:{name:me.name,playerId:me.playerId,char:me.char}};
+ }
+ broadcastLobby();
+}
+/* ---- GUEST ---- */
+let guestReconnectTimer=null;
+let guestReconnectAttempt=0;
+let guestTransportToken=0;
+let guestReconnectStopped=false;
+
+function clearGuestReconnect(){
+ if(guestReconnectTimer){clearTimeout(guestReconnectTimer);guestReconnectTimer=null}
+}
+
+function guestReconnectDelay(){
+ // Exponential backoff with a cap avoids retry storms on filtered Wi-Fi.
+ return Math.min(15000,1200*Math.pow(2,Math.min(Math.max(0,guestReconnectAttempt-1),4)));
+}
+
+function guestConnectionLost(token){
+ if(token!==guestTransportToken||guestReconnectStopped)return;
+ clearGuestReconnect();
+ guestReconnectAttempt++;
+ const attempt=guestReconnectAttempt;
+ const delay=guestReconnectDelay();
+ stopGuestHeartbeat();
+ console.warn('[BigCon] connection lost; scheduling retry',{attempt,delayMs:delay,room:Net.roomCode,stage:Net.begun?'game':'lobby'});
+ setNetStatus((Net.begun?'Connection lost':'Lost the lobby connection')+' — reconnecting ('+attempt+') in '+Math.ceil(delay/1000)+'s…',true);
+ guestReconnectTimer=setTimeout(()=>{
+  guestReconnectTimer=null;
+  if(token!==guestTransportToken||guestReconnectStopped)return;
+  connectGuestTransport(true);
+ },delay);
+}
+
+function connectGuestTransport(isRetry){
+ const token=++guestTransportToken;
+ const name=Net.myName;
+ const code=Net.roomCode;
+ const oldPeer=Net.peer;
+ if(oldPeer&&!oldPeer.destroyed){
+  try{oldPeer.destroy()}catch(_){}
+ }
+ const p=new (selectedPeerClass())(BIGCON_PEER_OPTIONS);
+ Net.peer=p;
+ p.on('open',()=>{
+  if(token!==guestTransportToken||guestReconnectStopped)return;
+  const c=p.connect(PFX+code,{reliable:true,serialization:'json'});
+  Net.conn=c;
+  let connectionOpened=false;
+  const connectionTimeout=setTimeout(()=>{
+   if(!connectionOpened&&token===guestTransportToken&&!guestReconnectStopped){
+    console.warn('[BigCon] Data connection timed out; retrying', {code, token});
+    try{c.close()}catch(_){}
+    guestConnectionLost(token);
+   }
+  },30000);
+  c.on('open',()=>{
+   connectionOpened=true;
+   clearTimeout(connectionTimeout);
+   if(token!==guestTransportToken||guestReconnectStopped)return;
+   guestReconnectAttempt=0;
+   c.__bigconClosed=false;
+   c.send({t:'hello',name,playerId:Net.playerId});
+   setNetStatus('Connected — '+(isRetry?'rejoining':'joining')+' “'+codeLabel(code)+'”…');
+   startGuestHeartbeat(token);
+  });
+  c.on('data',d=>{
+   if(token!==guestTransportToken||guestReconnectStopped)return;
+   Net.lastSeen=Date.now();
+   try{onGuestData(d)}catch(err){console.error(err)}
+  });
+  c.on('close',()=>guestConnectionLost(token));
+  c.on('error',()=>guestConnectionLost(token));
+ });
+ p.on('disconnected',()=>{
+  if(token!==guestTransportToken||guestReconnectStopped)return;
+  try{p.reconnect()}catch(_){guestConnectionLost(token)}
+ });
+ p.on('error',e=>{
+  if(token!==guestTransportToken||guestReconnectStopped)return;
+  const ty=e&&e.type;
+  if(ty==='peer-unavailable'){
+   /* the host may just be re-registering with the matchmaker — keep trying a while */
+   if(Net.begun||guestReconnectAttempt<5)guestConnectionLost(token);
+   else {setNetStatus('Room “'+codeLabel(code)+'” not found yet — retrying in case the host is reconnecting.',true);guestConnectionLost(token)}
+  }else if(ty==='network'||ty==='socket-error'||ty==='socket-closed'||ty==='server-error'||ty==='unavailable-id'){
+   guestConnectionLost(token);
+  }else{
+   setNetStatus('Network error: '+(ty||'unknown')+'.',true);
+  }
+ });
+}
+
+/* The guest watches the wire too: silence for CONN_TIMEOUT_MS means the link is
+   gone even when the browser never fires 'close'. */
+function stopGuestHeartbeat(){clearInterval(Net.hbTimer);Net.hbTimer=null}
+function startGuestHeartbeat(token){
+ stopGuestHeartbeat();
+ Net.lastSeen=Date.now();
+ Net.hbTimer=setInterval(()=>{
+  if(token!==guestTransportToken||guestReconnectStopped){stopGuestHeartbeat();return}
+  const c=Net.conn;
+  if(!c||!c.open){guestConnectionLost(token);return}
+  if(Date.now()-Net.lastSeen>CONN_TIMEOUT_MS){try{c.close()}catch(_){}guestConnectionLost(token);return}
+  try{c.send({t:'ping'})}catch(_){guestConnectionLost(token)}
+ },HEARTBEAT_MS);
+}
+
+function guestJoin(name,code){
+ clearGuestReconnect();
+ guestReconnectStopped=false;
+ guestReconnectAttempt=0;
+ setNetStatus('Contacting the matchmaker…');
+ Net.role='guest';Net.myName=name;Net.playerId=getPlayerId();Net.roomCode=code;Net.roomLabel=codeLabel(code);
+ connectGuestTransport(false);
+}
+
+function onGuestData(d){
+ if(!d||!d.t)return;
+ switch(d.t){
+  case 'ping':if(Net.conn&&Net.conn.open){try{Net.conn.send({t:'pong'})}catch(_){}}break;
+  case 'pong':break;
+  case 'welcome':
+   Net.myIdx=d.idx;Net.spect=!!d.spect;
+   if(d.lobby)Net.lobbyPlayers=d.lobby;
+   if(d.chat)Net.lobbyChat=d.chat;
+   if(d.goal)setGoalUI(d.goal);
+   if(d.dlcGeo!==undefined)setGeoUI(!!d.dlcGeo);
+   if(d.fogOfWar!==undefined)setFogUI(!!d.fogOfWar);
+   if(d.boardLayout!==undefined)setBoardLayout(d.boardLayout);else if(d.ringworld!==undefined)setBoardLayout(d.ringworld?'ringworld':'random');
+   if(d.s){S=null;adoptState(d.s);Net.begun=true;enterGame()}
+   else showLobby(false);
+   break;
+  case 'lobby':
+   Net.lobbyPlayers=d.players||[];
+   Net.lobbyChat=d.chat||[];
+   renderLobbyChat();
+   if(d.goal)setGoalUI(d.goal);
+   if(d.dlcGeo!==undefined)setGeoUI(!!d.dlcGeo);
+   if(d.fogOfWar!==undefined)setFogUI(!!d.fogOfWar);
+   if(d.boardLayout!==undefined)setBoardLayout(d.boardLayout);else if(d.ringworld!==undefined)setBoardLayout(d.ringworld?'ringworld':'random');
+   renderLobbyList();
+   break;
+  case 'begin':S=null;Net.spect=false;adoptState(d.s);if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
+  case 'state':adoptState(d.s);scheduleRender();break;
+  case 'logpart':adoptLogPart(d);break;
+  case 'prompt':modal({title:d.title,html:d.html,body:d.body,options:d.options}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'answer',pid:d.pid,v})});break;
+  case 'event':modal({title:d.title,html:d.html,options:[{label:'Continue',v:1}]});break;
+  case 'midjoin':modal({title:'THE CON IS ALREADY ON',body:d.over?'The table just wrapped up. Take the spectator rail — when the host deals the next con, you are in it.':'The table is mid-heist. You can deal in fresh at Quikstop — $15 and 2 Intel, the same stake every con starts with — or take the spectator rail and just watch.',options:d.over?[{label:'👁 WATCH AS A SPECTATOR',v:'spect'}]:[{label:'🎲 DEAL ME IN AT QUIKSTOP',v:'player'},{label:'👁 SPECTATE — JUST WATCHING',v:'spect'}]}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'joinmode',v:v||'spect'})});break;
+  case 'joinface':modal({title:'PICK YOUR FACE',body:'Every free face at the table. Pick who you are for this con.',options:(d.free||[]).map(id=>{const m=charMeta(id);return{label:m?m.name:id,v:id}})}).then(id=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'joinchar',char:id})});break;
+  case 'tolobby':S=null;Net.begun=false;Net.spect=false;if(d.idx!=null)Net.myIdx=d.idx;showLobby(false);break;
+  case 'sys':toast(d.msg);break;
+  case 'reload':location.reload();break;
+  case 'kick':guestReconnectStopped=true;clearGuestReconnect();stopGuestHeartbeat();showFatal(d.reason||'Kicked from room.');break;
+ }
+}
+function enterGame(){
+ $('setup').style.display='none';$('app').style.display='flex';document.body.classList.add('game-open');
+ resetBoardView();
+ render();
+}
+
+/* ================= SETUP SCREEN ================= */
+/* Only the host may move the target; guests mirror whatever comes off the wire. */
+function setGoalUI(v){
+ Net.goal=clampGoal(v);
+ const inp=$('goalInput');
+ if(inp&&document.activeElement!==inp)inp.value=Net.goal;
+ const note=$('goalNote');
+ if(note)note.textContent=Net.role==='host'?'first player to $'+Net.goal+' wins the con':'the host set the target at $'+Net.goal;
+}
+/* 🌍 The Geography DLC is the same anchor: the host flips it, the table mirrors it. */
+function setGeoUI(v){
+ Net.dlcGeo=!!v;
+ const t=$('geoToggle');
+ if(t)t.checked=!!v;
+}
+function setFogUI(v){
+ Net.fogOfWar=!!v;
+ const t=$('fogToggle');
+ if(t)t.checked=!!v;
+}
+function setBoardLayout(val){
+ const allowed=['random','ringworld','megaring'];
+ Net.boardLayout=allowed.includes(val)?val:'random';
+ Net.ringworld=Net.boardLayout==='ringworld';
+ const t=$('boardLayoutSelect');
+ if(t){t.value=Net.boardLayout;t.disabled=Net.role!=='host'}
+ const note=$('boardLayoutNote');
+ if(note)note.textContent=Net.role==='host'?'the host chooses the map':(Net.boardLayout==='megaring'?'Mega Ring selected by the host':(Net.ringworld?'Ringworld selected by the host':'random board selected by the host'));
+}
+function setRingworldUI(v){
+ setBoardLayout(v?'ringworld':'random');
+}
+/* After the payout the table keeps its room: everyone is walked back to the
+   lobby with the same code, roster and faces — no reload, no rejoin. The
+   roster sits in shuffled seating order after initGame, so each guest is told
+   their own row index for the "YOU" marker. */
+function backToLobby(){
+ if(Net.role!=='host'||!S||!S.over)return;
+ Net.started=false;Net.begun=false;S=null;
+ /* spectators step off the rail and pick a face like anyone else for the next con */
+ Net.roster.forEach(e=>{if(e.spect)e.spect=false});
+ for(let i=0;i<Net.roster.length;i++){
+  if(i===Net.myIdx)continue;
+  const c=Net.conns[i];if(c&&c.open)sendTo(i,{t:'tolobby',idx:i});
+ }
+ showLobby(true);
+ setNetStatus('Back in the lobby — same room, same faces. Deal the next con when ready.');
+ broadcastLobby();
+}
+function showLobby(asHost){
+ $('hostForm').classList.remove('show');$('joinForm').classList.remove('show');
+ $('lobbyView').style.display='block';
+ $('app').style.display='none';document.body.classList.remove('game-open');
+ $('roomCodeBig').textContent=Net.roomLabel||Net.roomCode||'·····';
+ $('btnStart').style.display=asHost?'block':'none';
+ $('btnCopy').style.display=asHost?'inline-block':'none';
+ const gi=$('goalInput');
+ if(gi)gi.disabled=!asHost;
+ const layout=$('boardLayoutSelect');if(layout)layout.disabled=!asHost;
+ setGoalUI(Net.goal);
+ setBoardLayout(Net.boardLayout||(Net.ringworld?'ringworld':'random'));
+ if(!asHost)setNetStatus('In the lobby. Pick a face — the host starts when everyone is in.');
+ renderLobbyList();renderLobbyChat();
+ const inp=$('lobbyChatInput'),btn=$('lobbyChatSend');
+ if(btn)btn.onclick=sendLobbyChat;
+ if(inp)inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();sendLobbyChat()}};
+}
+ $('btnHost').onclick=()=>{$('hostForm').classList.add('show');$('joinForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
+ $('btnJoin').onclick=()=>{$('joinForm').classList.add('show');$('hostForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
+ $('btnCreate').onclick=()=>{
+ if(!IS_DISCORD_ACTIVITY&&typeof Peer==='undefined'){setNetStatus('Could not load the networking library — check your internet connection and reload.',true);return}
+ const nm=cleanName($('hostName').value);if(!nm){setNetStatus('Enter your name first.',true);return}requestTurnNotificationPermission();
+ $('btnCreate').disabled=true;hostCreate(nm);
+};
+ $('btnJoinGo').onclick=()=>{
+ if(!IS_DISCORD_ACTIVITY&&typeof Peer==='undefined'){setNetStatus('Could not load the networking library — check your internet connection and reload.',true);return}
+ const nm=cleanName($('joinName').value);const code=matchBuzzword($('joinCode').value);requestTurnNotificationPermission();
+ if(!nm){setNetStatus('Enter your name first.',true);return}
+ if(!code){setNetStatus('Enter the buzzword the host read out — e.g. NESA or LOW CORTISOL.',true);return}
+ $('btnJoinGo').disabled=true;guestJoin(nm,code);
+};
+ $('btnStart').onclick=()=>{
+ if(Net.roster.length<1||Net.roster.some(e=>!e.char)){toast('Pick a character before starting.');return}
+ requestTurnNotificationPermission();$('btnStart').disabled=true;
+ initGame(Net.roster.map(e=>({name:e.name,char:e.char,bot:!!e.bot})));
+};
+ document.addEventListener('click',e=>{
+  const b=e.target.closest('#charGrid .charpick');
+  if(!b||b.disabled)return;
+  const id=b.dataset.char;
+  if(Net.role==='host'){if(Net.roster[0]&&Net.roster[0].bot){toast('You are spectating — take your seat back to pick a face.');return}applyChar(0,id)}
+  else if(Net.conn&&Net.conn.open)Net.conn.send({t:'pick',char:id});
+ });
+ document.addEventListener('click',e=>{
+  if(e.target.closest&&e.target.closest('#btnAddBot')){addBotSeat();return}
+  if(e.target.closest&&e.target.closest('#btnSpectate')){toggleSpectate();return}
+  const kick=e.target.closest&&e.target.closest('[data-kickbot]');
+  if(kick)kickBotSeat(Number(kick.dataset.kickbot));
+ });
+ (function(){
+ const gi=$('goalInput');
+ if(!gi)return;
+ const push=()=>{if(Net.role!=='host')return;setGoalUI(gi.value);broadcastLobby()};
+ gi.oninput=()=>{if(Net.role!=='host')return;const n=Number(gi.value);if(n>=GOAL_MIN&&n<=GOAL_MAX)push()};
+ gi.onchange=()=>{if(Net.role!=='host')return;gi.value=clampGoal(gi.value);push()};
+})();
+(function(){
+ const gt=$('geoToggle');
+ if(gt)gt.onchange=()=>{if(Net.role!=='host'){gt.checked=Net.dlcGeo;toast('The host decides whether the Geography DLC is played.');return}setGeoUI(gt.checked);broadcastLobby()};
+ const ft=$('fogToggle');
+ if(ft)ft.onchange=()=>{if(Net.role!=='host'){ft.checked=Net.fogOfWar;toast('The host decides whether Fog of War is enabled.');return}setFogUI(ft.checked);broadcastLobby()};
+ const layout=$('boardLayoutSelect');
+ if(layout)layout.onchange=()=>{if(Net.role!=='host'){setBoardLayout(Net.boardLayout);toast('The host decides which board layout is played.');return}setBoardLayout(layout.value);broadcastLobby()};
+})();
+ $('btnCopy').onclick=()=>{
+ const code=Net.roomLabel||Net.roomCode||'';
+ try{navigator.clipboard.writeText(code).then(()=>toast('Room code copied: '+code))}catch(e){toast('Code: '+code)}
+};
+(function(){
+ const dl=$('buzzwords');
+ if(dl)dl.innerHTML=BUZZWORDS.map(b=>'<option value="'+b+'"></option>').join('');
+})();
+document.querySelector('.setuplinks button[data-srules]').onclick=()=>showRules();
+if(!IS_DISCORD_ACTIVITY&&typeof Peer==='undefined'){setNetStatus('⚠ Networking library failed to load — you need an internet connection the first time you connect.',true)}
+Presence.menu();
+
+/* Discord "Invite to join" — the desktop build delivers the join secret
+   here. The website never sees window.discordRPC, so this is a no-op there. */
+(function bindDiscordJoin(){
+ const b=(typeof window!=='undefined'&&window.discordRPC)||null;
+ if(!b)return;
+ function applySecret(secret){
+  const code=Presence.decodeJoinSecret(secret);
+  if(!code){setNetStatus('That Discord invite did not contain a room.',true);return}
+  if(Net.role||Net.begun){
+   toast('Already at a table. Buzzword for the invite was '+codeLabel(code)+'.');
+   return;
+  }
+  $('joinForm').classList.add('show');
+  $('hostForm').classList.remove('show');
+  $('lobbyView').style.display='none';
+  const box=$('joinCode');
+  if(box)box.value=codeLabel(code);
+  const existing=cleanName(($('joinName')&&$('joinName').value)||($('hostName')&&$('hostName').value)||'');
+  function go(nm){
+   const name=cleanName(nm);
+   if(!name){setNetStatus('Discord invite for “'+codeLabel(code)+'” — type a name and hit JOIN GAME.');return}
+   if($('joinName'))$('joinName').value=name;
+   $('btnJoinGo').disabled=true;
+   guestJoin(name,code);
+  }
+  if(existing){go(existing);return}
+  if(typeof b.getUser==='function'){
+   Promise.resolve(b.getUser()).then(u=>{
+    const fromDiscord=cleanName(u&&(u.username||''));
+    if(fromDiscord)go(fromDiscord);
+    else setNetStatus('Discord invite for “'+codeLabel(code)+'” — type a name and hit JOIN GAME.');
+   }).catch(()=>setNetStatus('Discord invite for “'+codeLabel(code)+'” — type a name and hit JOIN GAME.'));
+   return;
+  }
+  setNetStatus('Discord invite for “'+codeLabel(code)+'” — type a name and hit JOIN GAME.');
+ }
+ if(typeof b.onJoin==='function')b.onJoin(applySecret);
+ if(typeof b.takePendingJoin==='function'){
+  Promise.resolve(b.takePendingJoin()).then(s=>{if(s)applySecret(s)}).catch(()=>{});
+ }
+})();
+</script>
+<script src="./static/bots.js"></script>
+<script type="module">
+if (IS_DISCORD_ACTIVITY) {
+
+/* Discord Embedded App SDK — loaded only for Discord Activity sessions. */
+{
+  // WebRTC and direct-browser networking are deliberately not supported.
+  (async () => {
+    const appId = "1565709969913815060";
+    const inviteButton = document.getElementById("btnDiscordInvite");
+    const shareButton = document.getElementById("btnDiscordShare");
+    try {
+      // Load the official SDK from this Activity's own static assets.
+      const { DiscordSDK, patchUrlMappings } = await import("/static/discord-sdk.bundle.js");
+      // Route Cloudflare WebSocket traffic through Discord's Activity proxy.
+      // Configure /relay -> bigconhosting.wax-no-bones.workers.dev in Developer Portal.
+      patchUrlMappings([
+        { prefix: "/title-assets", target: "raw.githubusercontent.com/waxmotson/The-big-con-desktop/master" },
+        { prefix: "/characters", target: "raw.githubusercontent.com/waxmotson/bigcon/main/characters" },
+        { prefix: "/relay", target: "bigconhosting.wax-no-bones.workers.dev" },
+        { prefix: "/", target: "thebigcon.onrender.com" }
+      ]);
+      const discordSdk = new DiscordSDK(appId);
+      await discordSdk.ready();
+      window.bigconDiscordSDK = discordSdk;
+
+      // The Embedded App SDK handles its own OAuth redirect. Exchange the
+      // returned one-time code on the Cloudflare Worker, then authenticate
+      // the SDK before attempting Rich Presence updates.
+      try {
+        const { code } = await discordSdk.commands.authorize({
+          client_id: appId,
+          response_type: "code",
+          state: crypto.randomUUID(),
+          prompt: "none",
+          scope: ["identify", "rpc.activities.write"]
+        });
+        const tokenResponse = await fetch("/relay/api/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ code })
+        });
+        const tokenData = await tokenResponse.json().catch(() => ({}));
+        if (!tokenResponse.ok || !tokenData.access_token) {
+          throw new Error(tokenData.error || "Discord token exchange failed (HTTP " + tokenResponse.status + ").");
+        }
+        const auth = await discordSdk.commands.authenticate({
+          access_token: tokenData.access_token
+        });
+        if (!auth) throw new Error("Discord SDK authentication returned no user.");
+        Presence.attachDiscordSDK(discordSdk, tokenData.access_token);
+        console.info("[BigCon Discord] Rich Presence authorised and SDK authenticated.");
+      } catch (presenceError) {
+        console.warn("[BigCon Discord] Rich Presence permission unavailable:", presenceError);
+        const status = document.getElementById("netStatus");
+        if (status) {
+          status.textContent = "Discord connected; Rich Presence unavailable: " +
+            (presenceError?.message || String(presenceError));
+          status.classList.remove("err");
+        }
+      }
+
+      if (inviteButton) {
+        inviteButton.style.display = "inline-block";
+        inviteButton.addEventListener("click", async () => {
+          inviteButton.disabled = true;
+          try {
+            await discordSdk.commands.openInviteDialog();
+          } catch (error) {
+            console.warn("[BigCon Discord] Invite dialog unavailable:", error);
+          } finally {
+            inviteButton.disabled = false;
+          }
+        });
+      }
+
+      if (shareButton) {
+        shareButton.style.display = "inline-block";
+        shareButton.addEventListener("click", async () => {
+          const code = (document.getElementById("roomCodeBig")?.textContent || "").trim();
+          if (!code || code === "·····") {
+            alert("Create a room first, then share its code.");
+            return;
+          }
+          shareButton.disabled = true;
+          try {
+            await discordSdk.commands.shareLink({
+              message: "Join my Big Con game. Open the Big Con Activity and enter room code: " + code,
+              custom_id: "bigcon-room-share"
+            });
+          } catch (error) {
+            console.warn("[BigCon Discord] Room share failed:", error);
+          } finally {
+            shareButton.disabled = false;
+          }
+        });
+      }
+      window.dispatchEvent(new CustomEvent("bigcon-discord-ready"));
+      const status = document.getElementById("netStatus");
+      if (status) { status.textContent = "Discord connected — Cloudflare relay ready."; status.classList.remove("err"); }
+      console.info("[BigCon Discord] Embedded App SDK ready.");
+    } catch (error) {
+      console.error("[BigCon Discord] Activity SDK could not initialise:", error);
+      const detail = error && (error.message || error.toString()) || "Unknown SDK error";
+      const status = document.getElementById("netStatus");
+      if (status) {
+        status.textContent = "Discord SDK failed to initialise: " + detail;
+        status.classList.add("err");
+      }
+      document.querySelectorAll("#btnHost,#btnJoin,#btnCreate,#btnJoinGo").forEach(button => button.disabled = true);
+      window.dispatchEvent(new CustomEvent("bigcon-discord-sdk-error", { detail }));
+    }
+  })();
+}
+
+}
+</script>
+</body>
+</html>
++md.rate+'</text></g>';
+ }else{
+  s+=scribble(1830,860,100,64,4)+scribble(1150,540,95,72,-3)+scribble(1000,1380,92,62,5)+scribble(1630,930,96,62,-4)+scribble(1500,470,98,62,3)+scribble(2020,185,92,66,-5)+scribble(390,1200,102,68,3);
+  s+=redArrow(2090,330,1140,310)+redArrow(1965,235,1580,440)+redArrow(1080,585,480,1140)+redArrow(1130,1170,420,640);
+  s+=scribText(1930,392,-4,'CASH RATE ↑')+scribText(1150,390,3,'“BOND…”')+scribText(1715,448,-6,'WTI +12%')+scribText(455,295,2,'TOO BIG TO FAIL')+scribText(1930,745,-3,'GOLD ↑')+scribText(1050,1150,4,'RATES ON HOLD')+scribText(640,810,-5,'INSIDER TRADING?');
+  s+='<g transform="translate(58,40)"><rect x="-4" y="-22" width="268" height="36" fill="#168388" stroke="#000" stroke-width="2"/><text x="14" y="3" font-size="16" font-weight="900" letter-spacing="2" fill="#fff" font-family="Times New Roman, Times, serif">THE BIG CON v1.13</text></g>';
+  /* the market wire — the mood, live */
+  s+='<g transform="translate(1230,30)"><rect x="-700" y="-13" width="1400" height="26" fill="#000" stroke="'+md.color+'" stroke-width="2" opacity=".96"/><circle class="tkdot" cx="-682" cy="0" r="5" fill="'+md.color+'"/><text x="-668" y="4" font-size="11" font-weight="900" letter-spacing="1.5" fill="aqua">'+md.label+'</text><text x="-20" y="4" text-anchor="middle" font-size="10.5" font-style="italic" fill="#ddd">'+esc((S.wire||'all quiet on the wire').slice(0,88))+'</text><text x="688" y="4" text-anchor="end" font-size="10" font-weight="800" fill="#9ad">1🛈=
  Object.keys(TYPE_COLORS).forEach(k=>{
   s+='<rect x="'+lx+'" y="-7" width="10" height="10" rx="2" fill="'+TYPE_COLORS[k]+'"/><text x="'+(lx+14)+'" y="2" font-size="9" font-weight="800" fill="#cbb992">'+k+'</text>';
   lx+=14+k.length*6.2+16;
@@ -3158,7 +4739,1379 @@ function onGuestData(d){
 }
 function enterGame(){
  $('setup').style.display='none';$('app').style.display='flex';document.body.classList.add('game-open');
- VB={x:0,y:0,w:2400,h:1560};applyVB();
+ resetBoardView();
+ render();
+}
+
+/* ================= SETUP SCREEN ================= */
+/* Only the host may move the target; guests mirror whatever comes off the wire. */
+function setGoalUI(v){
+ Net.goal=clampGoal(v);
+ const inp=$('goalInput');
+ if(inp&&document.activeElement!==inp)inp.value=Net.goal;
+ const note=$('goalNote');
+ if(note)note.textContent=Net.role==='host'?'first player to $'+Net.goal+' wins the con':'the host set the target at $'+Net.goal;
+}
+/* 🌍 The Geography DLC is the same anchor: the host flips it, the table mirrors it. */
+function setGeoUI(v){
+ Net.dlcGeo=!!v;
+ const t=$('geoToggle');
+ if(t)t.checked=!!v;
+}
+function setFogUI(v){
+ Net.fogOfWar=!!v;
+ const t=$('fogToggle');
+ if(t)t.checked=!!v;
+}
+function setBoardLayout(val){
+ const allowed=['random','ringworld','megaring'];
+ Net.boardLayout=allowed.includes(val)?val:'random';
+ Net.ringworld=Net.boardLayout==='ringworld';
+ const t=$('boardLayoutSelect');
+ if(t){t.value=Net.boardLayout;t.disabled=Net.role!=='host'}
+ const note=$('boardLayoutNote');
+ if(note)note.textContent=Net.role==='host'?'the host chooses the map':(Net.boardLayout==='megaring'?'Mega Ring selected by the host':(Net.ringworld?'Ringworld selected by the host':'random board selected by the host'));
+}
+function setRingworldUI(v){
+ setBoardLayout(v?'ringworld':'random');
+}
+/* After the payout the table keeps its room: everyone is walked back to the
+   lobby with the same code, roster and faces — no reload, no rejoin. The
+   roster sits in shuffled seating order after initGame, so each guest is told
+   their own row index for the "YOU" marker. */
+function backToLobby(){
+ if(Net.role!=='host'||!S||!S.over)return;
+ Net.started=false;Net.begun=false;S=null;
+ /* spectators step off the rail and pick a face like anyone else for the next con */
+ Net.roster.forEach(e=>{if(e.spect)e.spect=false});
+ for(let i=0;i<Net.roster.length;i++){
+  if(i===Net.myIdx)continue;
+  const c=Net.conns[i];if(c&&c.open)sendTo(i,{t:'tolobby',idx:i});
+ }
+ showLobby(true);
+ setNetStatus('Back in the lobby — same room, same faces. Deal the next con when ready.');
+ broadcastLobby();
+}
+function showLobby(asHost){
+ $('hostForm').classList.remove('show');$('joinForm').classList.remove('show');
+ $('lobbyView').style.display='block';
+ $('app').style.display='none';document.body.classList.remove('game-open');
+ $('roomCodeBig').textContent=Net.roomLabel||Net.roomCode||'·····';
+ $('btnStart').style.display=asHost?'block':'none';
+ $('btnCopy').style.display=asHost?'inline-block':'none';
+ const gi=$('goalInput');
+ if(gi)gi.disabled=!asHost;
+ const layout=$('boardLayoutSelect');if(layout)layout.disabled=!asHost;
+ setGoalUI(Net.goal);
+ setBoardLayout(Net.boardLayout||(Net.ringworld?'ringworld':'random'));
+ if(!asHost)setNetStatus('In the lobby. Pick a face — the host starts when everyone is in.');
+ renderLobbyList();renderLobbyChat();
+ const inp=$('lobbyChatInput'),btn=$('lobbyChatSend');
+ if(btn)btn.onclick=sendLobbyChat;
+ if(inp)inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();sendLobbyChat()}};
+}
+ $('btnHost').onclick=()=>{$('hostForm').classList.add('show');$('joinForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
+ $('btnJoin').onclick=()=>{$('joinForm').classList.add('show');$('hostForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
+ $('btnCreate').onclick=()=>{
+ if(!IS_DISCORD_ACTIVITY&&typeof Peer==='undefined'){setNetStatus('Could not load the networking library — check your internet connection and reload.',true);return}
+ const nm=cleanName($('hostName').value);if(!nm){setNetStatus('Enter your name first.',true);return}requestTurnNotificationPermission();
+ $('btnCreate').disabled=true;hostCreate(nm);
+};
+ $('btnJoinGo').onclick=()=>{
+ if(!IS_DISCORD_ACTIVITY&&typeof Peer==='undefined'){setNetStatus('Could not load the networking library — check your internet connection and reload.',true);return}
+ const nm=cleanName($('joinName').value);const code=matchBuzzword($('joinCode').value);requestTurnNotificationPermission();
+ if(!nm){setNetStatus('Enter your name first.',true);return}
+ if(!code){setNetStatus('Enter the buzzword the host read out — e.g. NESA or LOW CORTISOL.',true);return}
+ $('btnJoinGo').disabled=true;guestJoin(nm,code);
+};
+ $('btnStart').onclick=()=>{
+ if(Net.roster.length<1||Net.roster.some(e=>!e.char)){toast('Pick a character before starting.');return}
+ requestTurnNotificationPermission();$('btnStart').disabled=true;
+ initGame(Net.roster.map(e=>({name:e.name,char:e.char,bot:!!e.bot})));
+};
+ document.addEventListener('click',e=>{
+  const b=e.target.closest('#charGrid .charpick');
+  if(!b||b.disabled)return;
+  const id=b.dataset.char;
+  if(Net.role==='host'){if(Net.roster[0]&&Net.roster[0].bot){toast('You are spectating — take your seat back to pick a face.');return}applyChar(0,id)}
+  else if(Net.conn&&Net.conn.open)Net.conn.send({t:'pick',char:id});
+ });
+ document.addEventListener('click',e=>{
+  if(e.target.closest&&e.target.closest('#btnAddBot')){addBotSeat();return}
+  if(e.target.closest&&e.target.closest('#btnSpectate')){toggleSpectate();return}
+  const kick=e.target.closest&&e.target.closest('[data-kickbot]');
+  if(kick)kickBotSeat(Number(kick.dataset.kickbot));
+ });
+ (function(){
+ const gi=$('goalInput');
+ if(!gi)return;
+ const push=()=>{if(Net.role!=='host')return;setGoalUI(gi.value);broadcastLobby()};
+ gi.oninput=()=>{if(Net.role!=='host')return;const n=Number(gi.value);if(n>=GOAL_MIN&&n<=GOAL_MAX)push()};
+ gi.onchange=()=>{if(Net.role!=='host')return;gi.value=clampGoal(gi.value);push()};
+})();
+(function(){
+ const gt=$('geoToggle');
+ if(gt)gt.onchange=()=>{if(Net.role!=='host'){gt.checked=Net.dlcGeo;toast('The host decides whether the Geography DLC is played.');return}setGeoUI(gt.checked);broadcastLobby()};
+ const ft=$('fogToggle');
+ if(ft)ft.onchange=()=>{if(Net.role!=='host'){ft.checked=Net.fogOfWar;toast('The host decides whether Fog of War is enabled.');return}setFogUI(ft.checked);broadcastLobby()};
+ const layout=$('boardLayoutSelect');
+ if(layout)layout.onchange=()=>{if(Net.role!=='host'){setBoardLayout(Net.boardLayout);toast('The host decides which board layout is played.');return}setBoardLayout(layout.value);broadcastLobby()};
+})();
+ $('btnCopy').onclick=()=>{
+ const code=Net.roomLabel||Net.roomCode||'';
+ try{navigator.clipboard.writeText(code).then(()=>toast('Room code copied: '+code))}catch(e){toast('Code: '+code)}
+};
+(function(){
+ const dl=$('buzzwords');
+ if(dl)dl.innerHTML=BUZZWORDS.map(b=>'<option value="'+b+'"></option>').join('');
+})();
+document.querySelector('.setuplinks button[data-srules]').onclick=()=>showRules();
+if(!IS_DISCORD_ACTIVITY&&typeof Peer==='undefined'){setNetStatus('⚠ Networking library failed to load — you need an internet connection the first time you connect.',true)}
+Presence.menu();
+
+/* Discord "Invite to join" — the desktop build delivers the join secret
+   here. The website never sees window.discordRPC, so this is a no-op there. */
+(function bindDiscordJoin(){
+ const b=(typeof window!=='undefined'&&window.discordRPC)||null;
+ if(!b)return;
+ function applySecret(secret){
+  const code=Presence.decodeJoinSecret(secret);
+  if(!code){setNetStatus('That Discord invite did not contain a room.',true);return}
+  if(Net.role||Net.begun){
+   toast('Already at a table. Buzzword for the invite was '+codeLabel(code)+'.');
+   return;
+  }
+  $('joinForm').classList.add('show');
+  $('hostForm').classList.remove('show');
+  $('lobbyView').style.display='none';
+  const box=$('joinCode');
+  if(box)box.value=codeLabel(code);
+  const existing=cleanName(($('joinName')&&$('joinName').value)||($('hostName')&&$('hostName').value)||'');
+  function go(nm){
+   const name=cleanName(nm);
+   if(!name){setNetStatus('Discord invite for “'+codeLabel(code)+'” — type a name and hit JOIN GAME.');return}
+   if($('joinName'))$('joinName').value=name;
+   $('btnJoinGo').disabled=true;
+   guestJoin(name,code);
+  }
+  if(existing){go(existing);return}
+  if(typeof b.getUser==='function'){
+   Promise.resolve(b.getUser()).then(u=>{
+    const fromDiscord=cleanName(u&&(u.username||''));
+    if(fromDiscord)go(fromDiscord);
+    else setNetStatus('Discord invite for “'+codeLabel(code)+'” — type a name and hit JOIN GAME.');
+   }).catch(()=>setNetStatus('Discord invite for “'+codeLabel(code)+'” — type a name and hit JOIN GAME.'));
+   return;
+  }
+  setNetStatus('Discord invite for “'+codeLabel(code)+'” — type a name and hit JOIN GAME.');
+ }
+ if(typeof b.onJoin==='function')b.onJoin(applySecret);
+ if(typeof b.takePendingJoin==='function'){
+  Promise.resolve(b.takePendingJoin()).then(s=>{if(s)applySecret(s)}).catch(()=>{});
+ }
+})();
+</script>
+<script src="./static/bots.js"></script>
+<script type="module">
+if (IS_DISCORD_ACTIVITY) {
+
+/* Discord Embedded App SDK — loaded only for Discord Activity sessions. */
+{
+  // WebRTC and direct-browser networking are deliberately not supported.
+  (async () => {
+    const appId = "1565709969913815060";
+    const inviteButton = document.getElementById("btnDiscordInvite");
+    const shareButton = document.getElementById("btnDiscordShare");
+    try {
+      // Load the official SDK from this Activity's own static assets.
+      const { DiscordSDK, patchUrlMappings } = await import("/static/discord-sdk.bundle.js");
+      // Route Cloudflare WebSocket traffic through Discord's Activity proxy.
+      // Configure /relay -> bigconhosting.wax-no-bones.workers.dev in Developer Portal.
+      patchUrlMappings([
+        { prefix: "/title-assets", target: "raw.githubusercontent.com/waxmotson/The-big-con-desktop/master" },
+        { prefix: "/characters", target: "raw.githubusercontent.com/waxmotson/bigcon/main/characters" },
+        { prefix: "/relay", target: "bigconhosting.wax-no-bones.workers.dev" },
+        { prefix: "/", target: "thebigcon.onrender.com" }
+      ]);
+      const discordSdk = new DiscordSDK(appId);
+      await discordSdk.ready();
+      window.bigconDiscordSDK = discordSdk;
+
+      // The Embedded App SDK handles its own OAuth redirect. Exchange the
+      // returned one-time code on the Cloudflare Worker, then authenticate
+      // the SDK before attempting Rich Presence updates.
+      try {
+        const { code } = await discordSdk.commands.authorize({
+          client_id: appId,
+          response_type: "code",
+          state: crypto.randomUUID(),
+          prompt: "none",
+          scope: ["identify", "rpc.activities.write"]
+        });
+        const tokenResponse = await fetch("/relay/api/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ code })
+        });
+        const tokenData = await tokenResponse.json().catch(() => ({}));
+        if (!tokenResponse.ok || !tokenData.access_token) {
+          throw new Error(tokenData.error || "Discord token exchange failed (HTTP " + tokenResponse.status + ").");
+        }
+        const auth = await discordSdk.commands.authenticate({
+          access_token: tokenData.access_token
+        });
+        if (!auth) throw new Error("Discord SDK authentication returned no user.");
+        Presence.attachDiscordSDK(discordSdk, tokenData.access_token);
+        console.info("[BigCon Discord] Rich Presence authorised and SDK authenticated.");
+      } catch (presenceError) {
+        console.warn("[BigCon Discord] Rich Presence permission unavailable:", presenceError);
+        const status = document.getElementById("netStatus");
+        if (status) {
+          status.textContent = "Discord connected; Rich Presence unavailable: " +
+            (presenceError?.message || String(presenceError));
+          status.classList.remove("err");
+        }
+      }
+
+      if (inviteButton) {
+        inviteButton.style.display = "inline-block";
+        inviteButton.addEventListener("click", async () => {
+          inviteButton.disabled = true;
+          try {
+            await discordSdk.commands.openInviteDialog();
+          } catch (error) {
+            console.warn("[BigCon Discord] Invite dialog unavailable:", error);
+          } finally {
+            inviteButton.disabled = false;
+          }
+        });
+      }
+
+      if (shareButton) {
+        shareButton.style.display = "inline-block";
+        shareButton.addEventListener("click", async () => {
+          const code = (document.getElementById("roomCodeBig")?.textContent || "").trim();
+          if (!code || code === "·····") {
+            alert("Create a room first, then share its code.");
+            return;
+          }
+          shareButton.disabled = true;
+          try {
+            await discordSdk.commands.shareLink({
+              message: "Join my Big Con game. Open the Big Con Activity and enter room code: " + code,
+              custom_id: "bigcon-room-share"
+            });
+          } catch (error) {
+            console.warn("[BigCon Discord] Room share failed:", error);
+          } finally {
+            shareButton.disabled = false;
+          }
+        });
+      }
+      window.dispatchEvent(new CustomEvent("bigcon-discord-ready"));
+      const status = document.getElementById("netStatus");
+      if (status) { status.textContent = "Discord connected — Cloudflare relay ready."; status.classList.remove("err"); }
+      console.info("[BigCon Discord] Embedded App SDK ready.");
+    } catch (error) {
+      console.error("[BigCon Discord] Activity SDK could not initialise:", error);
+      const detail = error && (error.message || error.toString()) || "Unknown SDK error";
+      const status = document.getElementById("netStatus");
+      if (status) {
+        status.textContent = "Discord SDK failed to initialise: " + detail;
+        status.classList.add("err");
+      }
+      document.querySelectorAll("#btnHost,#btnJoin,#btnCreate,#btnJoinGo").forEach(button => button.disabled = true);
+      window.dispatchEvent(new CustomEvent("bigcon-discord-sdk-error", { detail }));
+    }
+  })();
+}
+
+}
+</script>
+</body>
+</html>
++md.rate+'</text></g>';
+ }
+ let lx=mega?metrics.cx-360:560;
+ s+='<g transform="translate(0,'+(mega?245:62)+')">';
+ Object.keys(TYPE_COLORS).forEach(k=>{
+  s+='<rect x="'+lx+'" y="-7" width="10" height="10" rx="2" fill="'+TYPE_COLORS[k]+'"/><text x="'+(lx+14)+'" y="2" font-size="9" font-weight="800" fill="#cbb992">'+k+'</text>';
+  lx+=14+k.length*6.2+16;
+ });
+ s+='</g>';
+ const goalNow=goalAmount();
+ const leader=S.players.reduce((a,b)=>b.money>a.money?b:a,S.players[0]);
+ s+='<g transform="translate(1200,1490)"><rect x="-580" y="-14" width="1160" height="25" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10.5" font-weight="700" letter-spacing="1" fill="#fff">WIN CONDITION: FIRST TO $'+goalNow+' TAKES THE CON</text></g>';
+ s+='<g transform="translate(1200,1526)"><rect x="-580" y="-12" width="1160" height="23" fill="#000" stroke="#168388" stroke-width="1.5"/><text text-anchor="middle" y="3" font-size="10" font-weight="700" letter-spacing="1" fill="aqua">FRONT RUNNER: '+esc(String(leader.name).toUpperCase())+' — $'+leader.money+' · $'+Math.max(0,goalNow-leader.money)+' TO GO</text></g>';
+ NODES.forEach(n=>{
+  let cls='';
+  if(S&&!S.over){
+   if(S.mode==='fly')cls=canReach(n.id)?'click':'';
+   else if(S.mode!=='missile'&&S.phase==='move'&&S.cur===Net.myIdx&&S.steps>0&&(ADJ[curpos]||[]).includes(n.id)&&canReach(n.id))cls='click reach';
+   else if(bugTargetable(n))cls='click target';
+   else if(missileTargetable(n))cls='click target';
+   else if(overtourTargetable(n))cls='click target';
+   else if(blockadeTargetable(n))cls='click target';
+  }
+  s+=nodeSVG(n,cls);
+ });
+ if(S)s+=tokenLayer();
+ root.innerHTML=s;
+ /* floating fx — animate each exactly once, on every screen */
+ const fxg=$('fxg');
+ const present=new Set(S.fx.map(f=>f.id));
+ shownFx.forEach(id=>{if(!present.has(id))shownFx.delete(id)});
+ S.fx.forEach(f=>{
+  if(shownFx.has(f.id))return;
+  shownFx.add(f.id);
+  if(f.proj){
+   /* 🌍 a flying warhead or jet: SMIL slides the rig along the route, the static
+      inner rig keeps it nose-first (mirrored on leftward flights), CSS fades it */
+   const outer=document.createElementNS('http://www.w3.org/2000/svg','g');
+   outer.setAttribute('class','fxproj');
+   const mover=document.createElementNS('http://www.w3.org/2000/svg','g');
+   const anim=document.createElementNS('http://www.w3.org/2000/svg','animateTransform');
+   anim.setAttribute('attributeName','transform');anim.setAttribute('type','translate');
+   anim.setAttribute('from',f.x0+' '+f.y0);anim.setAttribute('to',f.x1+' '+f.y1);
+   anim.setAttribute('dur','1.1s');anim.setAttribute('begin','indefinite');anim.setAttribute('fill','freeze');
+   mover.appendChild(anim);
+   const rig=document.createElementNS('http://www.w3.org/2000/svg','g');
+   rig.setAttribute('transform',projRig(f));
+   const img=document.createElementNS('http://www.w3.org/2000/svg','image');
+   img.setAttribute('href',f.img);
+   img.setAttribute('x',-f.w/2);img.setAttribute('y',-f.h/2);
+   img.setAttribute('width',f.w);img.setAttribute('height',f.h);
+   rig.appendChild(img);mover.appendChild(rig);outer.appendChild(mover);fxg.appendChild(outer);
+   setTimeout(()=>{try{anim.beginElement()}catch(e){}},30);
+   setTimeout(()=>{try{outer.remove()}catch(e){}},1600);
+   return;
+  }
+  const outer=document.createElementNS('http://www.w3.org/2000/svg','g');
+  outer.setAttribute('transform','translate('+f.x+','+f.y+')');
+  const inner=document.createElementNS('http://www.w3.org/2000/svg','g');
+  inner.setAttribute('class',f.b?'fxb':'fxt');
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('text-anchor','middle');
+  t.setAttribute('font-size',f.b?54:20);
+  t.setAttribute('font-weight','900');
+  t.setAttribute('fill',f.c);
+  t.setAttribute('stroke','#0f0a05');
+  t.setAttribute('stroke-width',f.b?4:2.5);
+  t.setAttribute('paint-order','stroke');
+  t.textContent=f.t;
+  inner.appendChild(t);outer.appendChild(inner);fxg.appendChild(outer);
+  setTimeout(()=>{try{outer.remove()}catch(e){}},f.b?3600:2900);
+ });
+}
+function renderSide(){
+ const side=$('side');
+ const me=Net.myIdx;const p=S.players[S.cur];const isTurn=S.cur===me;
+ const md=MOODS[S.mood]||MOODS.CALM;
+ const ownedIcons=NODES.filter(n=>S.owner[n.id]===me).map(n=>'<span title="'+n.name.join(' ')+'">'+(n.icon||({BANK:'🏦',COMMODITY:'🛢️',MEDIA:'🗞️',CORPORATE:'🏢',REGULATOR:'⚖️',CHART:'📈',WILD:'🎭'}[n.type]||'◆'))+'</span>').join('')||'<span style="opacity:.4">—</span>';
+ const curN=NMAP[p.pos];
+ let phaseHtml='';
+ if(S.phase==='over'){
+  phaseHtml='<div class="phlabel">GAME OVER</div><p>The con is complete. Check the record below.</p>'
+   +(Net.role==='host'
+    ?'<button class="act primary" data-act="tolobby">🃏 BACK TO THE LOBBY — same room, deal the next con</button><p class="fine" style="margin-top:8px">Nobody is going anywhere — the table keeps the room, the record and the chat. LEAVE is the only button that ends the night.</p>'
+    :'<p class="fine">Stick around — the host can deal the next con. Nobody has to leave.</p>');
+ } else if(!isTurn){
+  if(Net.spect)phaseHtml='<div class="phlabel">SPECTATING</div><p>You joined mid-con — the table plays on without you. The chat is open and the record below is the play-by-play.</p>';
+  else if(S.phase==='event')phaseHtml='<div class="phlabel">MARKET EVENT</div><p>The market moves whether anyone likes it or not…</p>';
+  else phaseHtml='<div class="phlabel">STANDBY</div><p>⏳ Waiting for <b style="color:'+p.color+'">'+esc(p.name)+'</b>'+(p.dc?' <i>(away — auto-playing)</i>':'')+'…</p><p>Scheme in the chat. Hover exhibits to study their powers.</p>';
+ } else if(S.phase==='move'){
+  const maxSteps=S.caution?1:3+(S.owner.coal===me?1:0)+((S.owner.train===me||S.owner.bullet===me)?1:0)+(S.owner.asics===me?1:0)+(S.extraStep?1:0)+(S.slipped?2:0);
+  const dots='●'.repeat(Math.max(0,S.steps))+'○'.repeat(Math.max(0,maxSteps-S.steps));
+  if(S.mode==='fly'){phaseHtml='<div class="phlabel">PHASE 1 · MOVE — FLYING</div><p><b>FLYING:</b> click <b>any node</b> on the board to land there ($3).</p><button class="act" data-act="cancel">Cancel flight</button>'}
+  else if(S.mode==='missile'){phaseHtml='<div class="phlabel">🚀 MISSILE AWAY — $4 + 1 🛈</div><p><b>LAUNCHING:</b> click <b>any node</b> on the board to strike it. The launch <b>ends your move</b>, and your action phase still follows.</p><button class="act" data-act="cancel">Abort the launch</button>'}
+  else{
+   phaseHtml='<div class="phlabel">PHASE 1 · MOVE</div>'
+    +'<p>Click a <b>highlighted node</b> to move along the red threads (3 steps now — the board is wider). Tolls: <b>$1</b> entering a rival’s node (<b>$2</b> if they hold ALBANESE, <b>free</b> if you hold JAMES BOND).</p>'
+    +'<div class="dots">'+dots+' <span>'+S.steps+' step'+(S.steps!==1?'s':'')+' left</span></div>'
+    +'<button class="act" data-act="endmove">Stay put — end movement</button>'
+    +((!S.extraStep&&p.intel>=1)?'<button class="act" data-act="favor">🛈 Burn a favor — 1 🛈 (+1 step this turn)</button>':'')
+    +((S.owner.qantas===me)?'<button class="act" data-act="flymode"'+(p.money>=3?'':' disabled')+'>✈️ Fly the Qantas jet — $3 (anywhere)</button>':'')
+    +((S.owner.f1===me&&!S.slipped)?'<button class="act" data-act="slip"'+(p.money>=2?'':' disabled')+'>🏎️ Slipstream — $2 (+2 steps, $2 off next seizure)</button>':'')
+    +((S.dlcGeo&&ownsMissileLauncher(me)&&canFireMissileFrom(me))?'<button class="act" data-act="missilemode"'+((p.money>=4&&p.intel>=1&&!S.geoMissiled)?'':' disabled')+' title="From either launcher (anywhere with Kim Jong Un): strike any node that still stands — the launch ends your move; your action still follows ($4 + 1 Intel, once per turn)">🚀 Launch a missile — $4 + 1🛈 (ends the move)</button>':'');
+    if(S.owner.back===me&&!S.backroomAbilityUsed){
+     phaseHtml+='<div class="sublabel">BACKROOM DEALS · ONE NODE ABILITY · COSTS 2 MOVEMENT STEPS</div><div class="btns">';
+     const backroomStepLock=S.steps<2?' disabled':'';
+     if(S.owner.trump===me)phaseHtml+='<button class="act" data-act="tweetmode"'+((p.money>=2?'':' disabled')+backroomStepLock)+'>🦅 The Tweet — $2 · 2 steps</button>';
+     phaseHtml+='<button class="act" data-act="pressure"'+backroomStepLock+'>🤝 Lean on the table · 2 steps</button>';
+     if(S.owner.gov===me)phaseHtml+='<button class="act" data-act="budget"'+((p.money>=3?'':' disabled')+backroomStepLock)+'>🦘 Budget night — $3 · 2 steps</button>';
+     if(S.owner.rock===me)phaseHtml+='<button class="act" data-act="cook"'+((p.money>=3?'':' disabled')+backroomStepLock)+'>💪 Cook the books — $3 · 2 steps</button>';
+     if(S.owner.asic===me)phaseHtml+='<button class="act" data-act="auditmode"'+((p.money>=4&&!S.audited?'':' disabled')+backroomStepLock)+'>⚖️ Audit — $4 · 2 steps</button>';
+     if(S.owner.press===me)phaseHtml+='<button class="act" data-act="spin" data-kind="press"'+((p.money>=3&&!S.spun?'':' disabled')+backroomStepLock)+'>🗞️ Spin the press — $3 · 2 steps</button>';
+     if(S.owner.fox===me)phaseHtml+='<button class="act" data-act="spin" data-kind="fox"'+((p.money>=2?'':' disabled')+backroomStepLock)+'>🦊 Fox spin — $2 · 2 steps</button>';
+     if(S.owner.sisy===me&&p.pos==='sisy')phaseHtml+='<button class="act" data-act="push"'+backroomStepLock+'>🪨 Push the boulder — +$'+(S.sisyPayout||10)+' · 2 steps</button>';
+     if(S.owner.asics===me&&p.pos==='asics')phaseHtml+='<button class="act" data-act="jog"'+backroomStepLock+'>👟 Jog a lap — −1 🔥 · 2 steps</button>';
+     if(S.dlcGeo&&S.owner.geo_boeing===me)phaseHtml+='<button class="act" data-act="qantasdown"'+((p.money>=4&&!S.geoBoeing&&S.owner.qantas!==me?'':' disabled')+backroomStepLock)+' title="Ground a rival or unowned Qantas for two full turns; unavailable if you own Qantas">🛩️ Ground Qantas — $4 · 2 steps</button>';
+     if(S.dlcGeo&&S.owner.geo_scs===me)phaseHtml+='<button class="act" data-act="oilcrash"'+((p.money>=3&&!S.geoCrash?'':' disabled')+backroomStepLock)+'>🌊 Oil crash — $3 · 2 steps</button>';
+     if(S.dlcGeo&&S.owner.geo_stage5===me)phaseHtml+='<button class="act" data-act="stage5"'+((p.intel>=2&&!S.geoStage5?'':' disabled')+backroomStepLock)+'>📉 Stage 5 — 2🛈 · 2 steps</button>';
+     phaseHtml+='</div>';
+    }
+
+  }
+ } else if(S.phase==='action'){
+  const nid=p.pos,n=curN,prev=S.owner[nid];
+  const powline='<div class="pow"><b>'+n.name.join(' ')+'</b> — '+n.sp+'</div>';
+  if(S.mode==='bug'){
+   phaseHtml='<div class="phlabel">PLANT A BUG</div>'+powline+'<p>Click a <b>highlighted rival node next to you</b> on the board. You will skim <b>$1/turn</b> off it.</p><button class="act" data-act="cancel">Cancel</button>';
+  } else if(S.mode==='missile'){
+   phaseHtml='<div class="phlabel">🚀 LAUNCH A MISSILE — $4 + 1 🛈 (once per turn)</div>'+powline+'<p>Click <b>any node</b> on the board. An owned node is expropriated with <b>no payout</b>; either way it becomes <b>rubble</b> — no income, nothing to seize, until someone stands there and pays its list price to rebuild (a rebuild is an action of its own).</p><button class="act" data-act="cancel">Abort the launch</button>';
+  } else if(S.mode==='blockade'){
+   phaseHtml='<div class="phlabel">🚧 ALBANESE BLOCKADE — FREE · ONCE PER TURN</div>'+powline+'<p>Click any <b>highlighted node</b> to block entry for one full rotation. Blocked nodes display a 🚧 marker. Nobody can walk or fly into one, including you; income and missiles are unaffected. Rubble and already-blocked nodes cannot be selected.</p><button class="act" data-act="cancel">Cancel</button>';
+  } else if(S.mode==='overtour'){
+   phaseHtml='<div class="phlabel">🛳️ OVERTOURISM — $2</div>'+powline+'<p>Click a <b>rival-owned node</b>. While you own Venice and the ships keep coming, its owner takes <b>+1 Cortisol</b> at the start of each of their turns.</p><button class="act" data-act="cancel">Cancel</button>';
+  } else if(S.mode==='leak'||S.mode==='audit'||S.mode==='tweet'||S.mode==='roast'){
+   const lab={leak:'LEAK DIRT — 2 🛈 (rival +2 🔥)',audit:'AUDIT — $4 (rival +1 🔥)',tweet:'THE TWEET — $2 (rival loses Intel)',roast:(S.spinKind==='fox'?'FOX SPIN — $2 (rival +1 🔥)':'SPIN THE PRESS — $3 (rival +1 🔥)')}[S.mode];
+   phaseHtml='<div class="phlabel">'+lab+'</div>'+powline+'<p>Click a <b>rival</b> in THE SYNDICATE list below.</p><button class="act" data-act="cancel">Cancel</button>';
+  } else {
+   let base=seizeListPrice(me,n);
+   const isTake=prev!=null&&prev!==me;
+   const cost=isTake?takeoverCost(me,nid,base):base;
+   const maxPay=p.money+(S.owner.back===me?Math.min(3,p.intel):0);
+   const btns=[];
+   if(prev===me){
+    btns.push('<div class="ownnote">You already control <b>'+n.name.join(' ')+'</b>.</div>');
+    if(nid==='sisy')btns.push('<button class="act primary" data-act="push">Push the boulder — +$'+(S.sisyPayout||10)+' (next push doubles)</button>');
+    if(nid==='asics')btns.push('<button class="act primary" data-act="jog">Jog a lap — free −1 🔥</button>');
+   }else if(S.dlcGeo&&S.rubble&&S.rubble[nid]){
+    btns.push('<button class="act primary" data-act="rebuild"'+(p.money>=cost?'':' disabled')+'>♻️ Rebuild '+n.name.join(' ')+' — $'+cost+' (returns unowned — first bids from next turn)</button>');
+    btns.push('<div class="ownnote">Rubble since a missile strike — no income, nothing to seize, until it is rebuilt.</div>');
+   }else{
+    const afford=maxPay>=cost;
+    const lbl=isTake?('Hostile takeover — $'+cost+(flatSeize(nid)?' (never inflates)':S.dossier?' (DOSSIER: list price)':' (takeover '+(S.seizeCount[nid]||0)+'×)')):('Seize '+n.name.join(' ')+' — $'+cost);
+    btns.push('<button class="act primary" data-act="seize"'+(afford?'':' disabled')+'>'+lbl+(afford?'':' — can’t afford')+'</button>');
+   }
+   const bugCost=(S.owner.insider===me)?0:1;
+   const bugTargets=(ADJ[nid]||[]).filter(m=>S.owner[m]!=null&&S.owner[m]!==me&&S.bugs[m]==null).length>0;
+   btns.push('<button class="act" data-act="bugmode"'+((p.intel>=bugCost&&bugTargets)?'':' disabled')+'>Plant a bug — '+(bugCost===0?'FREE (insider trading graphic)':'1 🛈')+'</button>');
+   btns.push('<button class="act" data-act="leakmode"'+(p.intel>=2?'':' disabled')+'>Leak dirt — 2 🛈 (rival +2 🔥)</button>');
+   if(S.owner.asic===me)btns.push('<button class="act" data-act="auditmode"'+((p.money>=4&&!S.audited)?'':' disabled')+'>⚖️ Audit — $4 (rival +1 🔥)</button>');
+   if(S.owner.press===me)btns.push('<button class="act" data-act="spin" data-kind="press"'+((p.money>=3&&!S.spun)?'':' disabled')+'>🗞️ Spin the press — $3 (−2 🔥 or roast)</button>');
+   if(S.owner.fox===me)btns.push('<button class="act" data-act="spin" data-kind="fox"'+((p.money>=2&&!S.spun)?'':' disabled')+'>🦊 Fox spin — $2 (−3 🔥 or roast)</button>');
+   if(S.owner.rock===me)btns.push('<button class="act" data-act="cook"'+((p.money>=3&&!S.cooked)?'':' disabled')+'>💪 Cook the books — $3 (−3 🔥)</button>');
+   if(S.owner.trump===me)btns.push('<button class="act" data-act="tweetmode"'+(p.money>=2?'':' disabled')+'>🦅 The Tweet — $2 (rival +1 🔥)</button>');
+   if(S.owner.gov===me)btns.push('<button class="act" data-act="budget"'+((p.money>=3&&!S.budgeted)?'':' disabled')+'>🦘 Budget night — $3 (rivals each pay you $1, +1 🛈)</button>');
+   if(S.owner.back===me)btns.push('<button class="act" data-act="pressure"'+(!S.pressured?'':' disabled')+'>🤝 Lean on the table — rivals each +1 🔥</button>');
+   /* ---- 🌍 GEOGRAPHY DLC ---- */
+   if(S.dlcGeo&&ownsMissileLauncher(me)&&canFireMissileFrom(me))btns.push('<button class="act" data-act="missilemode"'+((p.money>=4&&p.intel>=1&&!S.geoMissiled)?'':' disabled')+' title="Stand on either launcher to fire (owning Kim Jong Un arms either from anywhere): strike any node — the owner is expropriated with no payout; the node becomes rubble ($4 + 1 Intel, once per turn)">🚀 Launch a missile — $4 + 1 🛈 (expropriate &amp; rubble)</button>');
+   if(S.dlcGeo&&S.owner.geo_boeing===me)btns.push('<button class="act" data-act="qantasdown"'+((p.money>=4&&!S.geoBoeing&&S.owner.qantas!==me)?'':' disabled')+' title="QANTAS grounded for two full turns — no jet, no income ($4, once per turn)">🛩️ Shut down Qantas — $4 (grounded two turns)</button>');
+   if(S.dlcGeo&&S.owner.geo_scs===me)btns.push('<button class="act" data-act="oilcrash"'+((p.money>=3&&!S.geoCrash)?'':' disabled')+' title="PANIC mood; everyone pays $2 per oil node owned — Pillars exempt ($3, once per turn)">🌊 Trigger an oil crash — $3 (oil pays underwater)</button>');
+   if(S.dlcGeo&&S.owner.geo_stage5===me)btns.push('<button class="act" data-act="stage5"'+((p.intel>=2&&!S.geoStage5)?'':' disabled')+' title="The richest player (not you) makes no income on their next turn (2 Intel, once per turn)">📉 Call Stage 5 decline — 2 🛈</button>');
+   if(S.dlcGeo&&S.owner.geo_venice===me&&nid==='geo_venice')btns.push('<button class="act" data-act="venicecool"'+(!S.geoVenice?'':' disabled')+' title="Free — once per turn, either this or Overtourism">🚤 Gondola therapy — free −1 🔥</button>');
+   if(S.dlcGeo&&S.owner.geo_venice===me){
+    const ot=NODES.filter(nn=>S.owner[nn.id]!=null&&S.owner[nn.id]!==me&&!(S.rubble&&S.rubble[nn.id])).length;
+    btns.push('<button class="act" data-act="overmode"'+((p.money>=2&&!S.geoVenice&&ot>0)?'':' disabled')+' title="Pick any rival-owned node, including ESG holdings. It remains active for one full table rotation and applies +1 Cortisol when the target takes their turn ($2, once per turn, either/or)">🛳️ Overtourism — $2 (one full turn cycle)</button>');
+   }
+   if(S.dlcGeo&&S.owner.geo_wonsan===me&&nid==='geo_wonsan')btns.push('<button class="act primary" data-act="beach"'+(!S.geoBeach?'':' disabled')+' title="Free — once per turn">🏖️ Beach day — free −2 🔥</button>');
+   if(S.owner.albo===me){const blockadeTargets=NODES.some(nn=>!S.rubble[nn.id]&&!blockaded(nn.id));btns.push('<button class="act" data-act="blockmode"'+(!S.blockadeUsed&&blockadeTargets?'':' disabled')+' title="Free, once per turn: wall off any unblocked, non-rubble node for one full rotation. Blocks walking and Qantas landings; shown by a 🚧 marker on the board.">🚧 Blockade — free (once per turn)</button>');}
+   /* ---- INTEL OPS ---- */
+   btns.push('<div class="sublabel">INTEL OPS · you hold 🛈 '+p.intel+' · market rate $'+md.rate+'/🛈</div>');
+   btns.push('<button class="act" data-act="spy"'+(p.intel>=2?'':' disabled')+' title="Free action — see the next event card, anywhere">🛈 Spy on the deck — 2 🛈 (see next event)</button>');
+   btns.push('<button class="act" data-act="dossier"'+((p.intel>=3&&!S.dossier)?'':' disabled')+' title="Free action — hostile takeovers cost list price this turn">📂 The Dossier — 3 🛈 (takeovers at list price)</button>');
+   btns.push('<button class="act" data-act="divestmade"'+((p.intel>=5&&p.money>=7&&S.owner.made!=null&&S.owner.made!==me)?'':' disabled')+' title="Pay 5 Intel and $7 compensation to remove MADE from any rival">🟣 Divest MADE — 5 🛈 + $7 compensation</button>');
+   btns.push('<button class="act" data-act="sweep"'+(p.intel>=2?'':' disabled')+' title="Your action — remove all bugs on your nodes">🧹 Sweep for bugs — 2 🛈 (cleanse your nodes)</button>');
+    btns.push('<button class="act" data-act="masspanic"'+(p.intel>=5?'':' disabled')+' title="Your action — every player gains 2 Cortisol">🔥 Mass panic — 5 🛈 (+2 Cortisol to everyone)</button>');
+   btns.push('<button class="act" data-act="targetpanic"'+(p.intel>=30&&S.players.length>1?'':' disabled')+' title="Choose one rival to receive +6 Cortisol; costs 30 Intel">🔥 Overload a rival — 30 🛈 (+6 Cortisol)</button>');
+   if(S.owner.bond===me&&S.owner.leak===me){btns.push('<button class="act" data-act="bondmageddon"'+(p.money>=16&&p.intel>=4&&!S.bondmageddonUsed&&S.players.length>1?'':' disabled')+' title="Four missiles against the rival with the most CHART holdings. If they own ESG, three hit ESG and the fourth hits another holding. Costs $16 + 4 Intel; once per turn.">💥 BONDMAGEDDON — 4 missiles ($16 + 4 🛈)</button>');}
+   for(let k=1;k<=3;k++){
+    btns.push('<button class="act" data-act="sell" data-n="'+k+'"'+(p.intel>=k?'':' disabled')+' title="Your action — sell Intel at the current market rate">💰 Sell '+k+' 🛈 → $'+(k*md.rate)+'</button>');
+   }
+   btns.push('<button class="act" data-act="sellall"'+(p.intel>0?'':' disabled')+' title="Exchange every Intel point you hold at the current market rate">💰 Sell ALL '+p.intel+' 🛈 → $'+(p.intel*md.rate)+'</button>');
+   btns.push('<button class="act" data-act="laylowcash">Lay low — pocket $1</button>');
+   btns.push('<button class="act" data-act="laylowcool">Lay low — cool 2 🔥</button>');
+   phaseHtml='<div class="phlabel">PHASE 2 · ONE ACTION</div>'+powline+'<div class="btns">'+btns.join('')+'</div>';
+  }
+ } else if(S.phase==='event'){
+  phaseHtml='<div class="phlabel">PHASE 3 · MARKET EVENT</div><p>Resolve the event… and watch the mood.</p>';
+ }
+ const prows=S.players.map((pl,i)=>{
+  const nodes=NODES.filter(nn=>S.owner[nn.id]===i).length;
+  const targetable=isTurn&&(S.phase==='action'||(S.phase==='move'&&S.owner.back===me&&!S.backroomAbilityUsed))&&(S.mode==='leak'||S.mode==='audit'||S.mode==='tweet'||S.mode==='roast')&&i!==me;
+  const face=charSrc(pl.char);
+  return '<div class="prow'+(i===me?' me':'')+(targetable?' targetable':'')+(pl.cortisol>=6?' hot':'')+'" data-rival="'+i+'" style="--pc:'+pl.color+'">'
+   +(face?'<img class="pface" src="'+face+'" alt="">':'<span class="pnum">'+(i+1)+'</span><span class="pdot"></span>')
+   +'<span class="pname">'+esc(pl.name)+(i===me?' <i style="color:#9ad">(you)</i>':'')+(pl.dc?' 💤':'')+'</span>'
+   +'<span class="pstats">$'+pl.money+' · 🛈'+pl.intel+' · 🔥'+pl.cortisol+'</span>'
+   +'<span class="pnodes">'+nodes+' node'+(nodes!==1?'s':'')+' · set '+(WIN_TYPES.length-missingTypes(i).length)+'/'+WIN_TYPES.length+'</span></div>';
+ }).join('');
+ const myMissing=Net.spect?[]:missingTypes(me);
+ const setHtml=Net.spect?'<span style="color:#9ad">not playing — just watching</span>':WIN_TYPES.map(t=>{const has=hasType(me,t);return '<span style="color:'+(has?'#7fe08d':'#ff6b5e')+'">'+(has?'✔':'✘')+' '+t+'</span>'}).join('');
+ const chatHtml=(S.chat||[]).map(c=>'<div><b style="color:'+c.c+'">'+esc(c.n)+':</b> '+esc(c.t)+'</div>').join('')||'<div style="opacity:.4;font-style:italic">— the wire is quiet —</div>';
+ const chatVal=(window.__chatDraft)||'';
+ side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomLabel||Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':(Net.spect?'👁 SPECTATOR':'SEAT '+(Net.myIdx+1)))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
+  +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
+  +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.13 · '+(S.dlcGeo?'81':'70')+' exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
+  +'<div class="turncard" style="border-color:'+p.color+'"><div class="turnlab">TURN '+S.turn+'</div><div class="turnname" style="color:'+p.color+'">'+esc(p.name)+(isTurn?' — that’s you':'')+'</div>'
+  +'<div class="resline">$ '+p.money+' &nbsp;·&nbsp; 🛈 '+p.intel+' &nbsp;·&nbsp; 🔥 '+p.cortisol+(p.cortisol>=6?' <span class="danger">RAID AT 9</span>':'')+'</div>'
+  +'<div class="holds" title="holdings of '+esc(p.name)+'">'+(isTurn?ownedIcons:'<span style="opacity:.5;font-size:12px">'+NODES.filter(n=>S.owner[n.id]===S.cur).length+' holdings</span>')+'</div></div>'
+  +'<div class="setcard"><span class="st">🎯 WIN SET</span>'+setHtml+'<span style="flex-basis:100%;color:#9ad">'+(Net.spect?'the spectacle is the point':(myMissing.length?'still need: '+myMissing.join(', ')+' · and $'+goalAmount():'full set held — now bank $'+goalAmount()))+'</span></div>'
+  +'<div class="phasecard">'+phaseHtml+'</div>'
+  +'<div class="paneltitle">THE SYNDICATE — '+S.players.length+' AT THE TABLE</div><div>'+prows+'</div>'
+  +'<div class="paneltitle">THE RECORD<span style="float:right;display:inline-flex;gap:6px;margin-top:-4px"><button class="mini" data-act="copyrecord" style="flex:0 0 auto;padding:3px 8px;font-size:10px">COPY</button><button class="mini" data-act="reviewlog" style="flex:0 0 auto;padding:3px 8px;font-size:10px" title="Open this record in the log reviewer">🔬 REVIEW</button></span></div><div class="log" id="logbox">'+(S.over?S.log:S.log.slice(-LOG_SHOWN)).map(l=>'<div>'+l+'</div>').join('')+'</div>'
+  +'<div class="paneltitle">THE WIRE (chat)</div><div class="chatbox"><div class="chatlist" id="chatbox">'+chatHtml+'</div><div class="chatrow"><input id="chatInput" maxlength="140" placeholder="talk your book…" value="'+esc(chatVal)+'"><button id="chatSend">SEND</button></div></div>'
+  +'<div class="footbtns"><button class="mini" data-act="notifications">🔔 TURN ALERTS: '+(turnAlertsEnabled()?'ON':'OFF')+'</button><button class="mini" data-act="rules">📖 RULES</button><a class="mini" href="exhibits.html" target="_blank" rel="noopener">▦ EXHIBITS</a><button class="mini" data-act="leave">↺ LEAVE</button></div>';
+ const lb=$('logbox');if(lb)lb.scrollTop=lb.scrollHeight;
+ const cb=$('chatbox');if(cb)cb.scrollTop=cb.scrollHeight;
+ const ci=$('chatInput');
+ if(ci){ci.addEventListener('input',()=>{window.__chatDraft=ci.value});
+  const send=()=>{const t=ci.value.trim();if(!t)return;window.__chatDraft='';sendChat(t)};
+  $('chatSend').onclick=send;
+  ci.addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+ }
+}
+function sendChat(t){
+ if(Net.role==='host'){addChat(Net.myIdx,t)}
+ else if(Net.conn&&Net.conn.open){Net.conn.send({t:'chat',text:t})}
+}
+function getPlayerId(){const key='bigcon-player-id';let id=sessionStorage.getItem(key);if(!id){id=crypto.randomUUID();sessionStorage.setItem(key,id)}return id;}
+function dispatch(m){
+ if(!S||S.over)return;
+ if(Net.role==='host')applyIntent(Net.myIdx,m);
+ else if(Net.conn&&Net.conn.open)Net.conn.send({t:'intent',act:m.act,id:m.id,target:m.target,kind:m.kind,choice:m.choice,n:m.n});
+}
+
+/* ================= INPUT — pan, zoom & taps ================= */
+const svgEl=$('board');
+let VB={x:0,y:0,w:2400,h:1560};
+function applyVB(){svgEl.setAttribute('viewBox',VB.x+' '+VB.y+' '+VB.w+' '+VB.h)}
+function zoomAt(f,cx,cy){
+ const rect=svgEl.getBoundingClientRect();
+ const bx=VB.x+(cx-rect.left)/rect.width*VB.w, by=VB.y+(cy-rect.top)/rect.height*VB.h;
+ const nw=Math.min(2400,Math.max(280,VB.w*f)), nh=nw*1560/2400;
+ VB.x=bx-(bx-VB.x)*(nw/VB.w);VB.y=by-(by-VB.y)*(nh/VB.h);
+ VB.w=nw;VB.h=nh;clampVB();applyVB();
+}
+function clampVB(){VB.x=Math.min(2400-VB.w,Math.max(0,VB.x));VB.y=Math.min(1560-VB.h,Math.max(0,VB.y))}
+svgEl.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY>0?1.13:0.885,e.clientX,e.clientY)},{passive:false});
+let drag=null,lastTapTarget=null;
+svgEl.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,moved:false};lastTapTarget=e.target;});
+svgEl.addEventListener('pointermove',e=>{
+ if(!drag)return;
+ const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
+ if(!drag.moved&&Math.abs(dx)+Math.abs(dy)>6){
+  drag.moved=true;
+  try{svgEl.setPointerCapture(e.pointerId)}catch(_){}
+  svgEl.classList.add('panning');
+ }
+ if(drag.moved){
+  const rect=svgEl.getBoundingClientRect();
+  VB.x-=dx*VB.w/rect.width;VB.y-=dy*VB.h/rect.height;clampVB();applyVB();
+  drag.x=e.clientX;drag.y=e.clientY;
+ }
+});
+svgEl.addEventListener('pointerup',()=>{
+ if(drag&&!drag.moved)handleNodeTap(lastTapTarget);
+ drag=null;svgEl.classList.remove('panning');
+});
+svgEl.addEventListener('pointercancel',()=>{drag=null;svgEl.classList.remove('panning')});
+window.addEventListener('pointerup',e=>{if(drag&&e.target&&e.target!==svgEl&&!svgEl.contains(e.target)){drag=null;svgEl.classList.remove('panning')}});
+function handleNodeTap(t){
+ if(!t||!t.closest)return;
+ const g=t.closest('g.node');
+ if(!g||!S||S.over)return;
+ if(S.cur!==Net.myIdx)return;
+ const id=g.dataset.id;
+ if(S.phase==='move'){
+  if(S.mode==='fly'){dispatch({act:'fly',id});return}
+  if(S.mode==='missile'){dispatch({act:'missile',id});return}
+  if(S.steps<=0)return;
+  if(!canReach(id)){toast(qantasGroundedReason()+'.');return}
+  if((ADJ[S.players[Net.myIdx].pos]||[]).includes(id))dispatch({act:'move',id});
+  else toast('You can only move along the red threads — click a highlighted node.');
+ } else if(S.phase==='action'){
+  if(S.mode==='bug')dispatch({act:'bug',id});
+  else if(S.mode==='missile')dispatch({act:'missile',id});
+  else if(S.mode==='overtour')dispatch({act:'overtour',id});
+  else if(S.mode==='blockade')dispatch({act:'blockade',id});
+ }
+}
+ $('zin').onclick=()=>zoomAt(0.8,innerWidth/2,innerHeight/2);
+ $('zout').onclick=()=>zoomAt(1.25,innerWidth/2,innerHeight/2);
+ $('zreset').onclick=()=>{VB={x:0,y:0,w:2400,h:1560};applyVB()};
+/* The syndicate hover card: hold the cursor over a rival's row and the table
+   shows exactly which pins they hold and which win types they still need. */
+(function(){
+ let card=null;
+ function ensure(){
+  if(card)return;
+  card=document.createElement('div');card.id='nodecard';
+  card.style.cssText='position:fixed;display:none;pointer-events:none;z-index:9999;max-width:360px;background:#101418;border:1px solid #2a4a55;border-radius:10px;padding:10px 12px;font:12px/1.55 Inconsolata,monospace;color:#cfe6ee;box-shadow:0 8px 30px rgba(0,0,0,.55);white-space:normal';
+  document.body.appendChild(card);
+ }
+ function hide(){if(card)card.style.display='none'}
+ function move(e){
+  if(!card||card.style.display!=='block')return;
+  const pad=14,r=card.getBoundingClientRect();
+  let x=e.clientX+pad,y=e.clientY+pad;
+  if(x+r.width>innerWidth-8)x=e.clientX-r.width-pad;
+  if(y+r.height>innerHeight-8)y=e.clientY-r.height-pad;
+  card.style.left=Math.max(8,x)+'px';card.style.top=Math.max(8,y)+'px';
+ }
+ function show(e){
+  const row=e.target&&e.target.closest?e.target.closest('.prow[data-rival]'):null;
+  if(!row||!S){hide();return}
+  const i=+row.dataset.rival,pl=S.players[i];
+  if(!pl){hide();return}
+  ensure();
+  const owned=NODES.filter(n=>S.owner[n.id]===i);
+  const byType={};for(const n of owned){(byType[n.type]=byType[n.type]||[]).push(n.name.join(' '))}
+  const missing=missingTypes(i);
+  let h='<b style="color:'+pl.color+';font-size:13px">'+esc(pl.name)+'</b> <span style="opacity:.7">$'+pl.money+' · 🛈'+pl.intel+' · 🔥'+pl.cortisol+'</span>';
+  h+='<div style="margin-top:6px;letter-spacing:.12em;color:#7fa7b3">HOLDS '+(owned.length||'NOTHING')+'</div>';
+  if(owned.length)h+=WIN_TYPES.filter(t=>byType[t]).map(t=>'<div><span style="color:#7fe08d">✔ '+t+'</span><span style="opacity:.85"> — '+byType[t].join(', ')+'</span></div>').join('');
+  else h+='<div style="opacity:.5">no pins on the board yet</div>';
+  h+='<div style="margin-top:6px;letter-spacing:.12em;color:#7fa7b3">'+(missing.length?'STILL NEEDS':'FULL SET HELD')+'</div>';
+  h+=missing.length?missing.map(t=>'<span style="color:#ff6b5e;margin-right:10px">✘ '+t+'</span>').join(''):'<span style="color:#7fe08d">✔ every type — now it is just the cash</span>';
+  card.innerHTML=h;card.style.display='block';
+  move(e);
+ }
+ document.addEventListener('mouseover',show);
+ document.addEventListener('mousemove',e=>{
+  const row=e.target&&e.target.closest?e.target.closest('.prow[data-rival]'):null;
+  if(row)show(e);else hide();
+ });
+ document.addEventListener('mouseout',e=>{
+  const row=e.target&&e.target.closest?e.target.closest('.prow[data-rival]'):null;
+  if(row&&(!e.relatedTarget||!row.contains(e.relatedTarget)))hide();
+ });
+})();
+ $('side').addEventListener('click',async e=>{
+ if(!S)return;
+ const row=e.target.closest('.prow[data-rival]');
+ if(row&&(S.phase==='action'||(S.phase==='move'&&S.owner.back===Net.myIdx&&!S.backroomAbilityUsed))&&S.cur===Net.myIdx){
+  const ri=+row.dataset.rival;if(ri===Net.myIdx)return;
+  if(S.mode&&['leak','audit','tweet','roast'].includes(S.mode)){dispatch({act:S.mode,target:ri});return}
+ }
+ const b=e.target.closest('button[data-act]');
+ if(!b||b.disabled)return;
+ const act=b.dataset.act;
+ if(act==='rules'){showRules();return}
+ if(act==='notifications'){toggleTurnAlerts();return}
+ if(act==='copyrecord'){
+  const rec=(S.log||[]).join('\n');
+  try{navigator.clipboard.writeText(rec).then(()=>toast('Record copied.')).catch(()=>toast('Could not copy the record.'))}catch(e){toast('Could not copy the record.')}
+  return;
+ }
+ if(act==='reviewlog'){
+  const meta={t:(S.log||[]).join('\n'),p:S.players.map(pl=>({n:pl.name,c:pl.color}))};
+  let saved=false;
+  try{localStorage.setItem('bigcon-record-pending',JSON.stringify(meta));saved=true}catch(e){}
+  const w=window.open('logs.html','_blank');
+  if(!w)toast('Allow pop-ups to open the log reviewer.');
+  else if(!saved)toast('Could not hand the record over — use COPY and paste it into the reviewer.');
+  return;
+ }
+ if(act==='tolobby'){if(Net.role==='host')backToLobby();return}
+ if(act==='leave'){
+  if(Net.role==='host'){const v=await modal({title:'END THE GAME?',body:'This will disconnect everyone and return all players to the lobby screen. Proceed?',options:[{label:'Yes — end it',v:1},{label:'Keep scheming',v:0}]});if(v){sendAll({t:'reload'});setTimeout(()=>location.reload(),300)}}
+  else{const v=await modal({title:'LEAVE THE TABLE?',body:'Your seat will be held — rejoin later with the same name and room code.',options:[{label:'Yes — leave',v:1},{label:'Stay',v:0}]});if(v)location.reload()}
+  return;
+ }
+ if(S.cur!==Net.myIdx||S.over)return;
+ switch(act){
+  case 'endmove':dispatch({act:'endmove'});break;
+  case 'flymode':dispatch({act:'flymode'});break;
+  case 'slip':dispatch({act:'slip'});break;
+  case 'favor':dispatch({act:'favor'});break;
+  case 'seize':dispatch({act:'seize'});break;
+  case 'bugmode':dispatch({act:'bugmode'});break;
+  case 'leakmode':dispatch({act:'leakmode'});break;
+  case 'auditmode':dispatch({act:'auditmode'});break;
+  case 'tweetmode':dispatch({act:'tweetmode'});break;
+   case 'pressure':dispatch({act:'pressure'});break;
+   case 'missilemode':dispatch({act:'missilemode'});break;
+  case 'bondmageddon':dispatch({act:'bondmageddon'});break;
+  case 'sellall':dispatch({act:'sellall'});break;
+   case 'rebuild':dispatch({act:'rebuild'});break;
+   case 'beach':dispatch({act:'beach'});break;
+   case 'qantasdown':dispatch({act:'qantasdown'});break;
+   case 'oilcrash':dispatch({act:'oilcrash'});break;
+   case 'stage5':dispatch({act:'stage5'});break;
+   case 'overmode':dispatch({act:'overmode'});break;
+   case 'venicecool':dispatch({act:'venicecool'});break;
+   case 'blockmode':dispatch({act:'blockmode'});break;
+  case 'spin':dispatch({act:'spin',kind:b.dataset.kind});break;
+  case 'cook':dispatch({act:'cook'});break;
+  case 'budget':dispatch({act:'budget'});break;
+  case 'push':dispatch({act:'push'});break;
+  case 'jog':dispatch({act:'jog'});break;
+  case 'spy':dispatch({act:'spy'});break;
+  case 'dossier':dispatch({act:'dossier'});break;
+  case 'sweep':dispatch({act:'sweep'});break;
+  case 'masspanic':dispatch({act:'masspanic'});break;
+  case 'divestmade':dispatch({act:'divestmade'});break;
+  case 'sell':dispatch({act:'sell',n:+b.dataset.n});break;
+  case 'cancel':dispatch({act:'cancel'});break;
+  case 'laylowcash':dispatch({act:'laylow',choice:'cash'});break;
+  case 'laylowcool':dispatch({act:'laylow',choice:'cool'});break;
+ }
+});
+
+/* Initialise optional transport preferences after the setup controls exist. */
+loadTransportSettings();
+/* ================= NETWORKING ================= */
+const PFX='bigcon-oz-';
+/* Room codes are jt portal buzzwords — every one of these has its own line in
+   the jt portal news ticker, so the code is always something you can say out loud. */
+const BUZZWORDS=['WORLD ECONOMIC FORUM','NESA','JAKE TOMKINS','ELIJAH SON','SETH WEGRZYN','AIDAN NEWLING','DANIEL SWAIN','TOKTIMER','RBA','BIG BESSENT','NEW LAKEMBA','JTPORTAL','MCMETRO','CEO OF COAL','INKDIN','HORMUZ','PYONGYANG UNIVERSITY','LOW CORTISOL'];
+function codeSlug(s){return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
+function codeLabel(slug){const hit=BUZZWORDS.find(b=>codeSlug(b)===slug);return hit||slug}
+/* Typed codes are forgiving: case, spaces and punctuation are all ignored, and a
+   unique prefix of a buzzword is enough. */
+function matchBuzzword(input){
+ const s=codeSlug(input);
+ if(!s)return '';
+ if(BUZZWORDS.some(b=>codeSlug(b)===s))return s;
+ const hits=BUZZWORDS.filter(b=>codeSlug(b).startsWith(s));
+ return hits.length===1?codeSlug(hits[0]):s;
+}
+function genCode(){return codeSlug(BUZZWORDS[Math.floor(Math.random()*BUZZWORDS.length)])}
+function setNetStatus(msg,err){const el=$('netStatus');el.textContent=msg||'';el.className=err?'err':''}
+function cleanName(s){return String(s||'').replace(/[<>&"'`]/g,'').trim().slice(0,80)}
+function showFatal(msg){
+ Presence.clear();
+ const ov=document.createElement('div');ov.className='overlay';
+ const card=document.createElement('div');card.className='mcard';
+ card.innerHTML='<div class="mtitle">CONNECTION LOST</div><div class="mbody"><p>'+esc(msg)+'</p></div><div class="mopts"><button onclick="location.reload()">Reload</button></div>';
+ ov.appendChild(card);document.body.appendChild(ov);
+}
+
+/* ---- DEFAULT CLOUDFLARE DURABLE OBJECT RELAY ----
+   The deployed Worker URL is built in, so players do not need to configure it.
+   PeerJS remains available as a fallback transport if the relay is unavailable;
+   all players in a room must use the same transport. */
+const BIGCON_RELAY_URL='https://bigconhosting.wax-no-bones.workers.dev';
+function transportSettings(){
+ if(IS_DISCORD_ACTIVITY)return {mode:'cloudflare',url:'/relay'};
+ const mode=$('transportMode')?.value||'cloudflare';
+ try{localStorage.setItem('bigcon-transport-mode-v2',mode)}catch(_){}
+ return {mode,url:BIGCON_RELAY_URL.replace(/^https:/i,'wss:').replace(/^http:/i,'ws:').replace(/\/+$/,'')};
+}
+function loadTransportSettings(){
+ if(IS_DISCORD_ACTIVITY){const panel=$('transportSettings');if(panel)panel.style.display='none';return}
+ try{
+  const mode=localStorage.getItem('bigcon-transport-mode-v2')||'cloudflare';
+  if($('transportMode'))$('transportMode').value=mode;
+ }catch(_){}
+ const refresh=()=>{
+  const mode=$('transportMode')?.value||'cloudflare';
+  if($('relayHelp'))$('relayHelp').textContent=mode==='cloudflare'
+   ?'Using the built-in Cloudflare relay. No URL setup is needed.'
+   :'PeerJS / WebRTC direct or TURN fallback is active. Everyone joining the room must select the same connection system.';
+ };
+ $('transportMode')?.addEventListener('change',()=>{transportSettings();refresh()});
+ loadTransportSettings._refresh=refresh;refresh();
+}
+class RelayEvents{
+ constructor(){this.events={}}
+ on(name,fn){(this.events[name]||(this.events[name]=[])).push(fn);return this}
+ emit(name,...args){for(const fn of this.events[name]||[]){try{fn(...args)}catch(e){console.error(e)}}}
+}
+class CloudflareDataConnection extends RelayEvents{
+ constructor(peer,room,id,hostSide){super();this.peer=peer;this.room=room;this.id=id;this.hostSide=hostSide;this.open=false;this.__bigconClosed=false;this.__lastSeen=Date.now()}
+ send(data){if(!this.open||!this.peer.socket||this.peer.socket.readyState!==1)throw new Error('Relay connection is not open');this.peer.socket.send(JSON.stringify({type:'data',target:this.hostSide?this.id:'host',data}))}
+ close(){if(this.__bigconClosed)return;this.__bigconClosed=true;this.open=false;this.emit('close');if(this.peer.socket&&this.peer.socket.readyState===1)this.peer.socket.send(JSON.stringify({type:'leave',target:this.id}));}
+}
+class CloudflarePeer extends RelayEvents{
+ constructor(idOrOptions,maybeOptions){
+  super();this.id=typeof idOrOptions==='string'?idOrOptions:null;this.options=typeof idOrOptions==='string'?maybeOptions:idOrOptions;this.destroyed=false;this.disconnected=false;this.socket=null;this.connections=new Map();this.hostSide=!!this.id;
+  queueMicrotask(()=>{if(this.destroyed)return;if(this.hostSide)this._connectSocket(this.id.slice(PFX.length),'host');else this.emit('open','guest-'+crypto.randomUUID())});
+ }
+ _baseUrl(){
+  return transportSettings().url;
+ }
+ _connectSocket(room,role){
+  let base;try{base=this._baseUrl()}catch(e){this.emit('error',{type:'configuration',message:e.message});return}
+  const url=base.replace(/^https:/i,'wss:').replace(/^http:/i,'ws:')+'/ws/'+encodeURIComponent(room)+'?role='+role;
+  const ws=new WebSocket(url);this.socket=ws;
+  ws.addEventListener('open',()=>{if(this.destroyed){ws.close();return}ws.send(JSON.stringify({type:'join',role}));});
+  ws.addEventListener('message',ev=>{
+   let m;try{m=JSON.parse(ev.data)}catch(_){return}
+   if(m.type==='ready'){
+    if(role==='host'){this.emit('open',this.id);return}
+    const c=this.connections.get('outgoing');if(c&&!c.open){c.id=m.id;c.open=true;c.emit('open');}
+   }else if(m.type==='incoming'&&role==='host'){
+    const c=new CloudflareDataConnection(this,room,m.id,true);c.open=true;this.connections.set(m.id,c);this.emit('connection',c);c.emit('open');
+   }else if(m.type==='data'){
+    const c=role==='host'?this.connections.get(m.source):this.connections.get('outgoing');
+    if(c&&c.open){c.__lastSeen=Date.now();c.emit('data',m.data)}
+   }else if(m.type==='left'){
+    const c=role==='host'?this.connections.get(m.id):this.connections.get('outgoing');
+    if(c){c.open=false;c.__bigconClosed=true;c.emit('close');if(role==='host')this.connections.delete(m.id)}
+   }else if(m.type==='host_back'&&!this.hostSide){
+    const c=this.connections.get('outgoing');
+    if(c&&c.open){try{c.send({t:'hello',name:Net.myName,playerId:Net.playerId})}catch(_){}}
+   }else if(m.type==='error'){this.emit('error',{type:m.code||'network',message:m.message||'Cloudflare relay error'})}
+  });
+  let failureNotified=false;
+  ws.addEventListener('close',()=>{
+   if(this.destroyed)return;
+   this.disconnected=true;
+   for(const c of this.connections.values()){if(c.open){c.open=false;c.emit('close')}}
+   if(!failureNotified){failureNotified=true;if(this.hostSide)this.emit('disconnected');else this.emit('error',{type:'socket-closed',message:'Cloudflare relay connection closed'})}
+  });
+  ws.addEventListener('error',()=>{
+   if(this.destroyed||failureNotified)return;
+   failureNotified=true;
+   if(this.hostSide)this.emit('disconnected');
+   else this.emit('error',{type:'socket-error',message:'Cloudflare relay socket error'});
+  });
+ }
+ connect(target){
+  const room=String(target||'').startsWith(PFX)?String(target).slice(PFX.length):String(target||'');
+  const c=new CloudflareDataConnection(this,room,'outgoing',false);this.connections.set('outgoing',c);
+  try{this._connectSocket(room,'guest')}catch(e){queueMicrotask(()=>this.emit('error',{type:'configuration',message:e.message}))}
+  return c;
+ }
+ reconnect(){if(this.destroyed)return;this._connectSocket(this.id?this.id.slice(PFX.length):Net.roomCode,this.hostSide?'host':'guest')}
+ destroy(){this.destroyed=true;for(const c of this.connections.values())c.close();if(this.socket){try{this.socket.close()}catch(_){}}this.emit('close')}
+}
+function selectedPeerClass(){
+ const cfg=transportSettings();
+ if(cfg.mode!=='cloudflare')return Peer;
+ return CloudflarePeer;
+}
+
+/* ---- WEBRTC / ICE CONFIG ---- */
+/* Keep game traffic peer-to-peer. STUN discovers routes; TURN relays only when
+   a direct route is impossible. Several relays over UDP, TCP and TLS/443:
+   office firewalls and mobile carriers block different ones. */
+const BIGCON_ICE_CONFIG={
+ iceServers:[
+  {urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302','stun:global.stun.twilio.com:3478']},
+  {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478','turn:eu-0.turn.peerjs.com:3478?transport=tcp','turn:us-0.turn.peerjs.com:3478?transport=tcp'],username:'peerjs',credential:'peerjsp'},
+  {urls:['turns:eu-0.turn.peerjs.com:5349','turns:us-0.turn.peerjs.com:5349'],username:'peerjs',credential:'peerjsp'}
+ ],
+ sdpSemantics:'unified-plan',
+ iceCandidatePoolSize:4
+};
+const BIGCON_PEER_OPTIONS={config:BIGCON_ICE_CONFIG,debug:1,pingInterval:5000};
+// Tolerate short stalls on congested or filtered school networks.
+const HEARTBEAT_MS=5000,CONN_TIMEOUT_MS=35000;
+const PEER_REOPEN_BASE_MS=3500;
+let hostReopenTimer=null,hostReopenAttempt=0;
+function scheduleHostReopen(reason){
+ if(hostReopenTimer)return;
+ hostReopenAttempt++;
+ const delay=Math.min(20000,PEER_REOPEN_BASE_MS*Math.pow(2,Math.min(hostReopenAttempt-1,3)));
+ setNetStatus((reason||'Signalling connection interrupted')+' — retrying room registration in '+Math.ceil(delay/1000)+'s…',true);
+ hostReopenTimer=setTimeout(()=>{
+  hostReopenTimer=null;
+  if(Net.role==='host'&&Net.roomCode)hostOpenPeer();
+ },delay);
+}
+
+/* ---- HOST ---- */
+function hostCreate(name){
+ setNetStatus('Contacting the matchmaker…');
+ Net.role='host';Net.myName=name;Net.playerId=getPlayerId();Net.myIdx=0;Net.roster=[{name,playerId:Net.playerId,conn:null,char:null}];Net.conns=[null];
+ Net.roomCode=genCode();Net.roomLabel=codeLabel(Net.roomCode);
+ hostOpenPeer();
+ startHostHeartbeat();
+}
+function hostOpenPeer(){
+ if(hostReopenTimer){clearTimeout(hostReopenTimer);hostReopenTimer=null}
+ const code=Net.roomCode;
+ const old=Net.peer;
+ if(old&&!old.destroyed){try{old.destroy()}catch(_){}}
+ const p=new (selectedPeerClass())(PFX+code,BIGCON_PEER_OPTIONS);
+ Net.peer=p;
+ let opened=false;
+ p.on('open',()=>{
+  opened=true;
+  if(Net.peer!==p)return;
+  hostReopenAttempt=0;
+  $('btnCreate').disabled=false;
+  showLobby(true);
+  if(!Net.started)setNetStatus('Room created — seats up to 8. Waiting for co-conspirators…');
+ });
+ p.on('disconnected',()=>{
+  if(Net.peer!==p||p.destroyed)return;
+  try{p.reconnect()}catch(_){scheduleHostReopen('Signalling server disconnected')}
+ });
+ p.on('error',e=>{
+  const ty=e&&e.type;
+  if(Net.peer!==p)return;
+  if(ty==='unavailable-id'&&!opened&&!Net.started){try{p.destroy()}catch(x){}Net.roomCode=genCode();Net.roomLabel=codeLabel(Net.roomCode);hostReopenAttempt=0;hostOpenPeer();return}
+  if(ty==='unavailable-id'){scheduleHostReopen('Room ID is temporarily registered elsewhere');return}
+  if(ty==='network'||ty==='socket-error'||ty==='socket-closed'||ty==='server-error'){
+   // Back off rather than repeatedly destroying/recreating the peer in a tight loop.
+   scheduleHostReopen('Matchmaker error ('+ty+')');
+   return;
+  }
+  if(ty==='peer-unavailable')return;
+  setNetStatus('Network error: '+(ty||'unknown')+' — check your internet and try again.',true);
+ });
+ p.on('connection',c=>{
+  c.on('open',()=>{
+   c.__lastSeen=Date.now();
+   c.on('data',d=>{try{onHostData(c,d)}catch(err){console.error(err)}});
+  });
+  c.on('close',()=>onHostClose(c));
+  c.on('error',()=>onHostClose(c));
+ });
+}
+/* A quiet data channel is indistinguishable from a dead one, so the host keeps
+   pinging and drops seats that stop answering instead of stalling the table. */
+function startHostHeartbeat(){
+ clearInterval(Net.hbTimer);
+ Net.hbTimer=setInterval(()=>{
+  const now=Date.now();
+  for(let i=0;i<Net.conns.length;i++){
+   const c=Net.conns[i];
+   if(!c)continue;
+   if(!c.open){onHostClose(c);continue}
+   if(now-(c.__lastSeen||now)>CONN_TIMEOUT_MS){try{c.close()}catch(_){}onHostClose(c);continue}
+   try{c.send({t:'ping'})}catch(_){}
+  }
+ },HEARTBEAT_MS);
+}
+function onHostData(c,d){
+ if(!d||!d.t)return;
+ c.__lastSeen=Date.now();
+ if(d.t==='ping'){try{c.send({t:'pong'})}catch(_){}return}
+ if(d.t==='pong')return;
+ if(d.t==='hello'){handleHello(c,cleanName(d.name)||'Player',String(d.playerId||''));return}
+ if(d.t==='joinmode'){handleJoinMode(c,d);return}
+ if(d.t==='joinchar'){handleJoinChar(c,d);return}
+ if(d.t==='pick'){const pi=Net.conns.indexOf(c);if(pi>=0)applyChar(pi,d.char);return}
+ const pi=Net.conns.indexOf(c);
+ if(pi<0)return;
+ if(d.t==='logreq'){sendLogParts(c);return}
+ if(d.t==='intent'){applyIntent(pi,d)}
+ else if(d.t==='answer'){const pr=Net.pendingPrompts.get(d.pid);if(pr&&pr.pi===pi){Net.pendingPrompts.delete(d.pid);pr.res(d.v)}}
+ else if(d.t==='ack'){if(Net.acks&&Net.acks.eid===d.eid){Net.acks.set.delete(pi);if(!Net.acks.set.size){clearTimeout(Net.acks.timer);const r=Net.acks.res;Net.acks=null;r()}}}
+ else if(d.t==='chat'){if(S&&pi>=0)addChat(pi,String(d.text||'').slice(0,140))}
+ else if(d.t==='lchat'){if(!Net.started)addLobbyChat(pi,String(d.text||'').slice(0,140))}
+}
+/* The wire opens before the con does: chat runs in the lobby too, and whatever
+   was said there carries over into the game record. */
+function addLobbyChat(pi,text){
+ if(!text)return;
+ const e=Net.roster[pi];if(!e)return;
+ Net.lobbyChat.push({n:e.name,c:PCOLORS[pi%PCOLORS.length],t:text});
+ if(Net.lobbyChat.length>40)Net.lobbyChat.shift();
+ broadcastLobby();
+}
+function sendLobbyChat(){
+ const inp=$('lobbyChatInput');if(!inp)return;
+ const text=inp.value.trim().slice(0,140);
+ if(!text)return;
+ inp.value='';
+ if(Net.role==='host')addLobbyChat(0,text);
+ else if(Net.conn&&Net.conn.open)Net.conn.send({t:'lchat',text});
+}
+function renderLobbyChat(){
+ const box=$('lobbyChatList');if(!box)return;
+ const rows=Net.lobbyChat||[];
+ box.innerHTML=rows.map(c=>'<div><b style="color:'+c.c+'">'+esc(c.n)+':</b> '+esc(c.t)+'</div>').join('')||'<div style="opacity:.4;font-style:italic">— the wire is quiet —</div>';
+ box.scrollTop=box.scrollHeight;
+}
+function lobbyPlayers(){return (Net.role==='host'?Net.roster:(Net.lobbyPlayers||[])).map(e=>({name:e.name,char:e.char||null}))}
+function applyChar(idx,id){
+ if(!charMeta(id))return false;
+ if((Net.roster||[]).some((e,i)=>i!==idx&&e.char===id))return false;
+ if(!Net.roster[idx])return false;
+ Net.roster[idx].char=id;
+ broadcastLobby();
+ return true;
+}
+function renderCharGrid(){
+ const grid=$('charGrid');if(!grid)return;
+ const rows=Net.role==='host'?Net.roster:(Net.lobbyPlayers||[]);
+ const myIdx=Net.role==='host'?0:Net.myIdx;
+ const mine=rows[myIdx]&&rows[myIdx].char;
+ const taken=new Set(rows.filter((e,i)=>e.char&&i!==myIdx).map(e=>e.char));
+ grid.innerHTML=CHARS.map(c=>{
+  const on=mine===c.id,busy=taken.has(c.id),spect=Net.role==='host'&&rows[0]&&rows[0].bot;
+  return '<button type="button" class="charpick'+(on?' on':'')+(busy?' taken':'')+'" data-char="'+c.id+'" style="border-bottom:4px solid '+c.color+'" '+(busy?'disabled':'')+'>'
+   +'<img src="'+charSrc(c.id)+'" alt="">'
+   +'<div class="cn">'+esc(c.name)+(on?(spect?' · YOUR BOT':' · YOU'):'')+(busy?' · TAKEN':'')+'</div>'
+   +'<div class="ccolour"><span class="cswatch" style="background:'+c.color+'"></span>'+c.color.toUpperCase()+(on?' · YOUR COLOUR':'')+'</div></button>';
+ }).join('');
+}
+function handleHello(c,name,playerId){
+ const existing=playerId?Net.roster.findIndex(e=>e.playerId===playerId):-1;
+ if(existing>=0){
+  const old=Net.conns[existing];
+  if(old===c)return;
+  if(old&&old.open){c.send({t:'kick',reason:'This player is already connected in this room. Close the other tab before joining again.'});setTimeout(()=>{try{c.close()}catch(e){}},800);return;}
+  Net.roster[existing].conn=c;Net.conns[existing]=c;c.__bigconClosed=false;c.__lastSeen=Date.now();
+  if(Net.started&&S){
+   if(S.players[existing]){S.players[existing].dc=false;clearTimeout(Net.autoT);log('🔔 '+name+' reconnected to their existing seat.');c.send({t:'welcome',idx:existing,s:pubState(true)});sync(true);return}
+   /* a spectator row holds no seat at the table — back to the rail, not the door */
+   Net.roster[existing].spect=true;
+   c.send({t:'welcome',idx:existing,spect:true,s:pubState(true)});sync(true);return;
+  }
+  c.send({t:'welcome',idx:existing,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,boardLayout:Net.boardLayout||(Net.ringworld?'ringworld':'random'),ringworld:!!Net.ringworld,chat:Net.lobbyChat.slice(-40)});broadcastLobby();return;
+ }
+ if(Net.started&&S){
+  const idx=S.players.findIndex(pl=>pl.dc&&pl.name.toLowerCase()===name.toLowerCase());
+  if(idx>=0&&idx!==Net.myIdx){
+   Net.conns[idx]=c;S.players[idx].dc=false;c.__bigconClosed=false;c.__lastSeen=Date.now();
+   if(Net.roster[idx]){Net.roster[idx].conn=c;Net.roster[idx].playerId=playerId||Net.roster[idx].playerId}
+   log('🔔 '+name+' is back at the table.');
+   clearTimeout(Net.autoT);
+   c.send({t:'welcome',idx:idx,s:pubState(true)});
+   sync(true);return;
+  }
+  /* dead spectator rows are not seats — sweep them so rejoiners don't pile up */
+  for(let i=Net.roster.length-1;i>=S.players.length;i--){if(Net.roster[i]&&Net.roster[i].spect&&!Net.roster[i].conn)Net.roster.splice(i,1)}
+  Net.conns=Net.roster.map(e=>e.conn);
+  /* the con is already on, so the joiner chooses: a fresh seat dealt at
+     Quikstop, or the spectator rail. The host validates every step of it. */
+  c.__midjoin={name,playerId:playerId||crypto.randomUUID()};
+  c.send({t:'midjoin',over:!!S.over});
+  return;
+ }
+ joinLobby(c,name,playerId);
+}
+function joinLobby(c,name,playerId){
+ if(Net.roster.length>=MAXPLAYERS){c.send({t:'kick',reason:'Room is full (8 players).'});setTimeout(()=>{try{c.close()}catch(e){}},800);return}
+ if(Net.roster.some(e=>e.name.toLowerCase()===name.toLowerCase()))name=name+' ★';
+ Net.roster.push({name,playerId:playerId||crypto.randomUUID(),conn:c,char:null});
+ Net.conns=Net.roster.map(e=>e.conn);
+ c.__lastSeen=Date.now();
+ c.send({t:'welcome',idx:Net.roster.length-1,lobby:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,boardLayout:Net.boardLayout||(Net.ringworld?'ringworld':'random'),ringworld:!!Net.ringworld,chat:Net.lobbyChat.slice(-40)});
+ broadcastLobby();
+}
+/* Mid-con joiners: the game does not stop for them. A new player gets the
+   same deal every con starts with ($15, 2 Intel, standing at Quikstop); a
+   spectator gets the whole board read-only. Nothing is trusted from the wire —
+   the host re-validates the cap and the face on every step. */
+function midJoinReject(c,reason){c.send({t:'kick',reason});setTimeout(()=>{try{c.close()}catch(e){}},800)}
+function seatSpectator(c){
+ if(Net.roster.length>=MAXPLAYERS)return midJoinReject(c,'Room is full (8 players).');
+ const mj=c.__midjoin;if(!mj)return;delete c.__midjoin;
+ Net.roster.push({name:mj.name,playerId:mj.playerId,conn:c,char:null,spect:true});
+ Net.conns=Net.roster.map(e=>e.conn);
+ c.__bigconClosed=false;c.__lastSeen=Date.now();
+ log('👁 '+mj.name+' pulls up a chair — spectating the con.');
+ toast('👁 '+mj.name+' joined as a spectator.');
+ c.send({t:'welcome',idx:Net.roster.length-1,spect:true,s:pubState(true)});
+ sync(true);
+}
+function seatMidgamePlayer(c,char){
+ if(Net.roster.length>=MAXPLAYERS)return midJoinReject(c,'Room is full (8 players).');
+ if(!charMeta(char)||Net.roster.some(e=>e.char===char))return midJoinReject(c,'That face was just taken — join the room again to pick another.');
+ const mj=c.__midjoin;if(!mj)return;delete c.__midjoin;
+ const idx=Net.roster.length;
+ Net.roster.push({name:mj.name,playerId:mj.playerId,conn:c,char});
+ Net.conns=Net.roster.map(e=>e.conn);
+ c.__bigconClosed=false;c.__lastSeen=Date.now();
+ const meta=charMeta(char);
+ S.players.push({name:mj.name,color:meta.color||PCOLORS[idx%PCOLORS.length],char,money:15,intel:2,cortisol:0,raided:0,pos:'quik',visited:{quik:true},dc:false,bot:false});
+ log('🔔 '+mj.name+' joins the con — dealt in at Quikstop with $15 and 2 Intel.');
+ toast('🔔 '+mj.name+' joined — dealt in at Quikstop.');
+ c.send({t:'welcome',idx,s:pubState(true)});
+ sync(true);
+}
+function handleJoinMode(c,d){
+ const mj=c.__midjoin;if(!mj)return;
+ if(!Net.started||!S){delete c.__midjoin;joinLobby(c,mj.name,mj.playerId);return}
+ if(d.v!=='player'||S.over)return seatSpectator(c);
+ const taken=new Set(Net.roster.map(e=>e.char));
+ const free=CHARS.filter(ch=>!taken.has(ch.id));
+ if(!free.length)return seatSpectator(c);
+ c.send({t:'joinface',free:free.map(f=>f.id)});
+}
+function handleJoinChar(c,d){
+ const mj=c.__midjoin;if(!mj)return;
+ if(!Net.started||!S){delete c.__midjoin;joinLobby(c,mj.name,mj.playerId);return}
+ if(S.over)return seatSpectator(c);
+ seatMidgamePlayer(c,String(d.char||''));
+}
+function onHostClose(c){
+ if(c.__bigconClosed)return;
+ c.__bigconClosed=true;
+ const pi=Net.conns.indexOf(c);
+ if(pi<0)return;
+ if(!Net.started){
+  const nm=Net.roster[pi]?Net.roster[pi].name:'A player';
+  Net.roster.splice(pi,1);Net.conns=Net.roster.map(e=>e.conn);
+  broadcastLobby();setNetStatus(nm+' left the lobby.');
+  return;
+ }
+ if(Net.conns[pi]===c)Net.conns[pi]=null;
+ if(Net.roster[pi]&&Net.roster[pi].conn===c)Net.roster[pi].conn=null;
+ if(S&&!S.over&&S.players[pi]){
+  S.players[pi].dc=true;
+  log('🔕 '+pname(pi)+' lost connection — seat is being held.');
+  Net.pendingPrompts.forEach((p,pid)=>{if(p.pi===pi){Net.pendingPrompts.delete(pid);p.res(p.def)}});
+  if(Net.acks&&Net.acks.set.has(pi)){
+   Net.acks.set.delete(pi);
+   if(!Net.acks.set.size){clearTimeout(Net.acks.timer);const r=Net.acks.res;Net.acks=null;r()}
+  }
+  if(S.cur===pi&&(S.phase==='move'||S.phase==='action')){
+   clearTimeout(Net.autoT);
+   Net.autoT=setTimeout(()=>{
+    if(S&&!S.over&&S.cur===pi&&S.players[pi].dc){log('💤 '+pname(pi)+' is away — plays it quiet.');gain(pi,1,'away');endOfTurn()}
+   },20000);
+  }
+  sync(true);
+ }
+}
+/* Bots keep the lobby alive: a rate-limited ambient line in their own
+   character's voice. Cosmetic only (the lobby is pre-game), so Date.now and
+   Math.random are fine here — none of it touches the game's streams. */
+function lobbyChatter(){
+ if(Net.role!=='host'||Net.started||!Net.roster||Net.roster.length<2)return;
+ const now=Date.now();
+ if(Net.lobbyChatAt&&now-Net.lobbyChatAt<20000)return;
+ const bots=Net.roster.map((e,i)=>({e,i})).filter(x=>x.e&&x.e.bot&&x.e.char);
+ if(!bots.length)return;
+ Net.lobbyChatAt=now;
+ const pick=bots[Math.floor(Math.random()*bots.length)];
+ const line=botLobbyLine(pick.e.char);
+ if(line)addLobbyChat(pick.i,line);
+}
+/* Ambient chatter must not depend on somebody clicking: a self-rescheduling
+   chain keeps the room murmuring while it is open, and stops with the con
+   (or with the host leaving). The virtual clock runs it in tests. */
+function startLobbyChatter(){
+ if(Net.role!=='host'||Net.started||Net.lobbyChatT)return;
+ Net.lobbyChatT=setTimeout(function tick(){
+  Net.lobbyChatT=null;
+  if(Net.role!=='host'||Net.started)return;
+  lobbyChatter();
+  startLobbyChatter();
+ },20000);
+}
+function broadcastLobby(){
+ sendAll({t:'lobby',players:lobbyPlayers(),goal:clampGoal(Net.goal),dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,boardLayout:Net.boardLayout||(Net.ringworld?'ringworld':'random'),ringworld:!!Net.ringworld,chat:Net.lobbyChat.slice(-40)});
+ renderLobbyList();renderLobbyChat();
+ lobbyChatter();
+ startLobbyChatter();
+ const n=Net.roster.length;
+ const ready=n>=1&&Net.roster.every(e=>e.char);
+ const allBots=n>=1&&Net.roster.every(e=>e.bot);
+ $('btnStart').disabled=!ready;
+ $('btnStart').textContent=!ready?(n<1?'START THE CON (need a player)':'START THE CON (everyone pick a face)'):
+  (allBots?'START THE CON — ALL-BOT TABLE ('+n+(n===1?' BOT':' BOTS')+' · YOU WATCH)':n===1?'START SOLO TEST — 1 PLAYER':n>=MAXPLAYERS?'START THE CON — FULL TABLE (8/8)':
+  'START THE CON — '+n+' PLAYERS · '+(MAXPLAYERS-n)+' SEATS OPEN');
+}
+function renderLobbyList(){
+ const c=$('lobbyList');if(!c)return;
+ const rows=Net.role==='host'?Net.roster:(Net.lobbyPlayers||[]);
+ c.innerHTML=rows.map((e,i)=>{
+  const face=charSrc(e.char);
+  const who=Net.role==='host'?(e.bot?(i===0?'🤖 BOT · HOST SPECTATES':'🤖 BOT'):(i===0?'HOST · YOU':'CONNECTED')):(i===Net.myIdx?'YOU':'CONNECTED');
+  return '<div class="lrow" style="border-left:4px solid '+((charMeta(e.char)||{}).color||PCOLORS[i%PCOLORS.length])+'">'+(face?'<img class="pface" src="'+face+'" alt="" style="border-color:'+((charMeta(e.char)||{}).color||PCOLORS[i%PCOLORS.length])+'">':'<span class="ld" style="background:'+PCOLORS[i%PCOLORS.length]+'"></span>')
+   +'<span class="ln">'+(i+1)+'. '+esc(e.name)+(e.char?' · '+esc((charMeta(e.char)||{}).name||''):' · pick a face')+'</span><span class="lh">'+who+(Net.role==='host'&&e.bot&&i>0?' <button class="botbtn" data-kickbot="'+i+'" title="Send this bot home">✕</button>':'')+'</span></div>';
+ }).join('')
+  +'<div class="lrow" style="background:transparent;border:1px dashed #168388;color:#9ad;font-size:12px"><span class="ln">'+rows.length+' of 8 seats filled</span>'
+  +(Net.role==='host'&&rows.length<MAXPLAYERS?'<button class="botbtn" id="btnAddBot" style="margin-left:8px;cursor:pointer;background:#000;border:1px solid #168388;color:#9ad;padding:2px 10px;font:inherit">🤖 ADD A BOT — FILLS THE NEXT EMPTY SEAT</button>':'')
+  +(Net.role==='host'&&!Net.started?'<button class="botbtn" id="btnSpectate" style="margin-left:8px;cursor:pointer;background:#000;border:1px solid #168388;color:#9ad;padding:2px 10px;font:inherit">'+(rows[0]&&rows[0].bot?'🙋 TAKE MY SEAT BACK — I’LL PLAY':'🤖 SPECTATE — LET A BOT PLAY MY SEAT')+'</button>':'')
+  +'</div>';
+ renderCharGrid();
+ const meIdx=Net.role==='host'?0:Net.myIdx;
+ Presence.lobby(Net.role==='host',Net.roomLabel||Net.roomCode,rows.length,MAXPLAYERS,rows[meIdx]&&rows[meIdx].char);
+}
+/* ---- BOTS (host lobby) ----
+   A bot is a roster entry with bot:true and no connection. It picks a free
+   face immediately so the start button unlocks, plays through the same
+   applyIntent gate as everyone else, and never counts as connected. */
+function botLobbyLine(charId){
+  try{const b=window.BigConBots;return b&&b.lobbyLine?b.lobbyLine(charId):null}catch(e){return null}
+}
+function addBotSeat(){
+ if(Net.role!=='host'||!Net.roster)return;
+ if(Net.roster.length>=MAXPLAYERS){toast('The table is full — no seat for a bot.');return}
+ const used=new Set(Net.roster.map(e=>e.char));
+ const free=CHARS.filter(ch=>!used.has(ch.id));
+ if(!free.length){toast('Every face is already at the table.');return}
+ /* the lobby is cosmetic — Math.random is fine here and keeps every table
+    from being the same four faces in roster order */
+ const pick=free[Math.floor(Math.random()*free.length)];
+ const n=Net.roster.filter(e=>e.bot).length+1;
+ Net.roster.push({name:'BOT '+(pick.name||pick.id).toUpperCase(),playerId:'bot'+n+'-'+pick.id,conn:null,char:pick.id,bot:true});
+ broadcastLobby();
+ const line=botLobbyLine(pick.id);
+ if(line)addLobbyChat(Net.roster.length-1,line);
+}
+function kickBotSeat(i){
+ if(Net.role!=='host'||!Net.roster||!Net.roster[i]||!Net.roster[i].bot||i===0)return;
+ Net.roster.splice(i,1);broadcastLobby();
+}
+/* Spectator host: hand your OWN seat to a bot and watch the con unfold. The
+   roster row stays at index 0 — the relay's seat — it just plays itself
+   through the same bot policy as every other bot. Your name, player id and
+   face are kept aside so you can take the seat back before the start. */
+function toggleSpectate(){
+ if(Net.role!=='host'||!Net.roster||!Net.roster.length||Net.started)return;
+ const me=Net.roster[0];
+ if(me.bot){
+  const back=me.spectated||{};
+  const used=new Set(Net.roster.slice(1).map(e=>e.char).filter(Boolean));
+  Net.roster[0]={name:back.name||'HOST',playerId:back.playerId||Net.playerId||'host',conn:null,char:(back.char&&!used.has(back.char))?back.char:null,bot:false};
+ }else{
+  const used=new Set(Net.roster.slice(1).map(e=>e.char).filter(Boolean));
+  const pick=(me.char&&!used.has(me.char))?CHARS.filter(ch=>ch.id===me.char)[0]||null:CHARS.filter(ch=>!used.has(ch.id))[0];
+  if(!pick){toast('Every face is already at the table — send a bot home first.');return}
+  Net.roster[0]={name:'BOT '+(pick.name||pick.id).toUpperCase(),playerId:'spectator-'+pick.id,conn:null,char:pick.id,bot:true,spectated:{name:me.name,playerId:me.playerId,char:me.char}};
+ }
+ broadcastLobby();
+}
+/* ---- GUEST ---- */
+let guestReconnectTimer=null;
+let guestReconnectAttempt=0;
+let guestTransportToken=0;
+let guestReconnectStopped=false;
+
+function clearGuestReconnect(){
+ if(guestReconnectTimer){clearTimeout(guestReconnectTimer);guestReconnectTimer=null}
+}
+
+function guestReconnectDelay(){
+ // Exponential backoff with a cap avoids retry storms on filtered Wi-Fi.
+ return Math.min(15000,1200*Math.pow(2,Math.min(Math.max(0,guestReconnectAttempt-1),4)));
+}
+
+function guestConnectionLost(token){
+ if(token!==guestTransportToken||guestReconnectStopped)return;
+ clearGuestReconnect();
+ guestReconnectAttempt++;
+ const attempt=guestReconnectAttempt;
+ const delay=guestReconnectDelay();
+ stopGuestHeartbeat();
+ console.warn('[BigCon] connection lost; scheduling retry',{attempt,delayMs:delay,room:Net.roomCode,stage:Net.begun?'game':'lobby'});
+ setNetStatus((Net.begun?'Connection lost':'Lost the lobby connection')+' — reconnecting ('+attempt+') in '+Math.ceil(delay/1000)+'s…',true);
+ guestReconnectTimer=setTimeout(()=>{
+  guestReconnectTimer=null;
+  if(token!==guestTransportToken||guestReconnectStopped)return;
+  connectGuestTransport(true);
+ },delay);
+}
+
+function connectGuestTransport(isRetry){
+ const token=++guestTransportToken;
+ const name=Net.myName;
+ const code=Net.roomCode;
+ const oldPeer=Net.peer;
+ if(oldPeer&&!oldPeer.destroyed){
+  try{oldPeer.destroy()}catch(_){}
+ }
+ const p=new (selectedPeerClass())(BIGCON_PEER_OPTIONS);
+ Net.peer=p;
+ p.on('open',()=>{
+  if(token!==guestTransportToken||guestReconnectStopped)return;
+  const c=p.connect(PFX+code,{reliable:true,serialization:'json'});
+  Net.conn=c;
+  let connectionOpened=false;
+  const connectionTimeout=setTimeout(()=>{
+   if(!connectionOpened&&token===guestTransportToken&&!guestReconnectStopped){
+    console.warn('[BigCon] Data connection timed out; retrying', {code, token});
+    try{c.close()}catch(_){}
+    guestConnectionLost(token);
+   }
+  },30000);
+  c.on('open',()=>{
+   connectionOpened=true;
+   clearTimeout(connectionTimeout);
+   if(token!==guestTransportToken||guestReconnectStopped)return;
+   guestReconnectAttempt=0;
+   c.__bigconClosed=false;
+   c.send({t:'hello',name,playerId:Net.playerId});
+   setNetStatus('Connected — '+(isRetry?'rejoining':'joining')+' “'+codeLabel(code)+'”…');
+   startGuestHeartbeat(token);
+  });
+  c.on('data',d=>{
+   if(token!==guestTransportToken||guestReconnectStopped)return;
+   Net.lastSeen=Date.now();
+   try{onGuestData(d)}catch(err){console.error(err)}
+  });
+  c.on('close',()=>guestConnectionLost(token));
+  c.on('error',()=>guestConnectionLost(token));
+ });
+ p.on('disconnected',()=>{
+  if(token!==guestTransportToken||guestReconnectStopped)return;
+  try{p.reconnect()}catch(_){guestConnectionLost(token)}
+ });
+ p.on('error',e=>{
+  if(token!==guestTransportToken||guestReconnectStopped)return;
+  const ty=e&&e.type;
+  if(ty==='peer-unavailable'){
+   /* the host may just be re-registering with the matchmaker — keep trying a while */
+   if(Net.begun||guestReconnectAttempt<5)guestConnectionLost(token);
+   else {setNetStatus('Room “'+codeLabel(code)+'” not found yet — retrying in case the host is reconnecting.',true);guestConnectionLost(token)}
+  }else if(ty==='network'||ty==='socket-error'||ty==='socket-closed'||ty==='server-error'||ty==='unavailable-id'){
+   guestConnectionLost(token);
+  }else{
+   setNetStatus('Network error: '+(ty||'unknown')+'.',true);
+  }
+ });
+}
+
+/* The guest watches the wire too: silence for CONN_TIMEOUT_MS means the link is
+   gone even when the browser never fires 'close'. */
+function stopGuestHeartbeat(){clearInterval(Net.hbTimer);Net.hbTimer=null}
+function startGuestHeartbeat(token){
+ stopGuestHeartbeat();
+ Net.lastSeen=Date.now();
+ Net.hbTimer=setInterval(()=>{
+  if(token!==guestTransportToken||guestReconnectStopped){stopGuestHeartbeat();return}
+  const c=Net.conn;
+  if(!c||!c.open){guestConnectionLost(token);return}
+  if(Date.now()-Net.lastSeen>CONN_TIMEOUT_MS){try{c.close()}catch(_){}guestConnectionLost(token);return}
+  try{c.send({t:'ping'})}catch(_){guestConnectionLost(token)}
+ },HEARTBEAT_MS);
+}
+
+function guestJoin(name,code){
+ clearGuestReconnect();
+ guestReconnectStopped=false;
+ guestReconnectAttempt=0;
+ setNetStatus('Contacting the matchmaker…');
+ Net.role='guest';Net.myName=name;Net.playerId=getPlayerId();Net.roomCode=code;Net.roomLabel=codeLabel(code);
+ connectGuestTransport(false);
+}
+
+function onGuestData(d){
+ if(!d||!d.t)return;
+ switch(d.t){
+  case 'ping':if(Net.conn&&Net.conn.open){try{Net.conn.send({t:'pong'})}catch(_){}}break;
+  case 'pong':break;
+  case 'welcome':
+   Net.myIdx=d.idx;Net.spect=!!d.spect;
+   if(d.lobby)Net.lobbyPlayers=d.lobby;
+   if(d.chat)Net.lobbyChat=d.chat;
+   if(d.goal)setGoalUI(d.goal);
+   if(d.dlcGeo!==undefined)setGeoUI(!!d.dlcGeo);
+   if(d.fogOfWar!==undefined)setFogUI(!!d.fogOfWar);
+   if(d.boardLayout!==undefined)setBoardLayout(d.boardLayout);else if(d.ringworld!==undefined)setBoardLayout(d.ringworld?'ringworld':'random');
+   if(d.s){S=null;adoptState(d.s);Net.begun=true;enterGame()}
+   else showLobby(false);
+   break;
+  case 'lobby':
+   Net.lobbyPlayers=d.players||[];
+   Net.lobbyChat=d.chat||[];
+   renderLobbyChat();
+   if(d.goal)setGoalUI(d.goal);
+   if(d.dlcGeo!==undefined)setGeoUI(!!d.dlcGeo);
+   if(d.fogOfWar!==undefined)setFogUI(!!d.fogOfWar);
+   if(d.boardLayout!==undefined)setBoardLayout(d.boardLayout);else if(d.ringworld!==undefined)setBoardLayout(d.ringworld?'ringworld':'random');
+   renderLobbyList();
+   break;
+  case 'begin':S=null;Net.spect=false;adoptState(d.s);if(d.idx!=null)Net.myIdx=d.idx;Net.begun=true;enterGame();break;
+  case 'state':adoptState(d.s);scheduleRender();break;
+  case 'logpart':adoptLogPart(d);break;
+  case 'prompt':modal({title:d.title,html:d.html,body:d.body,options:d.options}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'answer',pid:d.pid,v})});break;
+  case 'event':modal({title:d.title,html:d.html,options:[{label:'Continue',v:1}]});break;
+  case 'midjoin':modal({title:'THE CON IS ALREADY ON',body:d.over?'The table just wrapped up. Take the spectator rail — when the host deals the next con, you are in it.':'The table is mid-heist. You can deal in fresh at Quikstop — $15 and 2 Intel, the same stake every con starts with — or take the spectator rail and just watch.',options:d.over?[{label:'👁 WATCH AS A SPECTATOR',v:'spect'}]:[{label:'🎲 DEAL ME IN AT QUIKSTOP',v:'player'},{label:'👁 SPECTATE — JUST WATCHING',v:'spect'}]}).then(v=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'joinmode',v:v||'spect'})});break;
+  case 'joinface':modal({title:'PICK YOUR FACE',body:'Every free face at the table. Pick who you are for this con.',options:(d.free||[]).map(id=>{const m=charMeta(id);return{label:m?m.name:id,v:id}})}).then(id=>{if(Net.conn&&Net.conn.open)Net.conn.send({t:'joinchar',char:id})});break;
+  case 'tolobby':S=null;Net.begun=false;Net.spect=false;if(d.idx!=null)Net.myIdx=d.idx;showLobby(false);break;
+  case 'sys':toast(d.msg);break;
+  case 'reload':location.reload();break;
+  case 'kick':guestReconnectStopped=true;clearGuestReconnect();stopGuestHeartbeat();showFatal(d.reason||'Kicked from room.');break;
+ }
+}
+function enterGame(){
+ $('setup').style.display='none';$('app').style.display='flex';document.body.classList.add('game-open');
+ resetBoardView();
  render();
 }
 
