@@ -1118,7 +1118,7 @@ function generateRingworldBoard(){
  const inner=rings[2];
  for(let k=0;k<4;k++)add('quik',inner[Math.floor(k*inner.length/4)]);
  EDGES=edges;rebuildAdj();
- return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n. y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
+ return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
 }
 function initGame(defs){
  Net.gameEpoch=(Net.gameEpoch||0)+1;
@@ -3234,6 +3234,8 @@ function showLobby(asHost){
  if(gt)gt.onchange=()=>{if(Net.role!=='host'){gt.checked=Net.dlcGeo;toast('The host decides whether the Geography DLC is played.');return}setGeoUI(gt.checked);broadcastLobby()};
  const ft=$('fogToggle');
  if(ft)ft.onchange=()=>{if(Net.role!=='host'){ft.checked=Net.fogOfWar;toast('The host decides whether Fog of War is enabled.');return}setFogUI(ft.checked);broadcastLobby()};
+ const layout=$('boardLayoutSelect');
+ if(layout)layout.onchange=()=>{if(Net.role!=='host'){setRingworldUI(Net.ringworld);toast('The host decides which board layout is played.');return}setRingworldUI(layout.value==='ringworld');broadcastLobby()};
 })();
  $('btnCopy').onclick=()=>{
  const code=Net.roomLabel||Net.roomCode||'';
