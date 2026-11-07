@@ -83,6 +83,10 @@ Blueprint** (Dashboard -> New -> Blueprint, pointing at this repo; its service
 second site). Do one or the other, not both. Note that a Blueprint sync leaves
 existing dashboard headers/routes that are not in the file untouched.
 
+### Local development
+
+`index.html` can still be opened straight from the repo root (the `BUILD_COMMIT` there is the placeholder `dev`). The Discord SDK bundle is **not** committed any more; to try the Discord Activity code path from the repo root run `npm run build:sdk` once (writes the git-ignored `static/discord-sdk.bundle.js`), or just serve `dist/`.
+
 ### Tests
 
 ```sh

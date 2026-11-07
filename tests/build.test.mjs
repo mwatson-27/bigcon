@@ -185,3 +185,11 @@ test('render.yaml describes a static site that publishes dist/ with cache header
   assert.match(y, /path:\s*\/\*\*\/\*\.js[\s\S]*?public, max-age=31536000, immutable/);
   assert.match(y, /path:\s*\/\*\*\/\*\.css[\s\S]*?public, max-age=31536000, immutable/);
 });
+
+test('the SDK bundle is a build artifact: not committed, git-ignored, and not required at the repo root', () => {
+  const ignore = fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf8');
+  assert.match(ignore, /^dist\/$/m);
+  assert.match(ignore, /^static\/discord-sdk\.bundle\.js$/m);
+  assert.ok(!fs.existsSync(path.join(repoRoot, '.github/workflows/check-build-commit.yml')));
+  assert.ok(!fs.existsSync(path.join(repoRoot, '.github/workflows/build-discord-sdk.yml')));
+});

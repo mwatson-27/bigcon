@@ -47,8 +47,8 @@ test('the game is one module entry; only PeerJS and the BUILD_COMMIT stamp are c
   assert.deepEqual(moduleEntries(), ['static/js/main.js']);
 });
 
-test('BUILD_COMMIT stays inline in index.html for the CI stamp check; modules read it as a free identifier', () => {
-  assert.match(HTML, /const BUILD_COMMIT = '[0-9a-f]{7}';/);
+test('BUILD_COMMIT stays inline in index.html as a placeholder the build stamps; modules read it as a free identifier', () => {
+  assert.match(HTML, /const BUILD_COMMIT = 'dev';/);
   assert.equal(INLINE_SCRIPTS.filter(s => /const BUILD_COMMIT\b/.test(s)).length, 1);
   assert.equal(GAME_MODULES.filter(m => /const BUILD_COMMIT\b/.test(m.text)).length, 0, 'no module re-declares it');
   assert.ok(byFile.get('static/js/core.js').text.includes("typeof BUILD_COMMIT==='string'"), 'core.js reads it defensively');
