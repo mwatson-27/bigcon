@@ -2648,6 +2648,24 @@ function loadTransportSettings(){
  $('transportMode')?.addEventListener('change',()=>{transportSettings();refresh()});
  loadTransportSettings._refresh=refresh;refresh();
 }
+/* Host secret: proves to the relay that we are the host that claimed this room,
+   so nobody who merely knows the room code can take over the host slot (e.g.
+   while the real host reconnects). One random secret per hosted room, kept in
+   sessionStorage so a page refresh/reconnect reuses it, with an in-memory
+   fallback when storage is unavailable. It is sent in the websocket "join"
+   message, never in the URL, so it stays out of request logs. */
+const hostSecretMem=new Map();
+function hostSecretFor(room){
+ const key='bigcon-host-secret-'+room;
+ let s=hostSecretMem.get(room);
+ if(!s){try{const v=sessionStorage.getItem(key);if(v&&/^[0-9a-f]{64}$/.test(v))s=v}catch(_){}}
+ if(!s){const b=new Uint8Array(32);crypto.getRandomValues(b);s=Array.from(b,x=>x.toString(16).padStart(2,'0')).join('')}
+ hostSecretMem.set(room,s);
+ try{sessionStorage.setItem(key,s)}catch(_){}
+ return s;
+}
+/* Relay errors after which retrying with the same secret cannot help. */
+const RELAY_FATAL_HOST_ERRORS=['room-claimed','host-secret-required'];
 class RelayEvents{
  constructor(){this.events={}}
  on(name,fn){(this.events[name]||(this.events[name]=[])).push(fn);return this}
@@ -2670,7 +2688,7 @@ class CloudflarePeer extends RelayEvents{
   let base;try{base=this._baseUrl()}catch(e){this.emit('error',{type:'configuration',message:e.message});return}
   const url=base.replace(/^https:/i,'wss:').replace(/^http:/i,'ws:')+'/ws/'+encodeURIComponent(room)+'?role='+role;
   const ws=new WebSocket(url);this.socket=ws;
-  ws.addEventListener('open',()=>{if(this.destroyed){ws.close();return}ws.send(JSON.stringify({type:'join',role}));});
+  ws.addEventListener('open',()=>{if(this.destroyed){ws.close();return}ws.send(JSON.stringify(role==='host'?{type:'join',role,secret:hostSecretFor(room)}:{type:'join',role}));});
   ws.addEventListener('message',ev=>{
    let m;try{m=JSON.parse(ev.data)}catch(_){return}
    if(m.type==='ready'){
@@ -2687,7 +2705,15 @@ class CloudflarePeer extends RelayEvents{
    }else if(m.type==='host_back'&&!this.hostSide){
     const c=this.connections.get('outgoing');
     if(c&&c.open){try{c.send({t:'hello',name:Net.myName,playerId:Net.playerId})}catch(_){}}
-   }else if(m.type==='error'){this.emit('error',{type:m.code||'network',message:m.message||'Cloudflare relay error'})}
+   }else if(m.type==='error'){
+    if(role==='host'){
+     // The relay closes the socket right after an error. Report the error once and
+     // skip the generic 'disconnected' path, which would reconnect immediately.
+     failureNotified=true;
+     if(RELAY_FATAL_HOST_ERRORS.includes(m.code))this.fatal=true;
+    }
+    this.emit('error',{type:m.code||'network',message:m.message||'Cloudflare relay error'});
+   }
   });
   let failureNotified=false;
   ws.addEventListener('close',()=>{
@@ -2709,7 +2735,7 @@ class CloudflarePeer extends RelayEvents{
   try{this._connectSocket(room,'guest')}catch(e){queueMicrotask(()=>this.emit('error',{type:'configuration',message:e.message}))}
   return c;
  }
- reconnect(){if(this.destroyed)return;this._connectSocket(this.id?this.id.slice(PFX.length):Net.roomCode,this.hostSide?'host':'guest')}
+ reconnect(){if(this.destroyed||this.fatal)return;this._connectSocket(this.id?this.id.slice(PFX.length):Net.roomCode,this.hostSide?'host':'guest')}
  destroy(){this.destroyed=true;for(const c of this.connections.values())c.close();if(this.socket){try{this.socket.close()}catch(_){}}this.emit('close')}
 }
 function selectedPeerClass(){
@@ -2778,9 +2804,23 @@ function hostOpenPeer(){
  p.on('error',e=>{
   const ty=e&&e.type;
   if(Net.peer!==p)return;
+  if(RELAY_FATAL_HOST_ERRORS.includes(ty)){
+   // Another host holds this room's claim (or the relay wants a secret we can't
+   // supply). Retrying can't help, so stop for good instead of reconnecting.
+   if(hostReopenTimer){clearTimeout(hostReopenTimer);hostReopenTimer=null}
+   clearInterval(Net.hbTimer);
+   try{p.destroy()}catch(x){}
+   const label=Net.roomLabel||Net.roomCode;
+   const msg=ty==='room-claimed'
+    ?'Room code '+label+' is already claimed by another host. Pick another code: press Create Room again for a new one. (A claimed code frees up after its room has been empty for 10 minutes.)'
+    :((e&&e.message)||'The relay refused this host.');
+   if(opened||Net.started)showFatal(msg);
+   else{$('btnCreate').disabled=false;setNetStatus(msg,true)}
+   return;
+  }
   if(ty==='unavailable-id'&&!opened&&!Net.started){try{p.destroy()}catch(x){}Net.roomCode=genCode();Net.roomLabel=codeLabel(Net.roomCode);hostReopenAttempt=0;hostOpenPeer();return}
   if(ty==='unavailable-id'){scheduleHostReopen('Room ID is temporarily registered elsewhere');return}
-  if(ty==='network'||ty==='socket-error'||ty==='socket-closed'||ty==='server-error'){
+  if(ty==='network'||ty==='socket-error'||ty==='socket-closed'||ty==='server-error'||ty==='host-taken'){
    // Back off rather than repeatedly destroying/recreating the peer in a tight loop.
    scheduleHostReopen('Matchmaker error ('+ty+')');
    return;
