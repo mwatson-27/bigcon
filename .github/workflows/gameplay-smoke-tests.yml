@@ -9,9 +9,17 @@ jobs:
   node-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci --no-audit --no-fund
-      - run: node --test tests/*.test.mjs
+      - name: Install dependencies (including dev, as on Render)
+        run: npm ci --include=dev --no-audit --no-fund
+      - name: Run tests
+        run: node --test tests/*.test.mjs
+      - name: Build (as on Render)
+        run: npm run build
+      - name: Sanity-check build output
+        run: test -f dist/index.html && ls dist/static/fonts/*.woff2
