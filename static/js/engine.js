@@ -84,7 +84,7 @@ export function raid(i){
  if(seized.length)log('🚨 REGULATOR RAID! '+pname(i)+' is stripped of '+seized.map(n=>n.name.join(' ')).join(' and ')+' — cameras everywhere.');
  else log('🚨 REGULATOR RAID! '+pname(i)+' owns nothing worth seizing — the regulators take it out of the accounts instead.');
  Object.keys(S.bugs).forEach(id=>{if(S.bugs[id]===i)delete S.bugs[id]});
- const fine=Math.max(5,Math.floor(p.money*0.3));
+ const fine=Math.min(p.money,Math.max(5,Math.floor(p.money*0.3)));
  payVoid(i,fine,'the enforcement penalty');
  if(p.intel>1){const lost=p.intel-1;p.intel=1;log('🛈 '+pname(i)+' loses '+lost+' Intel — every contact stops answering.');fxAt(i,'🛈−'+lost,'#55c1ff')}
  p.raided=1;
@@ -515,7 +515,7 @@ export async function applyIntent(pi,m){
    p.money-=4;fxAt(pi,'−$4','#ff6b5e');S.geoBoeing=true;
    S.qantasGroundUntil=S.turn+2;
    const qn=NMAP.qantas;fx(qn.x,qn.y-70,'🛫 GROUNDED','#ff6b5e');
-   log('🛩️ '+pname(pi)+' parks THE CORPORATE BOEING on the runway — QANTAS is grounded for two full turns: no jet for anyone, no income for its owner.');
+   log('🛩️ '+pname(pi)+' parks THE CORPORATE BOEING on the runway — QANTAS is grounded until the end of next round: nobody can fly or walk in, and it pays its owner nothing.');
    await finishNodeAbility(pi);
   }
   else if(act==='oilcrash'&&abilityPhase(pi)&&S.dlcGeo&&!S.mode&&S.owner.geo_scs===pi&&p.money>=3&&!S.geoCrash){
@@ -552,7 +552,7 @@ export async function applyIntent(pi,m){
    p.money-=2;fxAt(pi,'−$2','#ff6b5e');
    S.geoVenice=true;S.ov={nid:m.id,by:pi,targetOwner:o,expiresAt:S.turn*S.players.length+S.cur+S.players.length};S.mode=null;
    fx(n.x,n.y-60,'🛳️ OVERTOURISM','#e19bff');
-   log('🛳️ '+pname(pi)+' sends the cruise ships to '+n.name.join(' ')+' — OVERTOURISM: '+pname(o)+' takes +1 Cortisol at each of their turns while the ships keep coming.');
+   log('🛳️ '+pname(pi)+' sends the cruise ships to '+n.name.join(' ')+' — OVERTOURISM: '+pname(o)+' takes +1 Cortisol on their next turn.');
    await finishNodeAbility(pi);
   }
   else if(act==='blockmode'&&S.phase==='action'&&!S.mode&&S.owner.albo===pi&&!S.blockadeUsed){S.mode='blockade';sync()}
@@ -561,7 +561,7 @@ export async function applyIntent(pi,m){
    if(!n||S.rubble[m.id]||blockaded(m.id)){sysTo(pi,'That node is rubble or already walled off.');S.mode=null;sync();return}
    S.blockades[m.id]=S.turn+2;S.blockadeUsed=true;S.mode=null;
    fx(n.x,n.y-64,'🚧 BLOCKADED','#f5c542');
-   log('🚧 '+pname(pi)+' walls off '+n.name.join(' ')+' — BLOCKADED for one full rotation: nobody walks in, nobody lands, not even '+pname(pi)+'.');
+   log('🚧 '+pname(pi)+' walls off '+n.name.join(' ')+' — BLOCKADED until the end of next round: nobody walks in, nobody lands, not even '+pname(pi)+'.');
    await finishNodeAbility(pi);
   }
   /* ---- INTEL OPS ---- */
@@ -897,11 +897,11 @@ export function monopolyAlertFace(sub,asic){const img=asic?'./static/asic.png':'
 export function cardFace(c){if(c.id==='crackdown')return monopolyAlertFace(c.text);return '<div class="eventcard"><div class="eicon">'+c.icon+'</div><div class="etitle">'+c.title+'</div><div class="etext">'+c.text+'</div></div>'}
 /* ================= MARKET EVENT DECK (24 cards) — every card moves the mood ================= */
 export const CARDS=[
-{id:'oilspike',icon:'🛢️',title:'OIL SPIKES — WTI +12%',text:'Crude goes vertical. The pit pays out, the tankers get rich, and everyone pays at the pump.',
+{id:'oilspike',icon:'🛢️',title:'OIL SPIKES — WTI +12%',text:'Crude goes vertical. The pit pays out, the tankers get rich, and everyone but the QuikStop owner pays $1 at the pump.',
  run(){setMood('BOOM','WTI +12% — crude goes vertical');[['oil',6,'crude windfall'],['oilgraph',2,'the graph called it'],['tanker',3,'tankers rechartered at panic rates'],['petronas',3,'the national oil company'],['barrels',2,'the barrel yard']].forEach(a=>{const o=S.owner[a[0]];if(o!=null)gain(o,a[1],a[2])});const q=S.owner.quik;S.players.forEach((pl,i)=>{if(i===q)return;if(q==null)payVoid(i,1,'fuel costs — nobody minds the till');else payTo(i,1,q,'fuel costs → QuikStop')});}},
 {id:'coalrush',icon:'🚃',title:'COAL RUSH',text:'Demand for black rock goes nuclear. Everything on rails and water makes money.',
  run(){setMood('BOOM','coal rush — everything on rails makes money');[['port',4,'the docks work overtime'],['train',2,'the train runs all night'],['tanker',3,'freight rates through the roof'],['coal',2,'COAL Corp books all of it'],['forklift',1,'pallets upon pallets'],['bhp',3,'the Big Australian books the tonnes']].forEach(a=>{const o=S.owner[a[0]];if(o!=null)gain(o,a[1],a[2])});}},
-{id:'rates',icon:'🏛️',title:'RBA CASH-RATE DECISION',text:'Governor Bullock leans into the microphone. Money gets expensive — for everyone but the insiders.',
+{id:'rates',icon:'🏛️',title:'RBA CASH-RATE DECISION',text:'Governor Bullock leans into the microphone. Money gets expensive — everyone pays $2, except the insiders.',
  run(){setMood('CALM','the RBA decides — the market holds its breath, then exhales');const r=S.owner.rba,b=S.owner.bullock;S.players.forEach((pl,i)=>{if(i===r||i===b)return;payFee(i,2,'the cost of money')});if(r!=null)log('🏛️ '+pname(r)+' set the rate — pays nothing.');if(b!=null)log('👩‍💼 The Governor takes '+pname(b)+'’s calls — pays nothing.');const c=S.owner.cash;if(c!=null)gain(c,2,'you literally set it');const j=S.owner.jim;if(j!=null)gain(j,2,'the headline sells papers');const be=S.owner.bess;if(be!=null)gain(be,2,'“BIG BESSENT” reacts live');const hs=S.owner.herald;if(hs!=null)gain(hs,2,'THE JIM REAPER reprints the decision');}},
 {id:'bondrevolt',icon:'💥',title:'BONDMAGEDDON',text:'“Government Bond: the collapse of the world’s safest investment.” Yields go vertical from Tokyo to Toronto.',
  run(){setMood('PANIC','“the collapse of the world’s safest investment”');const bd=S.owner.bond;S.players.forEach((pl,i)=>{const banks=NODES.filter(n=>n.type==='BANK'&&S.owner[n.id]===i).length;if(!banks)return;const amt=banks*2;if(bd!=null)payTo(i,amt,bd,'the revolt eats '+banks+' bank position'+(banks>1?'s':'')+' → The Bond Desk');else payVoid(i,amt,'the revolt eats the banking book')});COUNTRY.forEach(c=>{const o=S.owner[c];if(o!=null)gain(o,c==='japan'?3:1,NMAP[c].name.join(' ')+' pays its reader')});const t=S.owner.tenyear;if(t!=null)gain(t,2,'the master chart was right');const be=S.owner.bess;if(be!=null)gain(be,2,'Big Bessent called it on air');const br=S.owner.brad;if(br!=null)gain(br,2,'he had it explained in the movie');const bs=S.owner.bigshort;if(bs!=null)gain(bs,3,'the cinema saw it coming');const lk=S.owner.leak;if(lk!=null)gain(lk,2,'the leak was first with it');}},

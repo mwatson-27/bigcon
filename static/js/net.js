@@ -587,7 +587,7 @@ export function renderLobbyList(){
   return '<div class="lrow" style="border-left:4px solid '+((charMeta(e.char)||{}).color||PCOLORS[i%PCOLORS.length])+'">'+(face?'<img class="pface" src="'+face+'" alt="" style="border-color:'+((charMeta(e.char)||{}).color||PCOLORS[i%PCOLORS.length])+'">':'<span class="ld" style="background:'+PCOLORS[i%PCOLORS.length]+'"></span>')
    +'<span class="ln">'+(i+1)+'. '+esc(e.name)+(e.char?' · '+esc((charMeta(e.char)||{}).name||''):' · pick a face')+'</span><span class="lh">'+who+(Net.role==='host'&&e.bot&&i>0?' <button class="botbtn" data-kickbot="'+i+'" title="Send this bot home">✕</button>':'')+'</span></div>';
  }).join('')
-  +'<div class="lrow" style="background:transparent;border:1px dashed #168388;color:#9ad;font-size:12px"><span class="ln">'+rows.length+' of 8 seats filled</span>'
+  +'<div class="lrow" style="background:transparent;border:1px dashed #168388;color:#9ad;font-size:12px;"><span class="ln">'+rows.length+' of 8 seats filled</span>'
   +(Net.role==='host'&&rows.length<MAXPLAYERS?'<button class="botbtn" id="btnAddBot" style="margin-left:8px;cursor:pointer;background:#000;border:1px solid #168388;color:#9ad;padding:2px 10px;font:inherit">🤖 ADD A BOT — FILLS THE NEXT EMPTY SEAT</button>':'')
   +(Net.role==='host'&&!Net.started?'<button class="botbtn" id="btnSpectate" style="margin-left:8px;cursor:pointer;background:#000;border:1px solid #168388;color:#9ad;padding:2px 10px;font:inherit">'+(rows[0]&&rows[0].bot?'🙋 TAKE MY SEAT BACK — I’LL PLAY':'🤖 SPECTATE — LET A BOT PLAY MY SEAT')+'</button>':'')
   +'</div>';

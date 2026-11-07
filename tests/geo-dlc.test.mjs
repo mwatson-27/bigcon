@@ -279,7 +279,7 @@ test('GD-08 shutting down Qantas parks it for two full turns: no jet, no Qantas 
   assert.equal(S.qantasGroundUntil, S.turn + 2, 'grounded through the current and next full turn');
   assert.equal(S.geoBoeing, true, 'once per turn');
   assert.ok(e.f.qantasGrounded(), 'the kangaroo is parked');
-  assert.ok(S.log.some(l => l.includes('grounded for two full turns')), 'the table saw the grounding');
+  assert.ok(S.log.some(l => l.includes('grounded until the end of next round')), 'the table saw the grounding');
   await down;
   await settle();
   assert.equal(S.players[0].money, 30 - 4 + 2, 'the actor ends the chain at the same figure');
@@ -746,7 +746,7 @@ test('GD-20 blockade: free, once per turn, one full rotation, and even the owner
   assert.equal(S.blockades.oil, S.turn + 2, 'expiry is one full rotation after placement');
   assert.equal(S.blockadeUsed, true, 'one wall per turn');
   assert.equal(S.players[0].money, 10 + 2, 'free — only the quiet quarter lands');
-  assert.ok(S.log.some(l => l.includes('BLOCKADED for one full rotation')), 'the table saw the wall');
+  assert.ok(S.log.some(l => l.includes('BLOCKADED until the end of next round')), 'the table saw the wall');
   await wall;
   await settle();
   /* The wall blocks feet, not money: the walled pin still pays its owner. */
