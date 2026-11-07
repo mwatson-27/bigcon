@@ -1,6 +1,27 @@
 # THE BIG CON
 
 
+## Code layout
+
+The game is native ES modules; `index.html` loads one entry, `static/js/main.js`,
+so the repo root runs as-is (`npx --yes http-server . -p 8080 -c-1`) with no build.
+Modules need an http(s) origin — opening `index.html` straight from `file://` does
+not work. The inline `BUILD_COMMIT` classic script stays in `index.html` (CI
+greps it there).
+
+| Layer | Modules | Rules |
+| --- | --- | --- |
+| rules (DOM-free) | `hooks.js`, `util.js`, `data.js`, `state.js`, `boards.js`, `engine.js` | no `document`, `$()`, `toast`/`modal`/render calls, `window`, storage or global timers; the outside world is reached only through the injected `hooks` object (`setHooks({...})`, documented at the top of `hooks.js`) |
+| browser | `core.js` (flags, `# THE BIG CON
+
+
+, Discord presence), `net.js` (state sync, prompts, transports, lobby), `ui.js` (rendering, input), `discord.js`, `../bots.js` | may touch the DOM and the wire; nothing runs at import time |
+| composition | `app.js` (`installHooks()` + `boot()`), `main.js` (the entry) | the one place the layers are wired together |
+
+`tests/engine-isolated.test.mjs` imports the rules layer in plain Node with fake hooks
+and a virtual clock; the rest of the suite uses `tests/helpers/harness.mjs`, which loads
+the same modules against a stub DOM. `node --test tests/*.test.mjs` runs everything.
+
 ## Building and deploying
 
 The game is a static site (plus a Discord Activity served through Discord's
@@ -19,11 +40,15 @@ What the build does (`scripts/build.mjs`):
    images/favicon) into `dist/` — never `tests/`, `docs/`, `cloudflare-relay/`,
    `node_modules/`, `.github/` or `scripts/`;
 2. bundles the Discord Embedded App SDK with esbuild directly into `dist/`;
-3. stamps `BUILD_COMMIT` in `dist/index.html` with the first 7 characters of
+3. bundles the game: the single entry module `static/js/main.js` and everything
+   it imports become ONE ES-module file (the individual source modules and
+   `static/bots.js` are not shipped); only the dynamic `import()` of the SDK
+   bundle stays external;
+4. stamps `BUILD_COMMIT` in `dist/index.html` with the first 7 characters of
    `$RENDER_GIT_COMMIT` (set by Render), else `git rev-parse HEAD`, else `dev`;
-4. renames every local `.js`/`.css` file to `name.<10-char sha256>.ext` and
-   rewrites the references in the HTML pages and in `discord.js`'s dynamic
-   `import()` of the SDK bundle. Images are copied unhashed.
+5. renames every local `.js`/`.css` file to `name.<10-char sha256>.ext` and
+   rewrites the references in the HTML pages and the bundle's dynamic `import()`
+   of the SDK bundle. Images are copied unhashed.
 
 ### Render settings (static site)
 

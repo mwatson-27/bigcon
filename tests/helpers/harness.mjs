@@ -344,6 +344,7 @@ export async function loadEngine() {
     async loadBots() {
       const bots = await importMod('static/bots.js');
       mods.hooks.setHooks({ bots: () => bots.BigConBots });
+      env.window.BigConBots = bots.BigConBots; /* what main.js does for devtools */
       mods.bots = bots;
       return bots.BigConBots;
     },

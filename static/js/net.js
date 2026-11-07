@@ -1,14 +1,12 @@
 'use strict';
 /* net: state sync (adoptState), prompts, the Cloudflare/PeerJS transports, lobby, host and guest, and the lobby/setup view helpers.
    Allowed to touch the DOM and the wire. The rules engine reaches it only through hooks (sync, sysTo, askPlayer, announceAll, revealAll, beginGame). */
-/*<imports>*/
 import { CHARS, MAXPLAYERS, PCOLORS, WORLD_GEO, charMeta, charSrc, codeLabel, genCode, rebuildWorld } from './data.js';
 import { LOG_PART_CHARS, LOG_RETRY_MS, Net, S, STATE_MIN_GAP, mergeTail, pubState, setS } from './state.js';
 import { hooks } from './hooks.js';
 import { addChat, applyIntent, botAPI, endOfTurn, gain, log, pname } from './engine.js';
 import { $, IS_DISCORD_ACTIVITY, Presence } from './core.js';
 import { clampGoal, esc } from './util.js';
-/*</imports>*/
 /* ============ NET: state sync & prompts (host-authoritative) ============ */
 export function adoptState(ns){
  /* The lobby flag travels with the state: rebuild the world before the
@@ -24,7 +22,7 @@ export function adoptState(ns){
 }
 /* A guest holds the newest S.log.length of S.logN lines. Anything older (a late join,
    a reconnect, a missed tail) is fetched from the host, oldest first. */
-export let logFetch={lines:[],at:-Infinity};
+let logFetch={lines:[],at:-Infinity};
 export function requestMissingLog(){
  if(Net.role!=='guest'||!Net.conn||!S||S.log.length>=(S.logN|0))return;
  const now=Date.now();
@@ -56,7 +54,7 @@ export function sendAll(msg){for(let i=0;i<Net.conns.length;i++){if(i===Net.myId
 export function sendTo(pi,msg){if(pi===Net.myIdx)return;const c=Net.conns[pi];if(c&&c.open){try{c.send(msg)}catch(e){}}}
 /* State goes out coalesced: a single turn touches the state dozens of times and
    guests only need the result, not every intermediate frame. */
-export let stateTimer=null,stateLastSend=0;
+let stateTimer=null,stateLastSend=0;
 export function flushState(){
  if(stateTimer){clearTimeout(stateTimer);stateTimer=null}
  if(!S||Net.role!=='host')return;
@@ -69,7 +67,7 @@ export function sendState(now){
  if(stateTimer)return;
  stateTimer=setTimeout(flushState,Math.max(0,STATE_MIN_GAP-(Date.now()-stateLastSend)));
 }
-export let renderRaf=0;
+let renderRaf=0;
 export function scheduleRender(){
  if(renderRaf)return;
  renderRaf=requestAnimationFrame(()=>{renderRaf=0;hooks.render()});
@@ -158,7 +156,7 @@ export function loadTransportSettings(){
    sessionStorage so a page refresh/reconnect reuses it, with an in-memory
    fallback when storage is unavailable. It is sent in the websocket "join"
    message, never in the URL, so it stays out of request logs. */
-export const hostSecretMem=new Map();
+const hostSecretMem=new Map();
 export function hostSecretFor(room){
  const key='bigcon-host-secret-'+room;
  let s=hostSecretMem.get(room);
@@ -265,7 +263,7 @@ export const BIGCON_PEER_OPTIONS={config:BIGCON_ICE_CONFIG,debug:1,pingInterval:
 // Tolerate short stalls on congested or filtered school networks.
 export const HEARTBEAT_MS=5000,CONN_TIMEOUT_MS=35000;
 export const PEER_REOPEN_BASE_MS=3500;
-export let hostReopenTimer=null,hostReopenAttempt=0;
+let hostReopenTimer=null,hostReopenAttempt=0;
 export function scheduleHostReopen(reason){
  if(hostReopenTimer)return;
  hostReopenAttempt++;
@@ -643,10 +641,10 @@ export function toggleSpectate(){
  broadcastLobby();
 }
 /* ---- GUEST ---- */
-export let guestReconnectTimer=null;
-export let guestReconnectAttempt=0;
-export let guestTransportToken=0;
-export let guestReconnectStopped=false;
+let guestReconnectTimer=null;
+let guestReconnectAttempt=0;
+let guestTransportToken=0;
+let guestReconnectStopped=false;
 
 export function clearGuestReconnect(){
  if(guestReconnectTimer){clearTimeout(guestReconnectTimer);guestReconnectTimer=null}

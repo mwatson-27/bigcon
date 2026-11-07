@@ -47,7 +47,6 @@ export const BigConBots = (function () {
     seed: 1,
     turnStamp: 1,
   };
-  try { window.BigConBots = B; } catch (e) { /* non-window realm */ }
   const isTest = (typeof window !== 'undefined' && window.__BIGCON_TEST__ === true);
   /* 650 made a ~1k-intent game take 18+ minutes; 150 keeps it human (~4 min)
      without feeling robotic. Background tabs clamp timers to ~1s — pace()

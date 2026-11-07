@@ -1,8 +1,6 @@
 'use strict';
 /* core: runtime flags, the $ lookup helper and the Discord Rich Presence bridge (browser layer). Nothing runs at import time except reading location. */
-/*<imports>*/
 import { MAXPLAYERS, charMeta, codeSlug, matchBuzzword } from './data.js';
-/*</imports>*/
 export const IS_DISCORD_ACTIVITY = new URLSearchParams(location.search).get('discord') === '1' || location.hostname.endsWith('.discordsays.com') || new URLSearchParams(location.search).has('instance_id');
 export const $=id=>document.getElementById(id);
 /* BUILD_COMMIT is the inline classic script in index.html (the CI stamp check greps it there); a classic top-level const is visible to modules as a free identifier. */

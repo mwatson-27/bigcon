@@ -2,7 +2,6 @@
 /* ui: modal/toast, help, rendering, pan/zoom/input wiring and the setup-screen click wiring. Browser only.
    Nothing runs at import time: initUI() (called once from app.js boot) attaches every listener. toast/modal/render are
    installed as hooks and every module calls them through `hooks`. */
-/*<imports>*/
 import { $, IS_DISCORD_ACTIVITY, Presence } from './core.js';
 import { hooks } from './hooks.js';
 import { LOG_SHOWN, Net, S } from './state.js';
@@ -11,10 +10,11 @@ import { WIN_TYPES, addChat, applyIntent, blockaded, canFireMissileFrom, canMiss
 import { applyLayoutFromState, boardViewBounds, megaRingMetrics, nodeBox, ringworldMetrics } from './boards.js';
 import { ADJ, BUZZWORDS, EDGES, MOODS, NMAP, NODES, QUIK_SLOTS, TYPE_COLORS, charSrc, codeLabel, matchBuzzword } from './data.js';
 import { addBotSeat, applyChar, backToLobby, broadcastLobby, cleanName, guestJoin, hostCreate, kickBotSeat, sendAll, setBoardLayout, setFogUI, setGeoUI, setGoalUI, setNetStatus, toggleSpectate } from './net.js';
-/*</imports>*/
-export const shownFx=new Set();
-export let svgEl=null;
-export let toastTimer=null;
+const shownFx=new Set();
+let svgEl=null;
+/* the unsent chat line survives the sidebar being re-rendered */
+let chatDraft='';
+let toastTimer=null;
 export function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2400)}
 export function modal(o){return new Promise(res=>{
  const ov=document.createElement('div');ov.className='overlay';
@@ -30,8 +30,8 @@ export function modal(o){return new Promise(res=>{
 /* ================= LOCAL DESKTOP TURN ALERTS =================
    Alerts are opt-out and default on. Permission is requested only from a
    user gesture; the preference is local to this browser/device. */
-export const TURN_ALERTS_KEY='bigcon-v1.13-turn-alerts';
-export let lastTurnAlertKey='',lastDeliveredTurnAlertKey='';
+const TURN_ALERTS_KEY='bigcon-v1.13-turn-alerts';
+let lastTurnAlertKey='',lastDeliveredTurnAlertKey='';
 export function turnAlertsEnabled(){try{return localStorage.getItem(TURN_ALERTS_KEY)!=='off'}catch(_){return true}}
 export function requestTurnNotificationPermission(){
  if(!turnAlertsEnabled()||typeof Notification==='undefined')return;
@@ -469,7 +469,7 @@ export function renderSide(){
  const myMissing=Net.spect?[]:missingTypes(me);
  const setHtml=Net.spect?'<span style="color:#9ad">not playing — just watching</span>':WIN_TYPES.map(t=>{const has=hasType(me,t);return '<span style="color:'+(has?'#7fe08d':'#ff6b5e')+'">'+(has?'✔':'✘')+' '+t+'</span>'}).join('');
  const chatHtml=(S.chat||[]).map(c=>'<div><b style="color:'+c.c+'">'+esc(c.n)+':</b> '+esc(c.t)+'</div>').join('')||'<div style="opacity:.4;font-style:italic">— the wire is quiet —</div>';
- const chatVal=(window.__chatDraft)||'';
+ const chatVal=chatDraft;
  side.innerHTML='<div class="netstrip">ROOM <b>'+(Net.roomLabel||Net.roomCode||'·····')+'</b> · '+(Net.role==='host'?'HOST':(Net.spect?'👁 SPECTATOR':'SEAT '+(Net.myIdx+1)))+' · 🎯 TARGET $'+goalAmount()+' · '+(S.players.filter(pl=>!pl.dc).length+'/'+S.players.length+' connected')+(S.deckCount!=null?' · 🎴 '+S.deckCount+' events left':'')+' · ⛽ '+(QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0]).label+'</div>'
   +'<div class="moodstrip" style="border-color:'+md.color+'"><span class="mdot" style="background:'+md.color+'"></span><b style="color:'+md.color+'">'+md.label+'</b><span>'+md.desc+'</span><span class="mwire">“'+esc(S.wire||'all quiet on the wire')+'”</span></div>'
   +'<div class="brand"><div class="t1">THE BIG CON</div><div class="t2">v1.13 · '+(S.dlcGeo?'81':'70')+' exhibits · randomized board & connections · valuable nodes further away · online, 2–8</div></div>'
@@ -485,8 +485,8 @@ export function renderSide(){
  const lb=$('logbox');if(lb)lb.scrollTop=lb.scrollHeight;
  const cb=$('chatbox');if(cb)cb.scrollTop=cb.scrollHeight;
  const ci=$('chatInput');
- if(ci){ci.addEventListener('input',()=>{window.__chatDraft=ci.value});
-  const send=()=>{const t=ci.value.trim();if(!t)return;window.__chatDraft='';sendChat(t)};
+ if(ci){ci.addEventListener('input',()=>{chatDraft=ci.value});
+  const send=()=>{const t=ci.value.trim();if(!t)return;chatDraft='';sendChat(t)};
   $('chatSend').onclick=send;
   ci.addEventListener('keydown',e=>{if(e.key==='Enter')send()});
  }
@@ -501,7 +501,7 @@ export function dispatch(m){
  else if(Net.conn&&Net.conn.open)Net.conn.send({t:'intent',act:m.act,id:m.id,target:m.target,kind:m.kind,choice:m.choice,n:m.n});
 }
 
-export let VB={x:0,y:0,w:2400,h:1560};
+let VB={x:0,y:0,w:2400,h:1560};
 export function applyVB(){svgEl.setAttribute('viewBox',VB.x+' '+VB.y+' '+VB.w+' '+VB.h)}
 export function resetBoardView(){
  const b=boardViewBounds();
@@ -529,7 +529,7 @@ export function clampVB(){
  VB.x=Math.min(b.x+b.w-VB.w,Math.max(b.x,VB.x));
  VB.y=Math.min(b.y+b.h-VB.h,Math.max(b.y,VB.y));
 }
-export let drag=null,lastTapTarget=null;
+let drag=null,lastTapTarget=null;
 export function handleNodeTap(t){
  if(!t||!t.closest)return;
  const g=t.closest('g.node');

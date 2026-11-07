@@ -1,6 +1,4 @@
-/*<imports>*/
 import { IS_DISCORD_ACTIVITY, Presence } from './core.js';
-/*</imports>*/
 /* initDiscord(): the Discord Embedded App SDK block, called once from main.js. A no-op outside a Discord Activity. */
 export function initDiscord() {
 if (IS_DISCORD_ACTIVITY) {

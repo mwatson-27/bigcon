@@ -10,15 +10,15 @@
  */
 import { hooks, setHooks } from './hooks.js';
 import { S, setS, Net, pubState } from './state.js';
-import { GOAL_MIN, GOAL_MAX, GOAL_DEF, clampGoal, esc, shuffle } from './util.js';
-import { NODES, NMAP, EDGES, ADJ, WORLD_EDGES, GEO_NODE_IDS, OIL_IDS, COUNTRY, MOODS, PCOLORS, QUIK_SLOTS, charMeta, charSrc, rebuildWorld } from './data.js';
+import { clampGoal, esc, shuffle } from './util.js';
+import { NODES, NMAP, EDGES, ADJ, GEO_NODE_IDS, OIL_IDS, COUNTRY, MOODS, PCOLORS, QUIK_SLOTS, charMeta, charSrc, rebuildWorld } from './data.js';
 import { generateRandomBoard, generateRingworldBoard, generateMegaRingBoard, applyLayoutFromState } from './boards.js';
 export { hooks, setHooks };
 /* The host services the rules call, bound late so a hook swapped in by setHooks
    (or wrapped by a test) is always the one that runs. */
 const sync=now=>hooks.sync(now),sysTo=(pi,msg)=>hooks.sysTo(pi,msg),askPlayer=(pi,opt)=>hooks.askPlayer(pi,opt),announceAll=(title,html)=>hooks.announceAll(title,html),revealAll=(title,html)=>hooks.revealAll(title,html);
 /* ================= STATE & HELPERS ================= */
-export let fxSeq=0;
+let fxSeq=0;
 export function pname(i){return S.players[i].name}
 export function log(t){S.log.push(t);S.logN=(S.logN|0)+1}
 /* ---- floating FX: visible on every screen, driven purely by synced state ---- */

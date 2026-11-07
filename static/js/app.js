@@ -4,12 +4,10 @@
    No module in the graph does anything at import time except declare things; this is
    the one place where the pieces are wired, and the harness in tests/ calls the very
    same installHooks()/boot() against a stub DOM. */
-/*<imports>*/
 import { setHooks } from './hooks.js';
 import { announceAll, askPlayer, loadTransportSettings, revealAll, sendBegin, sync, sysTo } from './net.js';
 import { initUI, modal, render, showGame, toast } from './ui.js';
 import { Presence, initCore } from './core.js';
-/*</imports>*/
 
 /* `extra` carries optional hooks the page decides on, e.g. {bots: () => BigConBots}. */
 export function installHooks(extra) {
