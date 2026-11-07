@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import vm from 'node:vm';
+import { SOURCE } from './helpers/harness.mjs';
 
-const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+/* The game code lives in static/js/*.js now; search the joined game sources. */
+const html = SOURCE;
 
 function extractFunction(name) {
   const marker = `function ${name}(`;

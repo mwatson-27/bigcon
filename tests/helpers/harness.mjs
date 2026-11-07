@@ -1,7 +1,7 @@
 /*
  * Dependency-free test harness for THE BIG CON.
  *
- * Loads the real game script (the inline <script> block of index.html) into a
+ * Loads the real game scripts (index.html's classic <script> list, joined) into a
  * fresh `node:vm` context with:
  *   - a virtual clock (setTimeout/setInterval are recorded and advanced by
  *     tests, so prompt timeouts, lock watchdogs and heartbeats are deterministic
@@ -22,17 +22,31 @@ import { fileURLToPath } from 'node:url';
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const html = fs.readFileSync(path.join(repoRoot, 'index.html'), 'utf8');
 
-/* ---------- inline script extraction ---------- */
-function inlineScript() {
-  const anchor = html.indexOf("'use strict';");
-  if (anchor === -1) throw new Error('could not locate the game script anchor');
-  const start = html.lastIndexOf('<script>', anchor);
-  const end = html.indexOf('</script>', anchor);
-  if (start === -1 || end === -1) throw new Error('could not locate the inline game script');
-  return html.slice(start + '<script>'.length, end);
+/* ---------- game script extraction ----------
+ * index.html loads the game as plain classic <script>s sharing one global
+ * scope: a tiny inline script (BUILD_COMMIT) followed by <script src> files.
+ * Skipped: type="module" blocks (Discord; never ran in the harness), remote
+ * scripts (PeerJS from unpkg) and static/bots.js, which is a separate policy
+ * module that bots.test.mjs loads itself on top of the engine. */
+export const EXCLUDED_SCRIPTS = new Set(['static/bots.js']);
+export function gameScripts() {
+  const out = [];
+  for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    const attrs = m[1];
+    if (/\btype\s*=\s*["']module["']/i.test(attrs)) continue;
+    const src = attrs.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+    if (!src) { out.push({ file: 'index.html:inline', text: m[2] }); continue; }
+    if (/^[a-z][a-z0-9+.-]*:|^\/\//i.test(src[1])) continue; // remote
+    const rel = src[1].replace(/^\.\//, '').replace(/[?#].*$/, '');
+    if (EXCLUDED_SCRIPTS.has(rel)) continue;
+    out.push({ file: rel, text: fs.readFileSync(path.join(repoRoot, rel), 'utf8') });
+  }
+  if (!out.length) throw new Error('could not locate any game script in index.html');
+  return out;
 }
 export const HTML = html;
-export const SOURCE = inlineScript();
+export const GAME_SCRIPTS = gameScripts();
+export const SOURCE = GAME_SCRIPTS.map(s => s.text).join('\n');
 
 /* ---------- virtual clock ---------- */
 export function makeClock() {
@@ -201,7 +215,14 @@ export function loadEngine(opts = {}) {
     __modalStub: modalStub, __broadcast: [],
   };
   vm.createContext(ctx);
-  vm.runInContext(SOURCE, ctx, { filename: 'index.html:inline' });
+  if (opts.perFile) {
+    /* Mimic the browser: each classic <script> is compiled and run on its own,
+       sharing the global lexical scope, in document order. Surfaces load-order
+       (TDZ / missing-hoist) bugs that the joined SOURCE would hide. */
+    for (const s of GAME_SCRIPTS) new vm.Script(s.text, { filename: s.file }).runInContext(ctx);
+  } else {
+    vm.runInContext(SOURCE, ctx, { filename: 'index.html:game-scripts' });
+  }
   const acc = vm.runInContext(`globalThis.__t = {
     get S(){return S}, set S(v){S=v},
     get Net(){return Net}, get NODES(){return NODES}, get NMAP(){return NMAP},

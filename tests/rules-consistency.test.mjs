@@ -63,6 +63,8 @@ test('RC-01 every node is structurally complete and every baked asset exists on 
   const shippedSources = [
     ...fs.readdirSync(repoRoot).filter(f => f.endsWith('.html')).map(f => path.join(repoRoot, f)),
     ...fs.readdirSync(staticDir).filter(f => f.endsWith('.js')).map(f => path.join(staticDir, f)),
+    ...fs.readdirSync(path.join(staticDir, 'js')).filter(f => f.endsWith('.js')).map(f => path.join(staticDir, 'js', f)),
+    ...fs.readdirSync(path.join(staticDir, 'css')).filter(f => f.endsWith('.css')).map(f => path.join(staticDir, 'css', f)),
   ];
   for (const [oldName, newName] of Object.entries(RENAMED)) {
     assert.ok(!exists(path.join(staticDir, oldName)), `static/${oldName} no longer exists`);
