@@ -1,6 +1,6 @@
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;width:100%;height:100%}
-body{font-family:'Bestigia',system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#f2f2f2;background:#1d201f}
+body{font-family:'Bricolage Grotesque',system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#f2f2f2;background:#1d201f}
 body.game-open{overflow:hidden}
 #app{display:none;flex-wrap:nowrap;gap:0;padding:0;align-items:stretch;width:100vw;height:100dvh;overflow:hidden}
 #boardWrap{flex:1 1 auto;min-width:0;height:100%;position:relative;overflow:hidden;background:#1d201f}
@@ -158,7 +158,6 @@ button.mini:hover{background:#168388}
 .charpick.taken{opacity:.38;cursor:not-allowed}
 .charpick:hover:not(.taken){border-color:#168388}
 .pface{width:28px;height:28px;border-radius:50%;object-fit:cover;border:2px solid var(--pc,#168388);flex:0 0 28px;background:#000}
-#board text{font-family:'Bestigia',system-ui,Segoe UI,Helvetica,Arial,sans-serif}
 
 /* v1.13 UI: the map is a fixed, full-height left viewport; only the sidebar scrolls. */
 body.game-open{overflow:hidden}
