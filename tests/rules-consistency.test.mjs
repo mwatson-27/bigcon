@@ -4,8 +4,7 @@
  *
  * RC-01/02/06/07 are structural (assets, deck, win types, dead references);
  * RC-03/04/05 drive the real vm actions and compare against the rules copy.
- * Known drift (baked asset typos and dead refs to the removed-node list) is
- * reported informationally.
+ * Known drift (dead refs to the removed-node list) is reported informationally.
  *
  * Behaviour tests use a controlled deck of `quiet` events (each +$2 to every
  * player) so the automatic end-of-turn chain that `finishNodeAbility` triggers
@@ -38,8 +37,12 @@ test('RC-01 every node is structurally complete and every baked asset exists on 
   const CHARS = engine.acc.CHARS;
   const TYPES = new Set(engine.acc.WIN_TYPES);
   const ids = new Set();
-  const TYPOS = ['oil price increease.png', 'whistelblower.png', 'us treasury yeild.png'];
-  let typoCount = 0;
+  /* The three assets once shipped with misspelt filenames; they were renamed. */
+  const RENAMED = {
+    'oil price increease.png': 'oil price increase.png',
+    'whistelblower.png': 'whistleblower.png',
+    'us treasury yeild.png': 'us treasury yield.png',
+  };
 
   for (const n of NODES) {
     assert.ok(n.id, 'every node has an id');
@@ -52,12 +55,25 @@ test('RC-01 every node is structurally complete and every baked asset exists on 
     assert.equal(typeof n.cost, 'number', `${n.id}: numeric cost`);
     assert.ok(typeof n.image === 'string' && n.image.startsWith('./static/'), `${n.id}: image lives in ./static/`);
     assert.ok(exists(staticFile(n.image)), `${n.id}: ${n.image} exists on disk`);
-    if (TYPOS.some(ty => n.image.endsWith(ty))) typoCount++;
+    assert.ok(!Object.keys(RENAMED).some(old => n.image.endsWith(old)), `${n.id}: ${n.image} no longer uses a misspelt filename`);
   }
-  /* The three baked filename typos are real files on disk; renaming them is a
-     user-facing change (BUILD_COMMIT hashes index.html). Flagged, not fixed. */
-  console.log(`    informational: baked filename typos shipped as real files: ${typoCount}/${TYPOS.length} found`);
-  assert.equal(typoCount, TYPOS.length, 'the known typo filenames still exist on disk (update this test if they are ever renamed)');
+  /* The corrected filenames exist, the misspelt ones are gone, and nothing in
+     the shipped sources (plain or URL-encoded) still points at the old names. */
+  const staticDir = path.join(repoRoot, 'static');
+  const shippedSources = [
+    ...fs.readdirSync(repoRoot).filter(f => f.endsWith('.html')).map(f => path.join(repoRoot, f)),
+    ...fs.readdirSync(staticDir).filter(f => f.endsWith('.js')).map(f => path.join(staticDir, f)),
+  ];
+  for (const [oldName, newName] of Object.entries(RENAMED)) {
+    assert.ok(!exists(path.join(staticDir, oldName)), `static/${oldName} no longer exists`);
+    assert.ok(exists(path.join(staticDir, newName)), `static/${newName} exists`);
+    for (const file of shippedSources) {
+      const text = fs.readFileSync(file, 'utf8');
+      for (const needle of [oldName, oldName.replace(/ /g, '%20')]) {
+        assert.ok(!text.includes(needle), `${path.basename(file)} does not reference ${needle}`);
+      }
+    }
+  }
   for (const c of CHARS) {
     if (c.url) continue; // remote-only portraits (Alexander_Lane, DJT, …)
     assert.ok(exists(path.join(repoRoot, 'characters', c.file)), `${c.id}: characters/${c.file} exists on disk`);
