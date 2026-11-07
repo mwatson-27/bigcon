@@ -1,6 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 
 const MAX_CONNECTIONS = 8;
+const DISCORD_CLIENT_ID = "1565709969913815060";
+const UNJOINED_TTL_MS = 10_000;
 const ROOM_RE = /^[A-Z0-9-]{1,40}$/;
 
 export default {
@@ -39,7 +41,7 @@ export default {
       }
 
       const form = new URLSearchParams({
-        client_id: "1565709969913815060",
+        client_id: DISCORD_CLIENT_ID,
         client_secret: env.DISCORD_CLIENT_SECRET,
         grant_type: "authorization_code",
         code,
@@ -89,17 +91,22 @@ export default {
       const channelId = typeof body?.channel_id === "string" ? body.channel_id : "";
       if (!/^\d{17,20}$/.test(channelId)) return Response.json({ error: "A valid Activity channel ID is required." }, { status: 400, headers: cors });
 
-      // Validate the caller's short-lived Activity OAuth token before allowing
-      // a message to be sent with the server-side bot credential.
+      // Validate the caller's short-lived Activity OAuth token and make sure it
+      // was issued to THIS application, so tokens from other Discord apps
+      // cannot be used to make the bot post.
       let identityResponse;
       try {
-        identityResponse = await fetch("https://discord.com/api/v10/users/@me", {
+        identityResponse = await fetch("https://discord.com/api/v10/oauth2/@me", {
           headers: { Authorization: "Bearer " + accessToken },
         });
       } catch {
         return Response.json({ error: "Could not validate Discord Activity authentication." }, { status: 502, headers: cors });
       }
       if (!identityResponse.ok) return Response.json({ error: "Discord Activity authentication expired or was rejected." }, { status: 401, headers: cors });
+      const identity = await identityResponse.json().catch(() => ({}));
+      if (identity?.application?.id !== DISCORD_CLIENT_ID) {
+        return Response.json({ error: "Token was not issued to this Activity." }, { status: 403, headers: cors });
+      }
 
       const event = body?.event;
       let content = "";
@@ -202,7 +209,14 @@ export class BigConRoom extends DurableObject {
     if (role === "guest" && !hosts.length) {
       return new Response("Room host is not connected", { status: 404 });
     }
-    if (this.ctx.getWebSockets().length >= MAX_CONNECTIONS) {
+    // Drop sockets that never sent "join" so idle connections can't hold a room full.
+    for (const ws of this.ctx.getWebSockets()) {
+      const a = ws.deserializeAttachment();
+      if (a && !a.joined && Date.now() - (a.t || 0) > UNJOINED_TTL_MS) {
+        try { ws.close(1008, "Join timeout"); } catch {}
+      }
+    }
+    if (this.ctx.getWebSockets().filter((ws) => ws.readyState === WebSocket.OPEN).length >= MAX_CONNECTIONS) {
       return new Response("Room is full", { status: 429 });
     }
 
@@ -211,7 +225,7 @@ export class BigConRoom extends DurableObject {
     const server = pair[1];
     const id = crypto.randomUUID();
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ id, role, joined: false });
+    server.serializeAttachment({ id, role, joined: false, t: Date.now() });
 
     return new Response(null, { status: 101, webSocket: client });
   }

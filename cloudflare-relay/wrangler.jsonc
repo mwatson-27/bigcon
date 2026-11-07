@@ -8,7 +8,10 @@
       { "name": "BIGCON_ROOMS", "class_name": "BigConRoom" }
     ]
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["BigConRoom"] }
-  ]
+  "exports": {
+    "BigConRoom": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
 }
