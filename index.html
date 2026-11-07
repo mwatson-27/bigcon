@@ -306,14 +306,16 @@ const Presence=(function(){
  }
  async function notifyDiscord(event){
   const channelId=discordSdk&&discordSdk.channelId;
-  if(!channelId||!discordAccessToken)return;
+  const instanceId=discordSdk&&discordSdk.instanceId;
+  if(!channelId||!instanceId||!discordAccessToken)return;
   try{
    const response=await fetch('/relay/api/notify',{
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+discordAccessToken},
     cache:'no-store',
-    body:JSON.stringify({channel_id:channelId,event})
+    body:JSON.stringify({channel_id:channelId,instance_id:instanceId,event})
    });
+   if(response.status===429)return; // rate limited: notifications are best-effort
    if(!response.ok){
     const data=await response.json().catch(()=>({}));
     console.warn('[BigCon Discord] Channel notification failed:',data.error||response.status);

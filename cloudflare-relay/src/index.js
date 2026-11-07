@@ -4,6 +4,30 @@ const MAX_CONNECTIONS = 8;
 const DISCORD_CLIENT_ID = "1565709969913815060";
 const UNJOINED_TTL_MS = 10_000;
 const ROOM_RE = /^[A-Z0-9-]{1,40}$/;
+const INSTANCE_RE = /^[A-Za-z0-9_-]{1,120}$/;
+
+// Browser origins allowed to call the HTTP API. Discord serves the Activity
+// from https://<client_id>.discordsays.com; nothing else calls these endpoints.
+const ALLOWED_ORIGINS = new Set(["https://" + DISCORD_CLIENT_ID + ".discordsays.com"]);
+
+// Per-channel notification limits, enforced by the NotifyLimiter Durable Object.
+const NOTIFY_WINDOW_MS = 60_000;
+const TURN_MIN_GAP_MS = 3_000;
+const TURN_PER_WINDOW = 10;
+const GAME_OVER_MIN_GAP_MS = 10_000;
+const TOTAL_PER_WINDOW = 15;
+
+function corsHeaders(request, allowHeaders) {
+  const headers = {
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": allowHeaders,
+    "Cache-Control": "no-store",
+    "Vary": "Origin",
+  };
+  const origin = request.headers.get("Origin");
+  if (origin && ALLOWED_ORIGINS.has(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
+}
 
 export default {
   async fetch(request, env) {
@@ -12,12 +36,7 @@ export default {
     // Discord Embedded App SDK OAuth code exchange. Keep the client secret
     // in a Worker secret; never send it to the Activity/browser.
     if (url.pathname === "/api/token") {
-      const cors = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Cache-Control": "no-store",
-      };
+      const cors = corsHeaders(request, "Content-Type");
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: cors });
       }
@@ -68,12 +87,7 @@ export default {
     }
 
     if (url.pathname === "/api/notify") {
-      const cors = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        "Cache-Control": "no-store",
-      };
+      const cors = corsHeaders(request, "Content-Type, Authorization");
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
       if (request.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405, headers: cors });
       if (!env.DISCORD_BOT_TOKEN) return Response.json({ error: "Discord bot is not configured. Add DISCORD_BOT_TOKEN to the Worker secrets." }, { status: 503, headers: cors });
@@ -90,6 +104,8 @@ export default {
       }
       const channelId = typeof body?.channel_id === "string" ? body.channel_id : "";
       if (!/^\d{17,20}$/.test(channelId)) return Response.json({ error: "A valid Activity channel ID is required." }, { status: 400, headers: cors });
+      const instanceId = typeof body?.instance_id === "string" ? body.instance_id : "";
+      if (!INSTANCE_RE.test(instanceId)) return Response.json({ error: "A valid Activity instance ID is required." }, { status: 400, headers: cors });
 
       // Validate the caller's short-lived Activity OAuth token and make sure it
       // was issued to THIS application, so tokens from other Discord apps
@@ -106,6 +122,35 @@ export default {
       const identity = await identityResponse.json().catch(() => ({}));
       if (identity?.application?.id !== DISCORD_CLIENT_ID) {
         return Response.json({ error: "Token was not issued to this Activity." }, { status: 403, headers: cors });
+      }
+      const userId = identity?.user?.id;
+      if (typeof userId !== "string" || !userId) {
+        return Response.json({ error: "Could not identify the Discord user." }, { status: 403, headers: cors });
+      }
+
+      // Bind the request to the caller's own Activity: the instance must exist
+      // for this application, run in the claimed channel and include this user.
+      // Otherwise any Activity user could make the bot post into any channel.
+      let instanceResponse;
+      try {
+        instanceResponse = await fetch(
+          "https://discord.com/api/v10/applications/" + DISCORD_CLIENT_ID + "/activity-instances/" + encodeURIComponent(instanceId),
+          { headers: { Authorization: "Bot " + env.DISCORD_BOT_TOKEN } },
+        );
+      } catch {
+        return Response.json({ error: "Could not verify the Activity instance." }, { status: 502, headers: cors });
+      }
+      if (instanceResponse.status === 404) return Response.json({ error: "Activity instance not found." }, { status: 403, headers: cors });
+      if (!instanceResponse.ok) return Response.json({ error: "Could not verify the Activity instance." }, { status: 502, headers: cors });
+      const instance = await instanceResponse.json().catch(() => ({}));
+      if (instance?.application_id !== undefined && instance.application_id !== DISCORD_CLIENT_ID) {
+        return Response.json({ error: "Activity instance belongs to a different application." }, { status: 403, headers: cors });
+      }
+      if (instance?.location?.channel_id !== channelId) {
+        return Response.json({ error: "Activity instance is not running in this channel." }, { status: 403, headers: cors });
+      }
+      if (!Array.isArray(instance.users) || !instance.users.includes(userId)) {
+        return Response.json({ error: "You are not part of this Activity instance." }, { status: 403, headers: cors });
       }
 
       const event = body?.event;
@@ -128,6 +173,22 @@ export default {
           (scoreLines.length ? "\n\nFinal standings:\n" + scoreLines.map((line, i) => (i + 1) + ". " + line).join("\n") : "");
       } else {
         return Response.json({ error: "Unsupported notification type." }, { status: 400, headers: cors });
+      }
+
+      // Per-channel rate limit (checked last so rejected requests spend no budget).
+      if (!env.NOTIFY_LIMITER) return Response.json({ error: "Notification rate limiter is not configured." }, { status: 503, headers: cors });
+      let verdict;
+      try {
+        verdict = await env.NOTIFY_LIMITER.get(env.NOTIFY_LIMITER.idFromName("notify:" + channelId)).take(event.type);
+      } catch {
+        return Response.json({ error: "Notification rate limiter unavailable." }, { status: 503, headers: cors });
+      }
+      if (!verdict?.ok) {
+        const retryAfter = Math.max(1, Math.ceil(Number(verdict?.retryAfterMs) / 1000) || 1);
+        return Response.json({ error: "Too many notifications for this channel." }, {
+          status: 429,
+          headers: { ...cors, "Retry-After": String(retryAfter) },
+        });
       }
 
       let discordResponse;
@@ -314,5 +375,40 @@ export class BigConRoom extends DurableObject {
 
   webSocketError(ws) {
     try { ws.close(1011, "Relay socket error"); } catch {}
+  }
+}
+
+// One instance per Activity channel ("notify:<channel_id>"). Durable Object
+// storage is the only state shared across Worker isolates, so the sliding
+// window lives here. Only accepted notifications are recorded.
+export class NotifyLimiter extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.ctx = ctx;
+  }
+
+  async take(kind) {
+    const now = Date.now();
+    const log = ((await this.ctx.storage.get("log")) || []).filter((e) => now - e[0] < NOTIFY_WINDOW_MS);
+    const ofKind = log.filter((e) => e[1] === kind);
+    const last = ofKind.length ? ofKind[ofKind.length - 1][0] : -Infinity;
+    const gap = kind === "game_over" ? GAME_OVER_MIN_GAP_MS : TURN_MIN_GAP_MS;
+    const cap = kind === "game_over" ? TOTAL_PER_WINDOW : TURN_PER_WINDOW;
+
+    let waitMs = Math.max(0, last + gap - now);
+    // Window full: wait until the oldest counted entry ages out.
+    if (ofKind.length >= cap) waitMs = Math.max(waitMs, ofKind[0][0] + NOTIFY_WINDOW_MS - now);
+    if (log.length >= TOTAL_PER_WINDOW) waitMs = Math.max(waitMs, log[0][0] + NOTIFY_WINDOW_MS - now);
+    if (waitMs > 0) return { ok: false, retryAfterMs: waitMs };
+
+    log.push([now, kind]);
+    await this.ctx.storage.put("log", log);
+    // Drop the record once the window has passed so idle channels cost nothing.
+    await this.ctx.storage.setAlarm(now + NOTIFY_WINDOW_MS + 1_000);
+    return { ok: true };
+  }
+
+  async alarm() {
+    await this.ctx.storage.deleteAll();
   }
 }

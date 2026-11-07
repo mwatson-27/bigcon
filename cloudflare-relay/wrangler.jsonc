@@ -5,10 +5,15 @@
   "compatibility_date": "2026-10-21",
   "durable_objects": {
     "bindings": [
-      { "name": "BIGCON_ROOMS", "class_name": "BigConRoom" }
+      { "name": "BIGCON_ROOMS", "class_name": "BigConRoom" },
+      { "name": "NOTIFY_LIMITER", "class_name": "NotifyLimiter" }
     ]
   },
   "exports": {
+    "NotifyLimiter": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
     "BigConRoom": {
       "type": "durable-object",
       "storage": "sqlite"
