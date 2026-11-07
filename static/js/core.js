@@ -1,9 +1,15 @@
 'use strict';
-/* core: build/runtime flags, the $ lookup helper and the Discord Rich Presence bridge. Loads first. */
-const IS_DISCORD_ACTIVITY = new URLSearchParams(location.search).get('discord') === '1' || location.hostname.endsWith('.discordsays.com') || new URLSearchParams(location.search).has('instance_id');
+/* core: runtime flags, the $ lookup helper and the Discord Rich Presence bridge (browser layer). Nothing runs at import time except reading location. */
+/*<imports>*/
+import { MAXPLAYERS, charMeta, codeSlug, matchBuzzword } from './data.js';
+/*</imports>*/
+export const IS_DISCORD_ACTIVITY = new URLSearchParams(location.search).get('discord') === '1' || location.hostname.endsWith('.discordsays.com') || new URLSearchParams(location.search).has('instance_id');
+export const $=id=>document.getElementById(id);
+/* BUILD_COMMIT is the inline classic script in index.html (the CI stamp check greps it there); a classic top-level const is visible to modules as a free identifier. */
+export function initCore(){
 if(IS_DISCORD_ACTIVITY)window.__BIGCON_DISCORD_ACTIVITY__=true;
-const $=id=>document.getElementById(id);
-$('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('splashLogo');if(!img)return;img.onerror=()=>{if(img.dataset.fallback)return;img.dataset.fallback='1';img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};})();
+$('buildStamp').textContent='COMMIT '+(typeof BUILD_COMMIT==='string'?BUILD_COMMIT:'dev');(function(){const img=$('splashLogo');if(!img)return;img.onerror=()=>{if(img.dataset.fallback)return;img.dataset.fallback='1';img.src='https://raw.githubusercontent.com/waxmotson/The-big-con-desktop/master/big%20con%20logo.png';img.alt='THE BIG CON'};})();
+}
 
 /* ================= DISCORD RICH PRESENCE BRIDGE =================
    window.discordRPC is injected ONLY by the desktop (Electron) build's
@@ -12,7 +18,7 @@ $('buildStamp').textContent='COMMIT '+BUILD_COMMIT;(function(){const img=$('spla
    is simply undefined, so every call below quietly does nothing and the
    web version behaves exactly as it always has. Nothing here ever talks
    to Discord directly; it only ever talks to window.discordRPC. */
-const Presence=(function(){
+export const Presence=(function(){
  let lastKey=null,startedAt=null,currentActivity=null,discordSdk=null;
  let discordAccessToken=null,lastTurnNoticeKey=null,lastGameOverNoticeKey=null;
  function bridge(){return(typeof window!=='undefined'&&window.discordRPC)||null}

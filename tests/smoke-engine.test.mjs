@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { loadEngine, makeGame, CHARS8 } from './helpers/harness.mjs';
 
 test('engine loads and can start a solo test game', async t => {
-  const engine = loadEngine();
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   const S = await makeGame(engine, 1);
   assert.ok(S, 'state created');

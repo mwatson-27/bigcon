@@ -1,7 +1,8 @@
 'use strict';
-/* data: static game data — nodes, edges, geography DLC, characters, moods and the event deck; builds the world graph. */
+/* data: static game data — nodes, edges, geography DLC, characters, moods, room-code buzzwords; builds the world graph. Pure: no DOM, no state.
+   NODES/EDGES/… are live bindings rebuilt by rebuildWorld(); other modules read them, and replace EDGES/NODES only through setEdges/setNodes. */
 /* ================= THE COMPLETE EVIDENCE BOARD — 70 exhibits · +12 with the GEOGRAPHY DLC ================= */
-const BASE_NODES=[
+export const BASE_NODES=[
 {id:'citi',image:'./static/citi tower.webp',name:['CITI TOWER'],icon:'🏦',type:'BANK',shape:'logo',band:'#1a5fa8',income:3,cost:8,x:210,y:150,rot:-2,sub:'too big to fail · 007 on payroll',sp:'+$1 income per CORPORATE node you own (James Bond is on the payroll).'},
 {id:'commbank',image:'./static/cba.png',name:['COMMONWEALTH BANK'],icon:'🏦',type:'BANK',shape:'logo',band:'#d4a017',income:2,cost:6,x:400,y:95,rot:2,sub:'can’t be beat? we’ll see',sp:'+$2 income while you own any other BANK (the big four stick together).'},
 {id:'nab',image:'./static/nab.png',name:['NAB'],icon:'🏦',type:'BANK',shape:'logo',band:'#c0392b',income:2,cost:6,x:590,y:165,rot:-1,sub:'more than money',sp:'Seizing CHART nodes costs you $1 less (their analysts share screens).'},
@@ -84,13 +85,13 @@ const BASE_NODES=[
    The whole GEOGRAPHY set is appended to BASE_NODES only when the lobby flag is on
    (rebuildWorld). Abilities are id-hooked exactly like the base game: startTurn
    passives, income() synergies, and applyIntent actions keyed on the node id. */
-let NODES=[];
-const GEO_NODE_IDS=['geo_missile','geo_shahed','geo_wonsan','geo_pyoncity','geo_pyothotel','geo_boeing','geo_scs','geo_stage5','geo_pillars','geo_venice','geo_tuvalu','geo_kim'];
-const OIL_IDS=['oil','oilgraph','barrels','tanker','petronas'];
-const GEO_HIGH_VALUE_IDS=['geo_missile','geo_shahed','geo_scs','geo_pyothotel','geo_boeing','geo_pillars','geo_kim','geo_wonsan','geo_venice','geo_pyoncity','geo_stage5'];
+export let NODES=[];
+export const GEO_NODE_IDS=['geo_missile','geo_shahed','geo_wonsan','geo_pyoncity','geo_pyothotel','geo_boeing','geo_scs','geo_stage5','geo_pillars','geo_venice','geo_tuvalu','geo_kim'];
+export const OIL_IDS=['oil','oilgraph','barrels','tanker','petronas'];
+export const GEO_HIGH_VALUE_IDS=['geo_missile','geo_shahed','geo_scs','geo_pyothotel','geo_boeing','geo_pillars','geo_kim','geo_wonsan','geo_venice','geo_pyoncity','geo_stage5'];
 /* Related North Korea DLC pins; their physical positions are deliberately not clustered. */
-const GEO_NK_IDS=['geo_missile','geo_wonsan','geo_pyoncity','geo_pyothotel','geo_kim'];
-const GEO_NODES=[
+export const GEO_NK_IDS=['geo_missile','geo_wonsan','geo_pyoncity','geo_pyothotel','geo_kim'];
+export const GEO_NODES=[
 {id:'geo_missile',image:'./static/GeographyDLC/nk_missile.jpg',name:['MISSILE COMMAND'],icon:'🚀',type:'REGULATOR',shape:'photo',income:0,cost:8,x:2140,y:1180,rot:2,sub:'strategic assets · keys under the desk',sp:'Unlocks LAUNCH A MISSILE ($4 + 1 Intel, once per turn): strike any node — but you must BE HERE to fire, during your move (the launch ends the move; your action still follows) or as your action (owning KIM JONG UN also arms the silo from anywhere). An owned node is expropriated with NO payout; either way it becomes rubble — no income, no seizing. Stand on rubble in your action phase and pay the list price to rebuild it; it returns unowned, buyable from next turn. ESG is vulnerable to missile strikes.'},
 {id:'geo_shahed',image:'./static/GeographyDLC/shahed drone.webp',name:['IRANIAN','SHAHED DRONE'],icon:'🛩️',type:'REGULATOR',shape:'photo',income:0,cost:8,x:420,y:1120,rot:-2,sub:'one-way delivery · disposable diplomacy',sp:'Functions like MISSILE COMMAND: launch a missile for $4 + 1 Intel, once per turn. Fire while standing on the drone you own, or from anywhere if you own KIM JONG UN. You cannot own this and MISSILE COMMAND at the same time.'},
 {id:'geo_wonsan',image:'./static/GeographyDLC/nk_wonsanresort.jpg',name:['WONSAN','RESORT'],icon:'🏖️',type:'WILD',shape:'photo',income:2,cost:5,x:2080,y:700,rot:-2,sub:'the beach town · sanctioned paradise',sp:'Stand here (once owned) for BEACH DAY: free, once per turn, −2 Cortisol. The sand is quiet. The waves are loud. Nobody is watching.'},
@@ -104,19 +105,19 @@ const GEO_NODES=[
 {id:'geo_tuvalu',image:'./static/GeographyDLC/geo_tuvalu.png',name:['TUVALU','.TV'],icon:'🏝️',type:'WILD',shape:'photo',income:2,cost:5,x:1900,y:1420,rot:-2,sub:'the first country you get free',sp:'THE JOIN IS FREE: the first player to arrive simply owns it. No action, no cost, no Cortisol. After that, normal rules apply.'},
 {id:'geo_kim',image:'./static/GeographyDLC/nk_kimjongun.png',name:['KIM JONG','UN'],icon:'🧨',type:'WILD',shape:'photo',income:0,cost:6,x:2320,y:1210,rot:-2,sub:'the man himself · nothing is happening',sp:'+1 Intel at the start of each of your turns. Owning him exempts you from either launcher’s on-site rule — both the silo and the Shahed can fire from anywhere.'},
 ];
-const GEO_EDGES=[
+export const GEO_EDGES=[
  ['geo_missile','geo_pyoncity'],['geo_pyoncity','geo_pyothotel'],['geo_pyothotel','geo_wonsan'],['geo_wonsan','geo_missile'],
  ['geo_boeing','geo_pyothotel'],['geo_missile','geo_stage5'],['geo_stage5','geo_pillars'],
  ['geo_scs','geo_tuvalu'],['geo_venice','geo_scs'],
  ['geo_kim','geo_missile'],['geo_kim','geo_pyoncity'],['geo_shahed','geo_venice']
 ];
-const NMAP={};
+export const NMAP={};
 /* The Geography DLC rebuilds these every time the lobby flag flips. */
-let ORIGINAL_NODE_LAYOUT=[];
-let ORIGINAL_LAYOUT_BY_ID={};
+export let ORIGINAL_NODE_LAYOUT=[];
+export let ORIGINAL_LAYOUT_BY_ID={};
 
-const COUNTRY=['us','japan','uk','aus'];
-const BASE_EDGES=[
+export const COUNTRY=['us','japan','uk','aus'];
+export const BASE_EDGES=[
  /* banks & the missing fourth */
  ['citi','commbank'],['commbank','nab'],['nab','anz'],['nab','westpac'],['westpac','commbank'],['westpac','citi'],['anz','rba'],['citi','bond007'],['citi','coal'],
  /* regulators row */
@@ -149,10 +150,12 @@ const BASE_EDGES=[
  /* people bridges */
  ['bullock','rock'],['rock','jt'],['jt','press'],['watson','golf'],['chalmers','herald']
 ];
-const REMOVED_NODE_IDS=new Set(['notes','vault','unid1','unid2','real','spend','can','tv','ger','timeline','econ','debt']);
-let CLEAN_EDGES=[],WORLD_EDGES=[],EDGES=[],HIGH_VALUE_NODE_IDS=new Set();
-const ADJ={};
-function rebuildAdj(){
+export const REMOVED_NODE_IDS=new Set(['notes','vault','unid1','unid2','real','spend','can','tv','ger','timeline','econ','debt']);
+export let CLEAN_EDGES=[],WORLD_EDGES=[],EDGES=[],HIGH_VALUE_NODE_IDS=new Set();
+export function setEdges(v){EDGES=v}
+export function setNodes(v){NODES=v}
+export const ADJ={};
+export function rebuildAdj(){
  Object.keys(ADJ).forEach(k=>delete ADJ[k]);
  EDGES.forEach(e=>{
   if(!NMAP[e[0]]||!NMAP[e[1]])return;
@@ -166,12 +169,12 @@ rebuildAdj();
    recomputed from scratch: NMAP, the canonical layout deck, the edge graph and
    the high-value seeding set. With the flag off this produces a world that is
    byte-for-byte the game as it has always been. */
-const HIGH_VALUE_BASE_IDS=[
+export const HIGH_VALUE_BASE_IDS=[
  'qantas','rba','oil','gold','sat','asics','rock','press','fox','sisy',
  'made','bullock','jt','mpc','whistle','term','bond','hedge','petronas'
 ];
-let WORLD_GEO=false;
-function rebuildWorld(geo){
+export let WORLD_GEO=false;
+export function rebuildWorld(geo){
  WORLD_GEO=!!geo;
  NODES=geo?BASE_NODES.concat(GEO_NODES):BASE_NODES.slice();
  Object.keys(NMAP).forEach(k=>delete NMAP[k]);
@@ -186,19 +189,19 @@ function rebuildWorld(geo){
 }
 rebuildWorld(false);
 /* Quikstop is the only exhibit that physically moves each game — five neighbourhoods, same servo */
-const QUIK_HOME={x:350,y:430,rot:2};
-const QUIK_SLOTS=[
+export const QUIK_HOME={x:350,y:430,rot:2};
+export const QUIK_SLOTS=[
  {x:350,y:430,rot:2,links:['coal','watson','bond007','market','train'],label:'the original servo · inner west'},
  {x:1540,y:1210,rot:-2,links:['photo','bigshort','market','news'],label:'down by MarketPlace · the late shift'},
  {x:2060,y:680,rot:1,links:['forklift','petronas','whistle'],label:'the docks servo · petrol & crude'},
  {x:700,y:280,rot:-1,links:['rba','bullock','rock','westpac','cash'],label:'across from the Reserve Bank'},
  {x:1120,y:1410,rot:2,links:['made','sat','news','photo'],label:'the unexplained servo · next to MADE'}
 ];
-const TYPE_COLORS={BANK:'#a87511',COMMODITY:'#c05621',MEDIA:'#b5308c',CORPORATE:'#1f6f8b',REGULATOR:'#5c6b73',CHART:'#2e8b57',WILD:'#6b4fa0'};
-const PCOLORS=['#f5c542','#55c1ff','#e19bff','#7fe08d','#ff5e9c','#ffffff','#00e5c0','#ffa94d'];
-const MAXPLAYERS=8;
-const CHARURL='/characters/';
-const CHARS=[
+export const TYPE_COLORS={BANK:'#a87511',COMMODITY:'#c05621',MEDIA:'#b5308c',CORPORATE:'#1f6f8b',REGULATOR:'#5c6b73',CHART:'#2e8b57',WILD:'#6b4fa0'};
+export const PCOLORS=['#f5c542','#55c1ff','#e19bff','#7fe08d','#ff5e9c','#ffffff','#00e5c0','#ffa94d'];
+export const MAXPLAYERS=8;
+export const CHARURL='/characters/';
+export const CHARS=[
  {id:'markwatson',name:'Mark Watson',file:'markwatson.png',color:'#f5c542'},
  {id:'tomkins',name:'Tomkins',file:'tomkins.png',color:'#55c1ff'},
  {id:'jimchalmers',name:'Jim Chalmers',file:'jimchalmers.png',color:'#e19bff'},
@@ -212,10 +215,10 @@ const CHARS=[
  {id:'thebigag',name:'The Big Ag',file:'thebigag.png',color:'#d6e85c'},
  {id:'thebigwegrzyn',name:'Seth Wegrzyn',file:'thebigwegrzyn.png',color:'#e8a07a'}
 ];
-function charMeta(id){return CHARS.find(c=>c.id===id)||null}
-function charSrc(id){const c=charMeta(id);return c?(c.url||CHARURL+c.file):''}
+export function charMeta(id){return CHARS.find(c=>c.id===id)||null}
+export function charSrc(id){const c=charMeta(id);return c?(c.url||CHARURL+c.file):''}
 /* ================= THE MARKET MOOD — set by every event, felt by everyone ================= */
-const MOODS={
+export const MOODS={
  CALM:{label:'MARKET: CALM',color:'#8fbf7f',tint:'rgba(70,130,70,0.045)',rate:2,desc:'no modifiers · 1 🛈 = $2'},
  BOOM:{label:'MARKET: BOOM',color:'#f5c542',tint:'rgba(200,160,40,0.075)',rate:2,desc:'COMMODITIES +$1/turn · 1 🛈 = $2'},
  PANIC:{label:'MARKET: PANIC',color:'#ff6b5e',tint:'rgba(170,30,20,0.10)',rate:4,desc:'BANKS −$1/turn · 1 🛈 = $4'},
@@ -223,7 +226,7 @@ const MOODS={
 };
 /* sparklines drawn INSIDE the 130x64 chart card (card spans x -65..65, y -32..32;
    line band: x -50..50, y 0..14) */
-const SPK={
+export const SPK={
 up:'-50,13 -34,11 -18,12 -2,7 14,9 30,3 42,5 50,1',
 down:'-50,2 -34,4 -18,3 -2,8 14,7 30,11 42,10 50,13',
 step:'-50,13 -30,13 -30,9 -8,9 -8,5 16,5 16,2 50,2',
@@ -231,62 +234,19 @@ spike:'-50,13.5 -34,13 -18,11.5 -2,12 14,7 30,3 42,0.5 50,0',
 vola:'-50,7 -38,12 -26,3 -14,10 -2,5 10,12 22,2 34,9 46,1 50,5',
 flat:'-50,9 -25,8.5 0,9 25,8.5 50,8'};
 
-/* ================= MARKET EVENT DECK (24 cards) — every card moves the mood ================= */
-const CARDS=[
-{id:'oilspike',icon:'🛢️',title:'OIL SPIKES — WTI +12%',text:'Crude goes vertical. The pit pays out, the tankers get rich, and everyone pays at the pump.',
- run(){setMood('BOOM','WTI +12% — crude goes vertical');[['oil',6,'crude windfall'],['oilgraph',2,'the graph called it'],['tanker',3,'tankers rechartered at panic rates'],['petronas',3,'the national oil company'],['barrels',2,'the barrel yard']].forEach(a=>{const o=S.owner[a[0]];if(o!=null)gain(o,a[1],a[2])});const q=S.owner.quik;S.players.forEach((pl,i)=>{if(i===q)return;if(q==null)payVoid(i,1,'fuel costs — nobody minds the till');else payTo(i,1,q,'fuel costs → QuikStop')});}},
-{id:'coalrush',icon:'🚃',title:'COAL RUSH',text:'Demand for black rock goes nuclear. Everything on rails and water makes money.',
- run(){setMood('BOOM','coal rush — everything on rails makes money');[['port',4,'the docks work overtime'],['train',2,'the train runs all night'],['tanker',3,'freight rates through the roof'],['coal',2,'COAL Corp books all of it'],['forklift',1,'pallets upon pallets'],['bhp',3,'the Big Australian books the tonnes']].forEach(a=>{const o=S.owner[a[0]];if(o!=null)gain(o,a[1],a[2])});}},
-{id:'rates',icon:'🏛️',title:'RBA CASH-RATE DECISION',text:'Governor Bullock leans into the microphone. Money gets expensive — for everyone but the insiders.',
- run(){setMood('CALM','the RBA decides — the market holds its breath, then exhales');const r=S.owner.rba,b=S.owner.bullock;S.players.forEach((pl,i)=>{if(i===r||i===b)return;payFee(i,2,'the cost of money')});if(r!=null)log('🏛️ '+pname(r)+' set the rate — pays nothing.');if(b!=null)log('👩‍💼 The Governor takes '+pname(b)+'’s calls — pays nothing.');const c=S.owner.cash;if(c!=null)gain(c,2,'you literally set it');const j=S.owner.jim;if(j!=null)gain(j,2,'the headline sells papers');const be=S.owner.bess;if(be!=null)gain(be,2,'“BIG BESSENT” reacts live');const hs=S.owner.herald;if(hs!=null)gain(hs,2,'THE JIM REAPER reprints the decision');}},
-{id:'bondrevolt',icon:'💥',title:'BONDMAGEDDON',text:'“Government Bond: the collapse of the world’s safest investment.” Yields go vertical from Tokyo to Toronto.',
- run(){setMood('PANIC','“the collapse of the world’s safest investment”');const bd=S.owner.bond;S.players.forEach((pl,i)=>{const banks=NODES.filter(n=>n.type==='BANK'&&S.owner[n.id]===i).length;if(!banks)return;const amt=banks*2;if(bd!=null)payTo(i,amt,bd,'the revolt eats '+banks+' bank position'+(banks>1?'s':'')+' → The Bond Desk');else payVoid(i,amt,'the revolt eats the banking book')});COUNTRY.forEach(c=>{const o=S.owner[c];if(o!=null)gain(o,c==='japan'?3:1,NMAP[c].name.join(' ')+' pays its reader')});const t=S.owner.tenyear;if(t!=null)gain(t,2,'the master chart was right');const be=S.owner.bess;if(be!=null)gain(be,2,'Big Bessent called it on air');const br=S.owner.brad;if(br!=null)gain(br,2,'he had it explained in the movie');const bs=S.owner.bigshort;if(bs!=null)gain(bs,3,'the cinema saw it coming');const lk=S.owner.leak;if(lk!=null)gain(lk,2,'the leak was first with it');}},
-{id:'ceophoto',icon:'📸',title:'CEO PHOTO LEAKS — COAL CORP',text:'Mark Watson, photographed exactly where he should not have been. Someone is holding matches.',
- run(){setMood('FRENZY','CEO photo leaks — the front pages feed');const c=S.owner.coal;if(c==null){log('🚂 COAL CORP HQ is unowned — Watson denies everything to an empty room.');return}if(S.owner.watson===c){log('🕴️ Watson fronts the cameras himself — the photos are dismissed as “old”. No Cortisol.');return}if(S.owner.port===c)gain(c,5,'shipped the coal before the news broke');if(S.owner.press===c||S.owner.fox===c){gain(c,3,'the press room spins it beautifully');return}addCortisol(c,3,'the photos run on every front page','event');}},
-{id:'tariffs',icon:'🦅',title:'TRUMP TWEETS TARIFFS',text:'ALL CAPS. Exclamation points. Global markets do a synchronized swan dive.',
- async run(){setMood('PANIC','TARIFFS! ALL CAPS! markets swan-dive');const t=S.owner.trump;let chain;const opts=[{label:'🛢️ OIL chain +$3 each',v:'oil'},{label:'🚂 COAL chain +$3 each',v:'coal'}];
- if(t!=null)chain=await askPlayer(t,{title:'TRUMP TWEETS TARIFFS',body:'You own THE DONALD — which chain gets the windfall?',options:opts,def:Math.random()<.5?'oil':'coal'});
- else chain=Math.random()<.5?'oil':'coal';
- const list=chain==='oil'?['oil','oilgraph','barrels','tanker','petronas']:['coal','train','port','watson','forklift','bhp'];
- const winners=new Set();list.forEach(id=>{const o=S.owner[id];if(o!=null){gain(o,3,chain+' windfall via '+NMAP[id].name[0]);winners.add(o)}});
- const u=S.owner.us;if(u!=null){gain(u,2,'the safe-haven bid');winners.add(u)}
- S.players.forEach((pl,i)=>{if(!winners.has(i))payVoid(i,1,'the tariff bill')});
- if(t!=null)log('🦅 The tweet did numbers.');}},
-{id:'besspeak',icon:'🎤',title:'BIG BESSENT SPEAKS',text:'The Treasury clears its throat. Bond desks straighten their ties. Markets listen.',
- run(){setMood('CALM','Big Bessent soothes the desk');const b=S.owner.bessent;if(b!=null)gain(b,3,'the big man speaks');const d=S.owner.bond;if(d!=null)gain(d,2,'the desk frontran the speech');const t=S.owner.tenyear;if(t!=null)gain(t,2,'yields obey');const br=S.owner.brad;if(br!=null)gain(br,2,'he had it explained to him');}},
-{id:'budget',icon:'📰',title:'THE JIM DELIVERS THE BUDGET',text:'“The Jim…” reads numbers to a sleepy chamber. Somebody, somewhere, is counting.',
- run(){setMood('CALM','the budget is delivered — mostly numbers');const s=S.owner.spend;if(s!=null)gain(s,3,'the spending graphic glows');const ch=S.owner.chalmers;if(ch!=null)gain(ch,2,'the Treasurer delivers');const j=S.owner.jim;if(j!=null)gain(j,2,'the exclusive pays');const hs=S.owner.herald;if(hs!=null)gain(hs,2,'THE JIM REAPER special edition');const a=S.owner.albo;if(a!=null)gain(a,1,'the PM signs it');S.players.forEach((pl,i)=>{if(i!==s&&i!==ch&&i!==j&&i!==a&&i!==hs)payVoid(i,1,'return to sender (taxes)')});}},
-{id:'mpcfinals',icon:'🏆',title:'MONETARY POLICY COMPETITION FINALS',text:'The RBA’s big night. Schools. Charts. Trophies. JTPortal is rumoured to be judging.',
- run(){setMood('BOOM','monetary policy finals — the schools deliver');const m=S.owner.mpc;if(m!=null){gain(m,4,'the champions’ purse');giveIntel(m,1,'the finalists’ data')}const sc=S.owner.school;if(sc!=null)gain(sc,2,'the school places');const ib=S.owner.ib;if(ib!=null)gain(ib,2,'the IB cohort delivers');const jt=S.owner.jt;if(jt!=null)giveIntel(jt,1,'JTPortal judged the submissions');}},
-{id:'sisyroll',icon:'🪨',title:'THE BOULDER ROLLS BACK DOWN',text:'Empires, portfolios, homework — everything heavy slides. The biggest players feel it most.',
- run(){setMood('CALM','the boulder rolls back down, as ever');const counts=S.players.map((pl,i)=>NODES.filter(n=>S.owner[n.id]===i).length);const mx=Math.max(...counts);S.players.forEach((pl,i)=>{if(counts[i]===mx&&S.owner.sisy!==i)payVoid(i,2,'the boulder finds the biggest stack')});const s=S.owner.sisy;if(s!=null)log('🪨 '+pname(s)+' is used to this — immune.');}},
-{id:'goldrush',icon:'🪙',title:'GOLD RUSH',text:'The gold-coloured coins gleam. Paper money suddenly looks like a rumor.',
- run(){setMood('BOOM','gold gleams — paper looks like a rumor');const g=S.owner.gold;if(g!=null)gain(g,5,'everything gleams');const n=S.owner.notes;if(n!=null)gain(n,2,'collectors pay up');const bh=S.owner.bhp;if(bh!=null)gain(bh,3,'ore prices sneak up with the gold');S.players.forEach((pl,i)=>{if(i!==g&&i!==n&&i!==bh)payVoid(i,1,'inflation bites')});}},
-{id:'rockcooks',icon:'💪',title:'THE ROCK COOKS',text:'A gym, a blender, a set of books that needed cooking. The smell is unmistakable.',
- run(){setMood('CALM','the books are cooked; the gym is calm');const r=S.owner.rock;if(r!=null){gain(r,3,'ladder of opportunity');addCortisol(r,-1,'the calm after the cook')}else log('💪 Nobody owns The Rock. The books stay raw.');}},
-{id:'davos',icon:'🏔️',title:'DAVOS — THE CONFERENCE STAGE',text:'Lanyards, panels, fondue. Global networks tighten over canapés.',
- run(){setMood('FRENZY','Davos — lanyards, panels, fondue');const w=S.owner.wef;if(w!=null)gain(w,3,'the big table pays out');const b=S.owner.bessent;if(b!=null)gain(b,2,'a familiar face on the panel');Object.keys(S.bugs).forEach(nid=>{const o=S.bugs[nid];S.players[o].money+=1;log('🏔️ Global skim from '+NMAP[nid].name.join(' ')+': '+pname(o)+' +$1.')});}},
-{id:'quikrob',icon:'🎭',title:'QUIKSTOP ROBBERY',text:'A ski mask, a shopping bag, an empty register. The tapes are… missing.',
- run(){setMood('CALM','a ski mask, a shopping bag, an empty register');const q=S.owner.quik;if(q==null){S.players.forEach((pl,i)=>payVoid(i,1,'nobody was watching the till'));return}payVoid(q,2,'gone, just gone');const b=S.owner.bond007;if(b!=null)gain(b,2,'he was there in disguise (allegedly)');}},
-{id:'ibexams',icon:'📝',title:'IB EXAMS',text:'Papers, calculators, despair. The Diploma Programme does not grade on charisma.',
- run(){setMood('CALM','IB exams — despair, indexed');const ib=S.owner.ib;if(ib!=null)giveIntel(ib,2,'HL Economics pays off');const sc=S.owner.school;if(sc!=null)giveIntel(sc,1,'the cohort crammed');S.players.forEach((pl,i)=>{const charts=NODES.filter(n=>n.type==='CHART'&&S.owner[n.id]===i).length;if(charts===0&&pl.intel>0){pl.intel-=1;fxAt(i,'🛈−1','#55c1ff');log('📝 '+pname(i)+' didn’t do the reading: −1 Intel.')}});}},
-{id:'profit',icon:'⛽',title:'PROFIT WARNING… FOR OTHERS',text:'Markets wobble, people stress-eat. Quikstop does just fine.',
- run(){setMood('CALM','profit warning… for others');const q=S.owner.quik;if(q!=null)gain(q,4,'snack economics');else log('⛽ Quikstop is unowned — the profits drift away.');}},
-{id:'quiet',icon:'🌙',title:'A QUIET QUARTER',text:'No tweets, no leaks, no rate decisions. Everyone quietly pockets a little extra.',
- run(){setMood('CALM','a quiet quarter — no tweets, no leaks');S.players.forEach((pl,i)=>gain(i,2,'a quiet quarter'));}},
-{id:'snoop',icon:'🔍',title:'REGULATORS SNOOP AROUND',text:'Somebody asked one question too many. The sweatiest players get a second look.',
- run(){setMood('CALM','regulators asking one question too many');const mx=Math.max(0,...S.players.map(pl=>pl.cortisol));if(mx<=0){log('🔍 Nobody has any Cortisol — the regulators go for coffee.');return}S.players.forEach((pl,i)=>{if(pl.cortisol===mx)addCortisol(i,1,'regulators circling','event')});}},
-{id:'tip',icon:'✉️',title:'ANONYMOUS TIP',text:'A brown envelope with no return address. Everyone learns something.',
- run(){setMood('CALM','a brown envelope, no return address');S.players.forEach((pl,i)=>giveIntel(i,1,'the envelope'));log('✉️ Every player gains 1 Intel.');}},
-{id:'frenzy',icon:'🗣️',title:'MEDIA FRENZY',text:'“Quite frankly…” The press needs a villain before deadline. Whoever owns the narrative picks one.',
- async run(){setMood('FRENZY','the press needs a villain before deadline');const pi=S.owner.press;if(pi==null){log('🗣️ The Press Room is unowned — the story dies in committee.');return}const rivals=S.players.map((pl,i)=>i).filter(i=>i!==pi);const opts=rivals.map(i=>({label:S.players[i].name+' +2 🔥',v:i}));opts.push({label:'Sit on the story',v:-1});const v=await askPlayer(pi,{title:'MEDIA FRENZY',body:'You control the PRESS ROOM — torch which rival?',options:opts,def:-1});if(v>=0)addCortisol(v,2,'front-page frenzy','event');}},
-{id:'crackdown',icon:'🚨',title:'MONOPOLY ALERT',text:'The regulator finally does something. The hottest player pays for it.',
- run(){setMood('PANIC','crackdown — the regulator finally does something');const mx=Math.max(0,...S.players.map(pl=>pl.cortisol));if(mx<=0){log('🚨 Nobody is hot — the crackdown hits an empty office.');return}S.players.forEach((pl,i)=>{if(pl.cortisol===mx)payFee(i,4,'crackdown fine')});const bs=S.owner.bigshort;if(bs!=null)gain(bs,3,'the cinema called it');}},
-{id:'tapes',icon:'🗑️',title:'THE TAPES GO MISSING',text:'A shredder runs all night. What you knew, you no longer know — unless you kept copies.',
- run(){setMood('CALM','the tapes go missing — a shredder runs all night');S.players.forEach((pl,i)=>{if(S.owner.whistle===i){giveIntel(i,2,'the Whistleblower kept copies')}else if(S.owner.jt===i){giveIntel(i,2,'JTPortal keeps backups')}else if(pl.intel>0){pl.intel-=1;fxAt(i,'🛈−1','#55c1ff');log('🗑️ '+pname(i)+' loses 1 Intel — the tapes are gone.')}});}},
-{id:'bigscreen',icon:'🎬',title:'THE BIG SHORT SCREENING',text:'Brad Pitt explains subprime with a Jenga tower. Everyone watches. Nobody learns.',
- run(){setMood('FRENZY','The Big Short screens to a packed house');const bs=S.owner.bigshort;if(bs!=null)gain(bs,3,'packed house');const br=S.owner.brad;if(br!=null)gain(br,2,'he was right there on screen');const h=S.owner.hedge;if(h!=null)gain(h,2,'somebody was short the whole time');}},
-{id:'madeout',icon:'🟣',title:'MADE PAYS OUT… PROBABLY',text:'The purple graphic does… something. Money appears. Explanations do not.',
- run(){setMood(S.mood,'MADE does… something');if(Math.random()<1/3){madePay();log('🟣 MADE has paid out. Nobody knows why. NOBODY.')}else log('🟣 MADE remains unexplained. Again.');}}
-];
-const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);
+/* ================= ROOM CODES — jt portal buzzwords ================= */
+/* Room codes are jt portal buzzwords — every one of these has its own line in
+   the jt portal news ticker, so the code is always something you can say out loud. */
+export const BUZZWORDS=['WORLD ECONOMIC FORUM','NESA','JAKE TOMKINS','ELIJAH SON','SETH WEGRZYN','AIDAN NEWLING','DANIEL SWAIN','TOKTIMER','RBA','BIG BESSENT','NEW LAKEMBA','JTPORTAL','MCMETRO','CEO OF COAL','INKDIN','HORMUZ','PYONGYANG UNIVERSITY','LOW CORTISOL'];
+export function codeSlug(s){return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
+export function codeLabel(slug){const hit=BUZZWORDS.find(b=>codeSlug(b)===slug);return hit||slug}
+/* Typed codes are forgiving: case, spaces and punctuation are all ignored, and a
+   unique prefix of a buzzword is enough. */
+export function matchBuzzword(input){
+ const s=codeSlug(input);
+ if(!s)return '';
+ if(BUZZWORDS.some(b=>codeSlug(b)===s))return s;
+ const hits=BUZZWORDS.filter(b=>codeSlug(b).startsWith(s));
+ return hits.length===1?codeSlug(hits[0]):s;
+}
+export function genCode(){return codeSlug(BUZZWORDS[Math.floor(Math.random()*BUZZWORDS.length)])}

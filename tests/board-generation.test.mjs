@@ -40,8 +40,8 @@ const HIGH_VALUE = ['qantas', 'rba', 'oil', 'gold', 'sat', 'asics', 'rock', 'pre
 const BIG7 = ['citi', 'rba', 'infl', 'term', 'coal', 'oil', 'press'];
 const SEEDS = 200;
 
-test('RM-01..RM-07 the generated board is a valid connected collage across 200 seeds', { timeout: 120000 }, t => {
-  const engine = loadEngine();
+test('RM-01..RM-07 the generated board is a valid connected collage across 200 seeds', { timeout: 120000 }, async t => {
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   const { NODES, NMAP, ADJ } = engine.acc;
 
@@ -137,8 +137,8 @@ test('RM-01..RM-07 the generated board is a valid connected collage across 200 s
   assert.equal(violations, 0);
 });
 
-test('RM-10 Ringworld places every node on concentric rings around a four-link Quikstop hub', { timeout: 30000 }, t => {
-  const engine = loadEngine();
+test('RM-10 Ringworld places every node on concentric rings around a four-link Quikstop hub', { timeout: 30000 }, async t => {
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   const { NODES, NMAP, ADJ } = engine.acc;
   let gen;
@@ -167,8 +167,8 @@ test('RM-10 Ringworld places every node on concentric rings around a four-link Q
   assert.equal(gen.edges.filter(e => e.includes('quik')).length, 4, 'wire layout preserves the four Quikstop spokes');
 });
 
-test('RM-12 Ringworld sizes its tracks from the roster and keeps clear gaps at every seat count', { timeout: 30000 }, t => {
-  const engine = loadEngine();
+test('RM-12 Ringworld sizes its tracks from the roster and keeps clear gaps at every seat count', { timeout: 30000 }, async t => {
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
 
   for (const geo of [false, true]) {
@@ -224,8 +224,8 @@ test('RM-12 Ringworld sizes its tracks from the roster and keeps clear gaps at e
   }
 });
 
-test('RM-11 Mega Ring keeps clear gaps between rotated nodes and auto-fits the expanded canvas', t => {
-  const engine = loadEngine();
+test('RM-11 Mega Ring keeps clear gaps between rotated nodes and auto-fits the expanded canvas', async t => {
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
 
   for (const geo of [false, true]) {
@@ -292,7 +292,7 @@ test('RM-11 Mega Ring keeps clear gaps between rotated nodes and auto-fits the e
 
 test('RM-08 a full initGame deals a legal board: everyone starts at quik, layouts match the live graph', { timeout: 60000 }, async t => {
   for (const seed of [3001, 3002, 3003, 3004, 3005, 3006]) {
-    const engine = loadEngine();
+    const engine = await loadEngine();
     t.after(() => engine.dispose());
     const { NODES, NMAP, EDGES: _staticEdges } = engine.acc; // EDGES is rebound by initGame — always read the live acc.EDGES
     const Net = engine.acc.Net;
@@ -342,8 +342,8 @@ test('RM-08 a full initGame deals a legal board: everyone starts at quik, layout
 
 test('RM-09 pubState→adoptState round-trips exactly and is idempotent', { timeout: 60000 }, async t => {
   for (const seed of [4001, 4002, 4003, 4004]) {
-    const host = loadEngine();
-    const guest = loadEngine();
+    const host = await loadEngine();
+    const guest = await loadEngine();
     t.after(() => { host.dispose(); guest.dispose(); });
     const Net = host.acc.Net;
     Net.role = 'host'; Net.myIdx = 0; Net.goal = 100; Net.lobbyChat = []; Net.started = false;

@@ -1,52 +1,89 @@
 /*
  * Dependency-free test harness for THE BIG CON.
  *
- * Loads the real game scripts (index.html's classic <script> list, joined) into a
- * fresh `node:vm` context with:
+ * The game is a graph of native ES modules (index.html -> static/js/main.js).
+ * This harness imports the REAL modules — nothing is concatenated or eval'd —
+ * and runs them against:
+ *   - fake hooks (modal recorder with queued answers, virtual-clock timers),
  *   - a virtual clock (setTimeout/setInterval are recorded and advanced by
  *     tests, so prompt timeouts, lock watchdogs and heartbeats are deterministic
  *     and can never hang the suite),
- *   - a stub DOM (element stubs record settable state; heavy SVG rendering is
- *     never scheduled because requestAnimationFrame is stubbed out),
+ *   - a stub DOM for the browser layer (element stubs record settable state;
+ *     heavy SVG rendering is never scheduled because requestAnimationFrame is a
+ *     stub),
  *   - fake PeerJS-style connections that record every outgoing message and can
  *     auto-answer private prompts or auto-ack event announcements.
+ *
+ * Every `await loadEngine()` gets a PRIVATE copy of the module graph (see
+ * fresh-loader.mjs: a `?gen=N` query is carried through every relative import and
+ * the stub environment is shadowed in per module), so several engines can live at
+ * once, each with its own state, clock and DOM — like the old one-vm-per-engine.
+ *
+ * The DOM-free layer (hooks, util, data, state, boards, engine) needs none of
+ * this: tests/engine-isolated.test.mjs imports it plain, with fake hooks only.
  *
  * Nothing here is reachable from a normal client: this file only runs under the
  * Node test runner. It adds no test hooks to production code.
  */
 import fs from 'node:fs';
-import vm from 'node:vm';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { register } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { ENV_NAMES } from './fresh-loader.mjs';
 
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+register('./fresh-loader.mjs', import.meta.url);
 const html = fs.readFileSync(path.join(repoRoot, 'index.html'), 'utf8');
+export const HTML = html;
 
-/* ---------- game script extraction ----------
- * index.html loads the game as plain classic <script>s sharing one global
- * scope: a tiny inline script (BUILD_COMMIT) followed by <script src> files.
- * Skipped: type="module" blocks (Discord; never ran in the harness), remote
- * scripts (PeerJS from unpkg) and static/bots.js, which is a separate policy
- * module that bots.test.mjs loads itself on top of the engine. */
-export const EXCLUDED_SCRIPTS = new Set(['static/bots.js']);
-export function gameScripts() {
+/* ---------- module graph, as the browser sees it ----------
+ * index.html loads one entry module (plus the inline BUILD_COMMIT classic
+ * script); the rest is whatever it statically imports. */
+export function importSpecs(text) {
   const out = [];
-  for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
-    const attrs = m[1];
-    if (/\btype\s*=\s*["']module["']/i.test(attrs)) continue;
-    const src = attrs.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
-    if (!src) { out.push({ file: 'index.html:inline', text: m[2] }); continue; }
-    if (/^[a-z][a-z0-9+.-]*:|^\/\//i.test(src[1])) continue; // remote
-    const rel = src[1].replace(/^\.\//, '').replace(/[?#].*$/, '');
-    if (EXCLUDED_SCRIPTS.has(rel)) continue;
-    out.push({ file: rel, text: fs.readFileSync(path.join(repoRoot, rel), 'utf8') });
-  }
-  if (!out.length) throw new Error('could not locate any game script in index.html');
+  for (const m of text.matchAll(/^[ \t]*(?:import|export)\b[^'"`;\n]*?\bfrom\s*['"]([^'"\n]+)['"]/gm)) out.push(m[1]);
+  for (const m of text.matchAll(/^[ \t]*import\s*['"]([^'"\n]+)['"]/gm)) out.push(m[1]);
   return out;
 }
-export const HTML = html;
-export const GAME_SCRIPTS = gameScripts();
-export const SOURCE = GAME_SCRIPTS.map(s => s.text).join('\n');
+export function moduleEntries() {
+  const out = [];
+  for (const m of html.matchAll(/<script\b([^>]*)>/gi)) {
+    if (!/\btype\s*=\s*["']module["']/i.test(m[1])) continue;
+    const src = m[1].match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+    if (src && !/^[a-z][a-z0-9+.-]*:|^\/\//i.test(src[1])) out.push(src[1].replace(/^\.\//, '').replace(/[?#].*$/, ''));
+  }
+  return out;
+}
+/* Depth-first post-order: dependencies before dependents, i.e. evaluation order. */
+export function moduleGraph(entries = moduleEntries()) {
+  const seen = new Map(); // rel -> { file, text, imports }
+  const visit = rel => {
+    if (seen.has(rel)) return;
+    const text = fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+    const imports = importSpecs(text).filter(s => s.startsWith('.')).map(s => path.posix.normalize(path.posix.join(path.posix.dirname(rel), s)));
+    seen.set(rel, null);
+    for (const dep of imports) visit(dep);
+    seen.set(rel, { file: rel, text, imports });
+  };
+  entries.forEach(visit);
+  // Map preserves first-insertion order (pre-order); rebuild as post-order.
+  const order = [];
+  const done = new Set();
+  const post = rel => { if (done.has(rel)) return; done.add(rel); for (const d of seen.get(rel).imports) post(d); order.push(seen.get(rel)); };
+  entries.forEach(post);
+  return order;
+}
+export const GAME_MODULES = moduleGraph();
+export const INLINE_SCRIPTS = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
+  .filter(m => !/\bsrc\s*=/.test(m[1]) && !/\btype\s*=\s*["']module["']/i.test(m[1])).map(m => m[2]);
+export const BUILD_COMMIT_VALUE = (html.match(/const BUILD_COMMIT = '([^']*)'/) || [])[1] || 'dev';
+/* Static-analysis view of the game source: the inline stamp script plus every game
+ * module with its import/export keywords removed, so regex checks over the rules,
+ * copy and markup read like they always did. The bot policy (static/bots.js) and
+ * the Discord SDK glue are separate modules and stay out. */
+export const EXCLUDED_SCRIPTS = new Set(['static/bots.js', 'static/js/discord.js']);
+export const stripModuleSyntax = s => s.replace(/^import [^\n]*\n/gm, '').replace(/^export \{[^}]*\};?\n/gm, '').replace(/^export (default )?/gm, '');
+export const SOURCE = INLINE_SCRIPTS.concat(GAME_MODULES.filter(m => !EXCLUDED_SCRIPTS.has(m.file)).map(m => stripModuleSyntax(m.text))).join('\n');
 
 /* ---------- virtual clock ---------- */
 export function makeClock() {
@@ -159,7 +196,31 @@ export function makeConn(engine, playerId, opts = {}) {
 }
 
 /* ---------- engine loader ---------- */
-export function loadEngine(opts = {}) {
+globalThis.__BIGCON_ENVS = globalThis.__BIGCON_ENVS || {};
+let genSeq = 0;
+const GAME_MODULE_NAMES = ['hooks', 'util', 'data', 'state', 'boards', 'engine', 'core', 'net', 'ui', 'app'];
+/* Names the old tests reach through `engine.acc` (live reads of module state). */
+const ACC_NAMES = [
+  'S', 'Net', 'NODES', 'NMAP', 'EDGES', 'ADJ', 'CLEAN_EDGES', 'BASE_EDGES', 'BASE_NODES', 'GEO_NODES', 'GEO_EDGES', 'GEO_NODE_IDS',
+  'GEO_HIGH_VALUE_IDS', 'GEO_NK_IDS', 'PROJ_PAUSE_MS', 'OIL_IDS', 'WORLD_EDGES', 'WORLD_GEO', 'REMOVED_NODE_IDS', 'ORIGINAL_LAYOUT_BY_ID',
+  'CARDS', 'CARDBYID', 'MOODS', 'CHARS', 'BUZZWORDS', 'INDUSTRIES', 'WIN_TYPES', 'QUIK_SLOTS', 'QUIK_HOME', 'HIGH_VALUE_NODE_IDS', 'PCOLORS',
+  'TYPE_COLORS', 'MAXPLAYERS', 'GOAL_MIN', 'GOAL_MAX', 'GOAL_DEF', 'COUNTRY',
+];
+/* …and through `engine.f` (functions). */
+const F_NAMES = [
+  'applyIntent','startTurn','endOfTurn','nextTurn','winCheck','initGame','income','addCortisol','raid','madePay',
+  'acccInvestigate','concentratedIndustries','ownedInIndustry','industryNodes','generateRandomBoard','generateRingworldBoard','generateMegaRingBoard','megaRingMetrics','ringworldMetrics','boardViewBounds','resetBoardView','rebuildAdj',
+  'separateNodes','applyQuikSlot','nodeBox','pubState','adoptState','mergeTail','sendLogParts','adoptLogPart','flushState','sendAll','sendTo',
+  'sysTo','askPlayer','announceAll','revealAll','drawCard','handleHello','onHostClose','onHostData','broadcastLobby','setGeoUI',
+  'addLobbyChat','addChat','applyChar','lobbyPlayers','clampGoal','matchBuzzword','codeSlug','codeLabel','genCode',
+  'shuffle','esc','showRules','setMood','giveIntel','gain','payVoid','payTo','payFee','log','fxAt','fx','pname',
+  'doMove','doFly','doBug','doSpin','doSeize','endMovement','maybePeek','seizeListPrice','flatSeize','takeoverCost',
+  'canReach','qantasGrounded','qantasGroundedReason','abilityPhase','finishNodeAbility','startHostHeartbeat','sync','setNetStatus','toast',
+  'rebuildWorld','strikeNode','canMissileNode','blockaded','projFx','projRig','canUseBackroomAbility',
+];
+
+export async function loadEngine() {
+  const gen = ++genSeq;
   const clock = makeClock();
   const consoleOut = { log: [], warn: [], error: [] };
   const elems = new Map();
@@ -170,12 +231,13 @@ export function loadEngine(opts = {}) {
     querySelector: () => elem('sel'),
     querySelectorAll: () => [],
     createElement: tag => elem('el:' + tag + ':' + (elems.size + 1)),
+    createElementNS: (ns, tag) => elem('el:' + tag + ':' + (elems.size + 1)),
     addEventListener() {}, removeEventListener() {},
     body: elem('body'), documentElement: elem('html'), activeElement: null,
   };
   const modalRec = [];
   const activeHolds = [];
-  let modalQueue = [];
+  const modalQueue = [];
   /* A queue entry is either a plain resolved value, a hold request object
      {__hold:true} whose promise pends until released, or nothing (fall back to
      the modal's own default). */
@@ -193,62 +255,81 @@ export function loadEngine(opts = {}) {
   };
   const locationStub = { reloadCount: 0, reload() { this.reloadCount++; }, search: '', hostname: 'localhost' };
   const store = new Map();
+  const sessionStore = new Map();
   let uuidSeq = 0;
-  const ctx = {
+  const env = {
     console: {
       log: (...a) => consoleOut.log.push(a.join(' ')),
       warn: (...a) => consoleOut.warn.push(a.join(' ')),
       error: (...a) => consoleOut.error.push(a.join(' ')),
     },
-    Math, Date, JSON, URLSearchParams,
     setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
     setInterval: clock.setInterval, clearInterval: clock.clearInterval,
     requestAnimationFrame: () => 0,
-    document: documentStub, window: { addEventListener() {}, removeEventListener() {} }, location: locationStub,
+    document: documentStub,
+    window: { addEventListener() {}, removeEventListener() {}, focus() {}, open() { return null; } },
+    location: locationStub,
     navigator: { clipboard: { writeText: async () => {} } },
-    crypto: { randomUUID: () => 'pc-' + ++uuidSeq },
+    crypto: { randomUUID: () => 'pc-' + ++uuidSeq, getRandomValues: a => a },
     localStorage: {
       getItem: k => (store.has(k) ? store.get(k) : null),
       setItem: (k, v) => store.set(k, String(v)),
       removeItem: k => store.delete(k),
     },
-    __modalStub: modalStub, __broadcast: [],
+    sessionStorage: {
+      getItem: k => (sessionStore.has(k) ? sessionStore.get(k) : null),
+      setItem: (k, v) => sessionStore.set(k, String(v)),
+      removeItem: k => sessionStore.delete(k),
+    },
+    Notification: undefined, Peer: undefined, WebSocket: undefined,
+    BUILD_COMMIT: BUILD_COMMIT_VALUE,
   };
-  vm.createContext(ctx);
-  if (opts.perFile) {
-    /* Mimic the browser: each classic <script> is compiled and run on its own,
-       sharing the global lexical scope, in document order. Surfaces load-order
-       (TDZ / missing-hoist) bugs that the joined SOURCE would hide. */
-    for (const s of GAME_SCRIPTS) new vm.Script(s.text, { filename: s.file }).runInContext(ctx);
-  } else {
-    vm.runInContext(SOURCE, ctx, { filename: 'index.html:game-scripts' });
+  for (const n of ENV_NAMES) if (!(n in env)) throw new Error('harness env is missing ' + n);
+  globalThis.__BIGCON_ENVS[gen] = env;
+
+  /* One private copy of the game, loaded the way the browser does: the entry's
+     static imports pull in the graph. app.js is the composition root. */
+  const importMod = rel => import(pathToFileURL(path.join(repoRoot, rel)).href + '?gen=' + gen);
+  const mods = {};
+  mods.app = await importMod('static/js/app.js');
+  for (const n of GAME_MODULE_NAMES) mods[n] = await importMod('static/js/' + n + '.js');
+  const modList = [mods.engine, mods.state, mods.data, mods.boards, mods.net, mods.ui, mods.core, mods.util, mods.hooks, mods.app];
+  const owner = n => modList.find(m => n in m);
+  /* The same wiring the page does (app.js), then the test doubles on top: the
+     DOM modal is replaced by the recorder and timers run on the virtual clock. */
+  mods.app.installHooks();
+  mods.hooks.setHooks({ modal: modalStub, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
+  mods.app.boot();
+
+  const setters = { S: v => mods.state.setS(v), EDGES: v => mods.data.setEdges(v), NODES: v => mods.data.setNodes(v) };
+  const acc = {};
+  for (const n of ACC_NAMES) {
+    if (!owner(n)) throw new Error('harness: no module exports ' + n);
+    Object.defineProperty(acc, n, { get: () => owner(n)[n], set: setters[n], enumerable: true });
   }
-  const acc = vm.runInContext(`globalThis.__t = {
-    get S(){return S}, set S(v){S=v},
-    get Net(){return Net}, get NODES(){return NODES}, get NMAP(){return NMAP},
-    get EDGES(){return EDGES}, set EDGES(v){EDGES=v}, get ADJ(){return ADJ},
-    get CLEAN_EDGES(){return CLEAN_EDGES}, get BASE_EDGES(){return BASE_EDGES},
-    get BASE_NODES(){return BASE_NODES}, set NODES(v){NODES=v},
-    get GEO_NODES(){return GEO_NODES}, get GEO_EDGES(){return GEO_EDGES},
-    get GEO_NODE_IDS(){return GEO_NODE_IDS}, get GEO_HIGH_VALUE_IDS(){return GEO_HIGH_VALUE_IDS},
-    get GEO_NK_IDS(){return GEO_NK_IDS},
-    get PROJ_PAUSE_MS(){return PROJ_PAUSE_MS},
-    get OIL_IDS(){return OIL_IDS}, get WORLD_EDGES(){return WORLD_EDGES},
-    get WORLD_GEO(){return WORLD_GEO},
-    get REMOVED_NODE_IDS(){return REMOVED_NODE_IDS}, get ORIGINAL_LAYOUT_BY_ID(){return ORIGINAL_LAYOUT_BY_ID},
-    get CARDS(){return CARDS}, get CARDBYID(){return CARDBYID}, get MOODS(){return MOODS},
-    get CHARS(){return CHARS}, get BUZZWORDS(){return BUZZWORDS}, get INDUSTRIES(){return INDUSTRIES},
-    get WIN_TYPES(){return WIN_TYPES}, get QUIK_SLOTS(){return QUIK_SLOTS}, get QUIK_HOME(){return QUIK_HOME},
-    get HIGH_VALUE_NODE_IDS(){return HIGH_VALUE_NODE_IDS}, get PCOLORS(){return PCOLORS},
-    get TYPE_COLORS(){return TYPE_COLORS}, get MAXPLAYERS(){return MAXPLAYERS},
-    get GOAL_MIN(){return GOAL_MIN}, get GOAL_MAX(){return GOAL_MAX}, get GOAL_DEF(){return GOAL_DEF},
-    get COUNTRY(){return COUNTRY},
-  }; globalThis.__t`, ctx, { filename: 'harness-accessor' });
-  /* Replace the DOM modal (which demands a real browser) with the recorder. */
-  vm.runInContext('modal = __modalStub;', ctx, { filename: 'harness-rebind' });
+  const f = {};
+  for (const n of F_NAMES) {
+    const m = owner(n);
+    if (!m) throw new Error('harness: no module exports ' + n);
+    f[n] = m[n];
+  }
+  /* `ctx` mimics the old vm global: any exported name, plus the stub browser objects. */
+  const extras = {};
+  const ctx = new Proxy(extras, {
+    get(t, n) {
+      if (typeof n === 'symbol') return undefined;
+      if (n in t) return t[n];
+      if (n in env) return env[n];
+      const m = owner(n);
+      return m ? m[n] : undefined;
+    },
+    set(t, n, v) { t[n] = v; return true; },
+    has(t, n) { return n in t || n in env || !!owner(n); },
+  });
 
   const engine = {
-    ctx, acc, clock, consoleOut, modalRec, elems, location: locationStub, store,
+    gen, ctx, acc, f, clock, consoleOut, modalRec, elems, location: locationStub, store, env, mods,
+    hooks: mods.hooks.hooks,
     get modalQueue() { return modalQueue; },
     queueModal(v) { modalQueue.push(v); },
     /* Keep the NEXT host modal pending until releaseModal supplies the answer. */
@@ -258,22 +339,16 @@ export function loadEngine(opts = {}) {
       if (i >= 0) { const h = activeHolds.splice(i, 1)[0]; h.res(v); }
     },
     activeHolds,
-    dispose() { clock.dispose(); activeHolds.length = 0; },
-    f: {},
+    /* Load the bot policy module into this engine, the way main.js does. Set
+       env.window.__BIGCON_TEST__ / __BIGCON_BOT_SEED__ BEFORE calling it. */
+    async loadBots() {
+      const bots = await importMod('static/bots.js');
+      mods.hooks.setHooks({ bots: () => bots.BigConBots });
+      mods.bots = bots;
+      return bots.BigConBots;
+    },
+    dispose() { clock.dispose(); activeHolds.length = 0; delete globalThis.__BIGCON_ENVS[gen]; },
   };
-  /* Function declarations become global properties of the vm realm. */
-  const fns = [
-    'applyIntent','startTurn','endOfTurn','nextTurn','winCheck','initGame','income','addCortisol','raid','madePay',
-    'acccInvestigate','concentratedIndustries','ownedInIndustry','industryNodes','generateRandomBoard','generateRingworldBoard','generateMegaRingBoard','megaRingMetrics','ringworldMetrics','boardViewBounds','resetBoardView','rebuildAdj',
-    'separateNodes','applyQuikSlot','nodeBox','pubState','adoptState','mergeTail','sendLogParts','adoptLogPart','flushState','sendAll','sendTo',
-    'sysTo','askPlayer','announceAll','revealAll','drawCard','handleHello','onHostClose','onHostData','broadcastLobby','setGeoUI',
-    'addLobbyChat','addChat','applyChar','lobbyPlayers','clampGoal','matchBuzzword','codeSlug','codeLabel','genCode',
-    'shuffle','esc','showRules','setMood','giveIntel','gain','payVoid','payTo','payFee','log','fxAt','fx','pname',
-    'doMove','doFly','doBug','doSpin','doSeize','endMovement','maybePeek','seizeListPrice','flatSeize','takeoverCost',
-    'canReach','qantasGrounded','qantasGroundedReason','abilityPhase','finishNodeAbility','startHostHeartbeat','sync','setNetStatus','toast',
-    'rebuildWorld','strikeNode','canMissileNode','blockaded','projFx','projRig','canUseBackroomAbility',
-  ];
-  for (const n of fns) engine.f[n] = ctx[n];
   return engine;
 }
 

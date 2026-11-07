@@ -10,7 +10,7 @@ test('Fog of War is a host-controlled lobby option propagated to the game state'
 });
 
 test('Fog of War starts each player knowing only Quikstop and reveals movement destinations individually', async t => {
-  const e = loadEngine();
+  const e = await loadEngine();
   t.after(() => e.dispose());
   e.acc.Net.fogOfWar = true;
   const S = await makeGame(e, 2);

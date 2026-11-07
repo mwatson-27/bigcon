@@ -10,11 +10,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadEngine, makeState, CHARS8 } from './helpers/harness.mjs';
 
-function ctx_engine(t) {
-  const engine = loadEngine();
+async function ctx_engine(t) {
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   return engine;
 }
+
+/* The raid is invoked from inside the engine module (addCortisol -> raid), so it
+   cannot be swapped out from outside any more. Every raid ends with ONE table
+   announcement, so the injected announceAll hook is the observation point: it
+   counts raids without changing what they do. */
+function watchRaids(engine) {
+  const calls = [];
+  const orig = engine.hooks.announceAll;
+  engine.hooks.announceAll = (title, html) => { if (/REGULATOR RAID/.test(title)) calls.push(title); return orig(title, html); };
+  return calls;
+}
+const cortisolLog = S => S.log.filter(l => /Cortisol \(now \d+\)/.test(l)).map(l => +/now (\d+)\)/.exec(l)[1]);
 
 function fixture(engine, over = {}) {
   const S = makeState(engine, over);
@@ -23,8 +35,8 @@ function fixture(engine, over = {}) {
 }
 
 /* ---------- CR-01 / CR-02 — the ownership protection pin ---------- */
-test('CR-01 positive Cortisol with zero nodes is ignored by the current implementation', t => {
-  const engine = ctx_engine(t);
+test('CR-01 positive Cortisol with zero nodes is ignored by the current implementation', async t => {
+  const engine = await ctx_engine(t);
   for (const inc of [1, 2]) {
     const S = fixture(engine, {});
     const before = S.log.length;
@@ -34,23 +46,23 @@ test('CR-01 positive Cortisol with zero nodes is ignored by the current implemen
   }
 });
 
-test('CR-02 positive Cortisol with one node is ignored by the current implementation (rule decision required)', t => {
-  const engine = ctx_engine(t);
+test('CR-02 positive Cortisol with one node is ignored by the current implementation (rule decision required)', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { owner: { citi: 0 } });
   engine.f.addCortisol(0, 2, 'test', false);
   assert.equal(S.players[0].cortisol, 0, 'the one-node protection is still active');
 });
 
-test('CR-02b reduction of Cortisol is never blocked by the ownership protection', t => {
-  const engine = ctx_engine(t);
+test('CR-02b reduction of Cortisol is never blocked by the ownership protection', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { players: [{ cortisol: 3 }] }); // zero nodes
   engine.f.addCortisol(0, -2, 'cooling off', false);
   assert.equal(S.players[0].cortisol, 1);
 });
 
 /* ---------- CR-03 — clamping with multiple nodes ---------- */
-test('CR-03 positive Cortisol with multiple nodes accumulates and can never exceed 9', t => {
-  const engine = ctx_engine(t);
+test('CR-03 positive Cortisol with multiple nodes accumulates and can never exceed 9', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, {
     owner: { citi: 0, infl: 0 },
     players: [{ cortisol: 0 }],
@@ -59,26 +71,26 @@ test('CR-03 positive Cortisol with multiple nodes accumulates and can never exce
   engine.f.addCortisol(0, 2, 'b', false);
   assert.equal(S.players[0].cortisol, 3);
   // The clamp to 9 happens inside addCortisol and the raid observes exactly 9 —
-  // a value above 9 is never observable.
-  const raidSpy = [];
-  engine.ctx.raid = i => { raidSpy.push({ i, observed: engine.acc.S.players[i].cortisol }); };
+  // a value above 9 is never observable (the log line is written before the raid runs).
+  const raids = watchRaids(engine);
   engine.f.addCortisol(0, 20, 'large', false);
-  assert.deepEqual(raidSpy, [{ i: 0, observed: 9 }], 'the raid fired exactly once and saw the clamped value');
-  assert.ok(S.players[0].cortisol >= 9, 'Cortisol was clamped at the cap (raid applied its own state change)');
+  assert.equal(raids.length, 1, 'the raid fired exactly once');
+  assert.deepEqual(cortisolLog(S).slice(-1), [9], 'and saw the clamped value, never above 9');
+  assert.equal(S.players[0].raided, 1, 'the raid applied its own state change');
 });
 
 
 /* ---------- CR-04 — reductions ignore the protection rule ---------- */
-test('CR-04 Cortisol reductions floor at zero', t => {
-  const engine = ctx_engine(t);
+test('CR-04 Cortisol reductions floor at zero', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { players: [{ cortisol: 1 }] });
   engine.f.addCortisol(0, -5, 'chill', false);
   assert.equal(S.players[0].cortisol, 0);
 });
 
 /* ---------- CR-05 — event modifiers ---------- */
-test('CR-05a event-sourced Cortisol is softened by one for Big Bessent or The Jim holders', t => {
-  const engine = ctx_engine(t);
+test('CR-05a event-sourced Cortisol is softened by one for Big Bessent or The Jim holders', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { owner: { bess: 0, citi: 0, infl: 0 }, players: [{}, {}] });
   engine.f.addCortisol(0, 3, 'front page', 'event');
   assert.equal(S.players[0].cortisol, 2, '3 − 1 softening');
@@ -88,16 +100,16 @@ test('CR-05a event-sourced Cortisol is softened by one for Big Bessent or The Ji
   assert.equal(S2.players[0].cortisol, 2, 'The Jim softens identically');
 });
 
-test('CR-05b softening can reduce event Cortisol to zero', t => {
-  const engine = ctx_engine(t);
+test('CR-05b softening can reduce event Cortisol to zero', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { owner: { bess: 0, citi: 0, infl: 0 }, players: [{}, {}] });
   engine.f.addCortisol(0, 1, 'small story', 'event');
   assert.equal(S.players[0].cortisol, 0);
   assert.ok(S.log.some(l => l.includes('no Cortisol at all')));
 });
 
-test('CR-05c Herald pays +1 Intel exactly once per event-sourced Cortisol on a rival', t => {
-  const engine = ctx_engine(t);
+test('CR-05c Herald pays +1 Intel exactly once per event-sourced Cortisol on a rival', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { owner: { herald: 1, citi: 0, infl: 0 }, players: [{ intel: 0 }, { intel: 0 }] });
   engine.f.addCortisol(0, 2, 'story', 'event');
   assert.equal(S.players[1].intel, 1, 'exactly one Intel');
@@ -108,8 +120,8 @@ test('CR-05c Herald pays +1 Intel exactly once per event-sourced Cortisol on a r
   assert.equal(S2.players[1].intel, 0, 'no self-payment');
 });
 
-test('CR-05d non-event Cortisol ignores the softening and Herald effects', t => {
-  const engine = ctx_engine(t);
+test('CR-05d non-event Cortisol ignores the softening and Herald effects', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { owner: { bess: 0, herald: 1, citi: 0, infl: 0 }, players: [{}, { intel: 0 }] });
   engine.f.addCortisol(0, 3, 'plain stress', false);
   assert.equal(S.players[0].cortisol, 3, 'no softening without the event flag');
@@ -117,30 +129,30 @@ test('CR-05d non-event Cortisol ignores the softening and Herald effects', t => 
 });
 
 /* ---------- CR-06 — raid threshold ---------- */
-test('CR-06 a raid fires exactly once when Cortisol reaches 9, not earlier', t => {
-  const engine = ctx_engine(t);
+test('CR-06 a raid fires exactly once when Cortisol reaches 9, not earlier', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { owner: { citi: 0, infl: 0 }, players: [{ cortisol: 7 }] });
-  const raidSpy = [];
-  engine.ctx.raid = i => raidSpy.push(i);
+  const raids = watchRaids(engine);
   engine.f.addCortisol(0, 1, 'stress', false);
   assert.equal(S.players[0].cortisol, 8);
-  assert.deepEqual(raidSpy, [], '8 does not raid');
+  assert.equal(raids.length, 0, '8 does not raid');
   engine.f.addCortisol(0, 1, 'more stress', false);
-  assert.equal(S.players[0].cortisol, 9, 'reached the threshold');
-  assert.deepEqual(raidSpy, [0], 'exactly one raid');
+  assert.deepEqual(cortisolLog(S).slice(-1), [9], 'reached the threshold');
+  assert.equal(raids.length, 1, 'exactly one raid');
+  assert.equal(S.players[0].cortisol, 0, 'and the raid reset it');
 
   // A large jump from 0 also crosses the threshold exactly once.
   const S2 = fixture(engine, { owner: { citi: 0, infl: 0 }, players: [{ cortisol: 0 }] });
-  const spy2 = [];
-  engine.ctx.raid = i => spy2.push(i);
+  const raids2 = watchRaids(engine);
   engine.f.addCortisol(0, 9, 'one huge beat', false);
-  assert.equal(S2.players[0].cortisol, 9);
-  assert.deepEqual(spy2, [0]);
+  assert.deepEqual(cortisolLog(S2).slice(-1), [9]);
+  assert.equal(raids2.length, 1);
+  assert.equal(S2.players[0].cortisol, 0);
 });
 
 /* ---------- CR-07 — raid side effects ---------- */
-test('CR-07 a raid seizes the two highest-income nodes (cost breaks ties), fines, burns Intel, pulls bugs and warns the table', t => {
-  const engine = ctx_engine(t);
+test('CR-07 a raid seizes the two highest-income nodes (cost breaks ties), fines, burns Intel, pulls bugs and warns the table', async t => {
+  const engine = await ctx_engine(t);
   vm_addFakeNodes(engine);
   const S = fixture(engine, {
     players: [{ money: 100, intel: 6, cortisol: 0 }, { money: 5 }],
@@ -168,8 +180,8 @@ test('CR-07 a raid seizes the two highest-income nodes (cost breaks ties), fines
 });
 
 /* ---------- CR-08 — raid with nothing (or one node) to seize ---------- */
-test('CR-08 a raid completes on a player who owns nothing worth seizing', t => {
-  const engine = ctx_engine(t);
+test('CR-08 a raid completes on a player who owns nothing worth seizing', async t => {
+  const engine = await ctx_engine(t);
   vm_addFakeNodes(engine);
   const S = fixture(engine, { players: [{ money: 10, intel: 2 }] });
   engine.acc.Net.role = 'host';
@@ -183,8 +195,8 @@ test('CR-08 a raid completes on a player who owns nothing worth seizing', t => {
   assert.ok(engine.modalRec.some(m => m.title === '🚨 REGULATOR RAID'));
 });
 
-test('CR-08b a raid on a single owned node takes exactly that node without crash', t => {
-  const engine = ctx_engine(t);
+test('CR-08b a raid on a single owned node takes exactly that node without crash', async t => {
+  const engine = await ctx_engine(t);
   vm_addFakeNodes(engine);
   const S = fixture(engine, { players: [{ money: 20, intel: 4, cortisol: 5 }], owner: { n3: 0 } });
   assert.doesNotThrow(() => engine.f.raid(0));
@@ -199,7 +211,7 @@ test('CR-08b a raid on a single owned node takes exactly that node without crash
 
 /* ---------- CR-09 — the recovery turn ---------- */
 test('CR-09 the turn after a raid pays no income and one step; the turn after that is normal', async t => {
-  const engine = ctx_engine(t);
+  const engine = await ctx_engine(t);
   const S = fixture(engine, {
     owner: { oil: 0, quik: 0 }, // income 8 + 2 → holdings 10; salary 3
     players: [{ money: 0, intel: 0, cortisol: 0, raided: 1 }],
@@ -225,23 +237,17 @@ test('CR-09 the turn after a raid pays no income and one step; the turn after th
 });
 
 /* helper: append fake raid-target nodes for the CR-07/CR-08 fixtures.
-   NODES/NMAP are lexical consts of the vm script, so the injection runs in
-   the same realm and pushes real objects into the live arrays. */
-import vm from 'node:vm';
+   NODES/NMAP are live exports of the data module, so pushing real objects into
+   the arrays is all it takes. */
 function vm_addFakeNodes(engine) {
-  const code = `
-  (function(){
-    if(globalThis.__fakeNodes)return;
-    globalThis.__fakeNodes=true;
-    const fakes=[
-      {id:'n1',name:['RAIDONE'],type:'WILD',income:10,cost:5,x:100,y:100,rot:0},
-      {id:'n2',name:['RAIDTWO'],type:'WILD',income:10,cost:9,x:100,y:100,rot:0},
-      {id:'n3',name:['RAIDTHREE'],type:'WILD',income:8,cost:3,x:100,y:100,rot:0},
-      {id:'n4',name:['RAIDFOUR'],type:'WILD',income:7,cost:5,x:100,y:100,rot:0},
-      {id:'abund',name:['UNSEIZABLE'],type:'WILD',income:11,cost:1,x:100,y:100,rot:0},
-    ];
-    for(const n of fakes){NODES.push(n);NMAP[n.id]=n;}
-  })();`;
-  vm.runInContext(code, engine.ctx, { filename: 'harness-fixtures' });
+  const { NODES, NMAP } = engine.acc;
+  if (NMAP.n1) return;
+  const fakes = [
+    { id: 'n1', name: ['RAIDONE'], type: 'WILD', income: 10, cost: 5, x: 100, y: 100, rot: 0 },
+    { id: 'n2', name: ['RAIDTWO'], type: 'WILD', income: 10, cost: 9, x: 100, y: 100, rot: 0 },
+    { id: 'n3', name: ['RAIDTHREE'], type: 'WILD', income: 8, cost: 3, x: 100, y: 100, rot: 0 },
+    { id: 'n4', name: ['RAIDFOUR'], type: 'WILD', income: 7, cost: 5, x: 100, y: 100, rot: 0 },
+    { id: 'abund', name: ['UNSEIZABLE'], type: 'WILD', income: 11, cost: 1, x: 100, y: 100, rot: 0 },
+  ];
+  for (const n of fakes) { NODES.push(n); NMAP[n.id] = n; }
 }
-

@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadEngine, makeGame, SOURCE, repoRoot } from './helpers/harness.mjs';
 
-const engineFor = t => { const e = loadEngine(); t.after(() => e.dispose()); return e; };
+const engineFor = async t => { const e = await loadEngine(); t.after(() => e.dispose()); return e; };
 
 async function settle() {
   await new Promise(r => setImmediate(r));
@@ -31,8 +31,8 @@ const staticFile = rel => path.join(repoRoot, rel.replace(/^\.\//, ''));
 const exists = p => fs.existsSync(p);
 
 /* ================= RC-01 — node structure & shipped assets ================= */
-test('RC-01 every node is structurally complete and every baked asset exists on disk', t => {
-  const engine = engineFor(t);
+test('RC-01 every node is structurally complete and every baked asset exists on disk', async t => {
+  const engine = await engineFor(t);
   const NODES = engine.acc.NODES;
   const CHARS = engine.acc.CHARS;
   const TYPES = new Set(engine.acc.WIN_TYPES);
@@ -88,7 +88,7 @@ test('RC-01 every node is structurally complete and every baked asset exists on 
 
 /* ================= RC-02 — the deck is complete ================= */
 test('RC-02 the event deck contains every card once and initGame deals it whole', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const CARDS = engine.acc.CARDS;
   const ids = new Set(CARDS.map(c => c.id));
   assert.equal(ids.size, CARDS.length, 'card ids are unique');
@@ -107,16 +107,16 @@ test('RC-02 the event deck contains every card once and initGame deals it whole'
 
 /* ================= RC-02b — every card runs clean ================= */
 let _cards = null;
-function CARD_IDS() {
+async function CARD_IDS() {
   if (_cards) return _cards;
-  const e = loadEngine();
+  const e = await loadEngine();
   _cards = e.acc.CARDS.map(c => c.id);
   e.dispose();
   return _cards;
 }
 test('RC-02b every market event card runs on a clean table without engine errors', { timeout: 120000 }, async t => {
-  for (const id of CARD_IDS()) {
-    const engine = engineFor(t);
+  for (const id of await CARD_IDS()) {
+    const engine = await engineFor(t);
     const S = await makeGame(engine, 2);
     S.deck = [id]; S.discard = [];
     S.owner = {}; // no holders — every card must cope
@@ -143,7 +143,7 @@ async function kickoff(engine, flowPromise) {
 
 /* ================= RC-03 — behaviour-driven action costs ================= */
 async function fresh(t) {
-  const e = engineFor(t);
+  const e = await engineFor(t);
   const S = await makeGame(e, 2);
   assert.equal(e.acc.Net.myIdx, 0);
   quietDeck(e.acc.S);
@@ -447,8 +447,8 @@ test('RC-05b divest MADE costs 5 Intel + $7 compensation to the former owner', a
 });
 
 /* ================= RC-06 — win types & the goal clamp ================= */
-test('RC-06 exactly seven win types exist and the goal clamps 20..999 with default 100', t => {
-  const engine = engineFor(t);
+test('RC-06 exactly seven win types exist and the goal clamps 20..999 with default 100', async t => {
+  const engine = await engineFor(t);
   assert.deepEqual([...engine.acc.WIN_TYPES], ['BANK', 'REGULATOR', 'CHART', 'WILD', 'CORPORATE', 'COMMODITY', 'MEDIA']);
   assert.equal(engine.acc.GOAL_MIN, 20);
   assert.equal(engine.acc.GOAL_MAX, 999);
@@ -463,8 +463,8 @@ test('RC-06 exactly seven win types exist and the goal clamps 20..999 with defau
 });
 
 /* ================= RC-07 — dead reference audit ================= */
-test('RC-07 every S.owner/own() node reference maps to a real node or a known removal', t => {
-  const engine = engineFor(t);
+test('RC-07 every S.owner/own() node reference maps to a real node or a known removal', async t => {
+  const engine = await engineFor(t);
   /* Base world at load (DLC off) plus the DLC id list — the DLC world is
      rebuilt on demand, so the static audit unions its ids explicitly. */
   const nodeIds = new Set(engine.acc.NODES.map(n => n.id));

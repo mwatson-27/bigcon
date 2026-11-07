@@ -1,27 +1,38 @@
 'use strict';
-/* engine: host-side game rules — state, economy, cortisol/raids, MADE, turn flow, bots, income and intent handling. */
-/* ================= STATE, NET & HELPERS ================= */
-let S=null;
-const GOAL_MIN=20,GOAL_MAX=999,GOAL_DEF=100;
-function clampGoal(v){const n=Math.round(Number(v)||0);if(!n)return GOAL_DEF;return Math.max(GOAL_MIN,Math.min(GOAL_MAX,n))}
-let fxSeq=0;
-const shownFx=new Set();
-function pname(i){return S.players[i].name}
-function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function shuffle(a){const r=a.slice();for(let i=r.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=r[i];r[i]=r[j];r[j]=t}return r}
-function log(t){S.log.push(t);S.logN=(S.logN|0)+1}
+/* engine: host-side game rules — economy, cortisol/raids, MADE, turn flow, event deck, bot seats, income and intent handling.
+ *
+ * DOM-free and wire-free: this module (with util, data, boards, state) never touches
+ * document / $() / toast() / modal() / render functions / window / global timers.
+ * Everything outside the rules is reached through the injected `hooks` interface —
+ * see hooks.js for the full list and the `setHooks({...})` call that wires it.
+ * Tests import this module directly and supply fake hooks and a virtual clock.
+ * Game state stays the module-level object `S` (state.js); replace it with setS().
+ */
+import { hooks, setHooks } from './hooks.js';
+import { S, setS, Net, pubState } from './state.js';
+import { GOAL_MIN, GOAL_MAX, GOAL_DEF, clampGoal, esc, shuffle } from './util.js';
+import { NODES, NMAP, EDGES, ADJ, WORLD_EDGES, GEO_NODE_IDS, OIL_IDS, COUNTRY, MOODS, PCOLORS, QUIK_SLOTS, charMeta, charSrc, rebuildWorld } from './data.js';
+import { generateRandomBoard, generateRingworldBoard, generateMegaRingBoard, applyLayoutFromState } from './boards.js';
+export { hooks, setHooks };
+/* The host services the rules call, bound late so a hook swapped in by setHooks
+   (or wrapped by a test) is always the one that runs. */
+const sync=now=>hooks.sync(now),sysTo=(pi,msg)=>hooks.sysTo(pi,msg),askPlayer=(pi,opt)=>hooks.askPlayer(pi,opt),announceAll=(title,html)=>hooks.announceAll(title,html),revealAll=(title,html)=>hooks.revealAll(title,html);
+/* ================= STATE & HELPERS ================= */
+export let fxSeq=0;
+export function pname(i){return S.players[i].name}
+export function log(t){S.log.push(t);S.logN=(S.logN|0)+1}
 /* ---- floating FX: visible on every screen, driven purely by synced state ---- */
-function fx(x,y,t,c,big){if(Net.role!=='host'||!S)return;S.fx.push({id:++fxSeq,x,y,t,c,b:big?1:0});if(S.fx.length>40)S.fx.shift()}
-function fxAt(pi,t,c){if(!S||!S.players[pi])return;const n=NMAP[S.players[pi].pos];if(n)fx(n.x,n.y-64,t,c)}
+export function fx(x,y,t,c,big){if(Net.role!=='host'||!S)return;S.fx.push({id:++fxSeq,x,y,t,c,b:big?1:0});if(S.fx.length>40)S.fx.shift()}
+export function fxAt(pi,t,c){if(!S||!S.players[pi])return;const n=NMAP[S.players[pi].pos];if(n)fx(n.x,n.y-64,t,c)}
 /* 🌍 Projectile fx: missiles and the Qantas jet fly their route as a rotating
    <image>. Entries ride S.fx (synced by pubState) with proj:1 and carry both
    endpoints; the rig rotates toward the target and mirrors when flying left.
    Rendering happens in #fxg so board re-renders never interrupt the flight. */
-const PROJ_DEFS={
+export const PROJ_DEFS={
  missile:{img:'./static/GeographyDLC/missile_travelling.png',w:116,h:125,base:45},
  fly:{img:'./static/qantas_jet_travelling.png',w:150,h:103,base:10}
 };
-function projFx(kind,fromId,toId){
+export function projFx(kind,fromId,toId){
  if(Net.role!=='host'||!S)return false;
  const d=PROJ_DEFS[kind],a=NMAP[fromId],b=NMAP[toId];
  if(!d||!a||!b||fromId===toId)return false;
@@ -32,28 +43,28 @@ function projFx(kind,fromId,toId){
 /* 🌍 The table watches the launch: the host holds the turn open for the flight
    (1.1s SMIL + a beat) so the market-event card never drops while a warhead or
    jet is still in the air. Tests advance the virtual clock past the pause. */
-const PROJ_PAUSE_MS=1300;
-function projPause(ms){return new Promise(res=>setTimeout(res,ms||PROJ_PAUSE_MS))}
+export const PROJ_PAUSE_MS=1300;
+export function projPause(ms){return new Promise(res=>hooks.setTimeout(res,ms||PROJ_PAUSE_MS))}
 /* Flight direction → SVG rig: nose-align the sprite (base offset), and when the
    shot travels leftwards mirror it first so the artwork never flies tail-first. */
-function projRig(f){
+export function projRig(f){
  const dx=f.x1-f.x0,dy=f.y1-f.y0;
  const deg=dx<0?Math.atan2(dy,-dx)*180/Math.PI:Math.atan2(dy,dx)*180/Math.PI;
  const r=(deg+f.base).toFixed(1);
  return dx<0?'scale(-1,1) rotate('+r+')':'rotate('+r+')';
 }
-function setMood(k,headline){
+export function setMood(k,headline){
  if(!S)return;
  const changed=S.mood!==k;
  S.mood=k;S.wire=headline;
  if(changed){log('🌡️ THE MOOD SHIFTS — '+MOODS[k].label+' ('+MOODS[k].desc+').');fx(1200,720,MOODS[k].label.split(': ')[1]||k,MOODS[k].color,true)}
 }
-function giveIntel(i,n,why){if(!S||!S.players[i]||n<=0)return;S.players[i].intel+=n;log('🛈 '+pname(i)+' +'+n+' Intel'+(why?' — '+why:'')+'.');fxAt(i,'🛈+'+n,'#55c1ff')}
-function gain(i,amt,why){S.players[i].money+=amt;log('💰 '+pname(i)+' gains $'+amt+(why?' — '+why:'')+'.');fxAt(i,'+$'+amt,'#7fe08d')}
-function payVoid(i,amt,why){const p=S.players[i];const real=Math.min(p.money,amt);p.money-=real;log('💸 '+pname(i)+' loses $'+real+' — '+why+'.');fxAt(i,'−$'+real,'#ff6b5e')}
-function payTo(i,amt,to,why){const p=S.players[i];const real=Math.min(p.money,amt);p.money-=real;S.players[to].money+=real;log('💸 '+pname(i)+' pays $'+real+' to '+pname(to)+' — '+why+'.');fxAt(i,'−$'+real,'#ff6b5e');fxAt(to,'+$'+real,'#7fe08d')}
-function payFee(i,amt,why){const p=S.players[i];const real=Math.min(p.money,amt);p.money-=real;log('💸 '+pname(i)+' pays $'+real+' — '+why+'.');fxAt(i,'−$'+real,'#ff6b5e')}
-function addCortisol(i,n,why,ev,force){
+export function giveIntel(i,n,why){if(!S||!S.players[i]||n<=0)return;S.players[i].intel+=n;log('🛈 '+pname(i)+' +'+n+' Intel'+(why?' — '+why:'')+'.');fxAt(i,'🛈+'+n,'#55c1ff')}
+export function gain(i,amt,why){S.players[i].money+=amt;log('💰 '+pname(i)+' gains $'+amt+(why?' — '+why:'')+'.');fxAt(i,'+$'+amt,'#7fe08d')}
+export function payVoid(i,amt,why){const p=S.players[i];const real=Math.min(p.money,amt);p.money-=real;log('💸 '+pname(i)+' loses $'+real+' — '+why+'.');fxAt(i,'−$'+real,'#ff6b5e')}
+export function payTo(i,amt,to,why){const p=S.players[i];const real=Math.min(p.money,amt);p.money-=real;S.players[to].money+=real;log('💸 '+pname(i)+' pays $'+real+' to '+pname(to)+' — '+why+'.');fxAt(i,'−$'+real,'#ff6b5e');fxAt(to,'+$'+real,'#7fe08d')}
+export function payFee(i,amt,why){const p=S.players[i];const real=Math.min(p.money,amt);p.money-=real;log('💸 '+pname(i)+' pays $'+real+' — '+why+'.');fxAt(i,'−$'+real,'#ff6b5e')}
+export function addCortisol(i,n,why,ev,force){
  if(!n)return;
  if(n>0&&!force&&NODES.filter(node=>S.owner[node.id]===i).length<=1)return;
  if(ev&&n>0&&(S.owner.bess===i||S.owner.jim===i)){n-=1;if(n<=0){log('📺 Big Bessent / The Jim buries the story — '+pname(i)+' takes no Cortisol at all.');return}log('📺 Breaking news softens the story — '+pname(i)+' takes only +'+n+' Cortisol.')}
@@ -65,7 +76,7 @@ function addCortisol(i,n,why,ev,force){
 }
 /* The raid is the one thing on this board that can end a run: two assets seized,
    the books fined, the intel network burned and a wasted turn under caution. */
-function raid(i){
+export function raid(i){
  const p=S.players[i];
  const owned=NODES.filter(n=>S.owner[n.id]===i).sort((a,b)=>b.income-a.income||b.cost-a.cost);
  const seized=owned.slice(0,2);
@@ -89,7 +100,7 @@ function raid(i){
 }
 
 /* ACCC concentration: more than 2 holdings in one industry (charts excluded). */
-const INDUSTRIES=[
+export const INDUSTRIES=[
  {id:'bank',name:'BANKING',pick:n=>n.type==='BANK'},
  {id:'regulator',name:'REGULATORS',pick:n=>n.type==='REGULATOR'},
  {id:'corporate',name:'CORPORATES',pick:n=>n.type==='CORPORATE'},
@@ -103,15 +114,15 @@ const INDUSTRIES=[
  {id:'bessent',name:'BIG BESSENT',ids:['bessent','bess','bond']},
  {id:'monetary',name:'MONETARY POLICY',ids:['mpc','rba','cash','bullock','infl']}
 ];
-function industryNodes(g){
+export function industryNodes(g){
  if(g.ids)return g.ids.map(id=>NMAP[id]).filter(Boolean);
  return NODES.filter(g.pick);
 }
-function ownedInIndustry(pi,g){return industryNodes(g).filter(n=>S.owner[n.id]===pi)}
-function concentratedIndustries(pi){
+export function ownedInIndustry(pi,g){return industryNodes(g).filter(n=>S.owner[n.id]===pi)}
+export function concentratedIndustries(pi){
  return INDUSTRIES.map(g=>{const owned=ownedInIndustry(pi,g);return {g,owned,n:owned.length}}).filter(x=>x.n>2);
 }
-function acccInvestigate(pi){
+export function acccInvestigate(pi){
  if(!S||S.over)return;
  let hits=concentratedIndustries(pi);
  // Mark Watson exempts the holder from ACCC action against the COAL industry only.
@@ -154,9 +165,9 @@ function acccInvestigate(pi){
 /* MADE rolls on every seat's turn, so a flat chance skims big tables far harder: at
    33%, 8 seats saw 2.7 payouts a round and no seat could hold a high goal. Every
    table now gets 2/3 of a payout a round, which leaves 2 seats at the old 33%. */
-function madeChance(){return (2/3)/S.players.length}
+export function madeChance(){return (2/3)/S.players.length}
 /* MADE moves money off the rest of the table, not out of thin air. */
-function madePay(){
+export function madePay(){
  const m=S.owner.made;
  if(m==null)return;
  gain(m,10,'MADE pays out — nobody knows why');
@@ -171,7 +182,7 @@ function madePay(){
 }
 
 /* ================= GAME FLOW (host) ================= */
-function initGame(defs){
+export function initGame(defs){
  Net.gameEpoch=(Net.gameEpoch||0)+1;
  rebuildWorld(!!Net.dlcGeo);
  const boardLayout=Net.boardLayout||(Net.ringworld?'ringworld':'random');
@@ -186,9 +197,9 @@ function initGame(defs){
   Net.myIdx=order.indexOf(hostWas);
  }
  const goal=clampGoal(Net.goal);
- S={backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:(charMeta(d.char)||{}).color||PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',visited:{quik:true},dc:false,bot:!!d.bot})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null,layoutKind:boardLayout,ringworld:boardLayout==='ringworld',dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,rubble:{},ov:null,geoMissiled:false,geoBeach:false,geoBoeing:false,geoCrash:false,geoStage5:false,geoVenice:false,bondmageddonUsed:false,blockades:{},blockadeUsed:false,missileProbe:null,qantasGroundUntil:0,decline:null};
+ setS({backroomAbilityUsed:false,players:seated.map((d,i)=>({name:d.name,color:(charMeta(d.char)||{}).color||PCOLORS[i%PCOLORS.length],char:d.char||null,money:15,intel:2,cortisol:0,raided:0,pos:'quik',visited:{quik:true},dc:false,bot:!!d.bot})),cur:0,turn:1,phase:'move',steps:3,goal,owner:{},bugs:{},seizeCount:{},sisyPayout:10,deck:shuffle(CARDS.map(c=>c.id)),discard:[],spun:false,audited:false,cooked:false,budgeted:false,extraStep:false,slipped:false,caution:false,dossier:false,jtUsed:false,spinKind:'press',mood:'CALM',wire:'all quiet on the wire… for now',fx:[],over:false,mode:null,log:[],chat:(Net.lobbyChat||[]).slice(-25),logN:0,chatN:0,quikSlot,boardLayout:null,boardEdges:null,layoutKind:boardLayout,ringworld:boardLayout==='ringworld',dlcGeo:!!Net.dlcGeo,fogOfWar:!!Net.fogOfWar,rubble:{},ov:null,geoMissiled:false,geoBeach:false,geoBoeing:false,geoCrash:false,geoStage5:false,geoVenice:false,bondmageddonUsed:false,blockades:{},blockadeUsed:false,missileProbe:null,qantasGroundUntil:0,decline:null});
  const slot=QUIK_SLOTS[quikSlot];
- if(typeof window!=='undefined'&&window.BigConBots&&window.BigConBots.resetForGame)window.BigConBots.resetForGame((window.__BIGCON_BOT_SEED__|0)||((Math.random()*0x7fffffff)|0));
+ {const bots=hooks.bots();if(bots&&bots.resetForGame)bots.resetForGame((hooks.botSeed()|0)||((Math.random()*0x7fffffff)|0))}
  const generated=boardLayout==='megaring'?generateMegaRingBoard():(boardLayout==='ringworld'?generateRingworldBoard():generateRandomBoard(slot));S.boardLayout=generated.positions;S.boardEdges=generated.edges;
  applyLayoutFromState();
  Net.started=true;
@@ -200,48 +211,11 @@ function initGame(defs){
  log('🎲 Seating was shuffled. First to move: '+S.players[0].name+'.');
  log('⛽ Quikstop opened '+slot.label+' this game. Everyone starts there with $15 and 2 Intel.');
  log('🏆 WIN CONDITION: $'+goal+' in the bank AND one of every node type ('+WIN_TYPES.join(', ')+'). The host set the target.');
- $('setup').style.display='none';$('app').style.display='flex';document.body.classList.add('game-open');
- resetBoardView();
- const pub=pubState(true);
- for(let i=0;i<Net.conns.length;i++){
-  const c=Net.conns[i];
-  if(c&&c.open){try{c.send({t:'begin',s:pub,idx:i})}catch(e){}}
- }
+ hooks.showGame();
+ hooks.beginGame(pubState(true));
  startTurn();
 }
-/* ================= LOCAL DESKTOP TURN ALERTS =================
-   Alerts are opt-out and default on. Permission is requested only from a
-   user gesture; the preference is local to this browser/device. */
-const TURN_ALERTS_KEY='bigcon-v1.13-turn-alerts';
-let lastTurnAlertKey='',lastDeliveredTurnAlertKey='';
-function turnAlertsEnabled(){try{return localStorage.getItem(TURN_ALERTS_KEY)!=='off'}catch(_){return true}}
-function requestTurnNotificationPermission(){
- if(!turnAlertsEnabled()||typeof Notification==='undefined')return;
- if(Notification.permission==='denied'){toast('Turn alerts are blocked by browser or system notification settings.');return}
- if(Notification.permission==='default'){
-  try{Notification.requestPermission().then(p=>{if(p==='granted')notifyCurrentTurn(true)}).catch(()=>{})}catch(_){}
- }else if(Notification.permission==='granted')notifyCurrentTurn(true);
-}
-function notifyCurrentTurn(force){
- if(!S||S.over||S.cur!==Net.myIdx||!turnAlertsEnabled())return;
- const key=S.turn+':'+S.cur;
- if(!force&&key===lastTurnAlertKey)return;
- lastTurnAlertKey=key;
- if(lastDeliveredTurnAlertKey===key||typeof Notification==='undefined'||Notification.permission!=='granted')return;
- try{
-  const p=S.players[S.cur];const n=new Notification('THE BIG CON v1.13 — Your turn',{body:(p&&p.name?p.name+' — ':'')+'It is your move. Open the game to make your play.',tag:'bigcon-turn-'+key,renotify:false});
-  lastDeliveredTurnAlertKey=key;
-  n.onclick=()=>{try{window.focus()}catch(_){}try{n.close()}catch(_){}};
- }catch(_){}
-}
-function toggleTurnAlerts(){
- const next=!turnAlertsEnabled();
- try{localStorage.setItem(TURN_ALERTS_KEY,next?'on':'off')}catch(_){}
- if(next)requestTurnNotificationPermission();
- toast('Desktop turn alerts '+(next?'enabled':'disabled')+'.');
- render();
-}
-async function startTurn(){
+export async function startTurn(){
  if(S)S.backroomAbilityUsed=false;
  if(!S||S.over)return;
  log('—— TURN '+S.turn+' · '+pname(S.cur)+' ——');
@@ -308,7 +282,7 @@ async function startTurn(){
  /* Bot seats are driven locally by the policy module. The away-path below
     would pay the away dollar and end the turn, so the bot branch must come
     first; a bot whose module failed to load falls back to the away path. */
- if(p.bot&&window.BigConBots&&window.BigConBots.takeTurn){await runBotTurn(S.cur);return}
+ if(p.bot&&hooks.bots()&&hooks.bots().takeTurn){await runBotTurn(S.cur);return}
  if(p.dc){log('💤 '+pname(S.cur)+' is away — plays it quiet.');gain(S.cur,1,'away');endOfTurn()}
 }
 /* ============ BOT SEATS ============
@@ -317,8 +291,8 @@ async function startTurn(){
    prompt through askPlayer's bot branch, and the only state it sees is
    botView() — a redacted snapshot that carries nothing the wire wouldn't
    (the event deck order never leaves the engine). If static/bots.js failed
-   to load, a bot seat quietly falls back to the away path in startTurn. */
-function botAPI(epoch){
+   to load (hooks.bots() is null), a bot seat quietly falls back to the away path in startTurn. */
+export function botAPI(epoch){
  return {
   viewOf:pi=>((epoch===undefined||Net.gameEpoch===(epoch|0))?botView(pi):null),
   applyIntent:async(pi,m)=>{await applyIntent(pi,m)},
@@ -330,7 +304,7 @@ function botAPI(epoch){
   }catch(e){}},
  };
 }
-function botView(pi){
+export function botView(pi){
  if(!S)return null;
  const c={};
  for(const k in S){if(k==='deck'||k==='log'||k==='chat')continue;c[k]=S[k]}
@@ -354,15 +328,15 @@ function botView(pi){
  out.missingTypes=seat=>missingTypes(seat);
  return out;
 }
-async function runBotTurn(pi){
+export async function runBotTurn(pi){
  if(!S||S.over)return;
  const epoch=Net.gameEpoch;
  /* Yield the turn boundary: the table paints between turns, and a fresh game
     (initGame bumps gameEpoch) can never be haunted by a stale turn chain. */
- await new Promise(res=>setTimeout(res,0));
+ await new Promise(res=>hooks.setTimeout(res,0));
  if(!S||S.over||Net.gameEpoch!==epoch)return;
  try{
-  await window.BigConBots.takeTurn(pi,botView(pi),botAPI(epoch));
+  await hooks.bots().takeTurn(pi,botView(pi),botAPI(epoch));
  }catch(e){console.error('[BIGCON] bot turn error',e)}
  /* whatever happened above, the turn cannot be left hanging on the table */
  if(!S||S.over||Net.gameEpoch!==epoch||S.cur!==pi)return;
@@ -371,7 +345,7 @@ async function runBotTurn(pi){
  if(S.phase==='action')await endOfTurn();
 }
 /* JTPortal knows what runs tomorrow, and tells whoever holds it. */
-async function jtBriefing(pi){
+export async function jtBriefing(pi){
  if(!S||S.over)return;
  if(!S.deck.length){S.deck=shuffle(S.discard.slice());S.discard=[];log('🎴 The rumor deck is reshuffled.')}
  if(!S.deck.length)return;
@@ -380,7 +354,7 @@ async function jtBriefing(pi){
  sync();
  await askPlayer(pi,{title:'JTPORTAL — “QUITE FRANKLY, HERE IS WHAT HAPPENS NEXT”',html:cardFace(c)+'<p class="fine">The event that lands at the end of your turn — for your eyes only.</p>',options:[{label:'Noted',v:1}],def:1,timeout:25000,meta:{kind:'brief',card:c.id}});
 }
-function income(i){
+export function income(i){
  const p=S.players[i];const own=id=>S.owner[id]===i;
  const owned=NODES.filter(n=>S.owner[n.id]===i);
  let salary=3;if(own('infl'))salary=4;
@@ -416,10 +390,10 @@ function income(i){
  fxAt(i,'+$'+inc,'#7fe08d');
  Object.keys(S.bugs).forEach(nid=>{if(S.bugs[nid]===i&&S.owner[nid]!==i){const amt=(S.owner.wef===i)?2:1;p.money+=amt;log('🐛 Skim from '+NMAP[nid].name.join(' ')+': +$'+amt+'.');fxAt(i,'+$'+amt,'#7fe08d')}});
 }
-async function applyIntent(pi,m){
+export async function applyIntent(pi,m){
  if(!S||S.over||!m||!m.act)return;
  if(S.cur!==pi){sysTo(pi,'Not your turn.');return}
- if(Net.lock){sysTo(pi,'⏳ Your previous action is still resolving — please wait a moment.');return} Net.lock=true;clearTimeout(Net.lockTimer);Net.lockTimer=setTimeout(()=>{if(Net.lock){console.error('[BIGCON] stale action lock released');Net.lock=false;Net.lockTimer=null;sync()}},30000);
+ if(Net.lock){sysTo(pi,'⏳ Your previous action is still resolving — please wait a moment.');return} Net.lock=true;hooks.clearTimeout(Net.lockTimer);Net.lockTimer=hooks.setTimeout(()=>{if(Net.lock){console.error('[BIGCON] stale action lock released');Net.lock=false;Net.lockTimer=null;sync()}},30000);
  try{
   const act=m.act,p=S.players[pi];
   if(act==='move'&&S.phase==='move'&&!S.mode){
@@ -684,17 +658,17 @@ async function applyIntent(pi,m){
   else if(act==='laylow'&&S.phase==='action'&&!S.mode){
    if(m.choice==='cash')gain(pi,1,'kept it quiet');else addCortisol(pi,-2,'kept it quiet');
    await endOfTurn()}
- } finally {clearTimeout(Net.lockTimer);Net.lockTimer=null;Net.lock=false}
+ } finally {hooks.clearTimeout(Net.lockTimer);Net.lockTimer=null;Net.lock=false}
 }
-function canUseBackroomAbility(pi){return !!(S&&S.phase==='move'&&S.cur===pi&&S.owner.back===pi&&!S.backroomAbilityUsed&&S.steps>=2)}
-function abilityPhase(pi){return !!(S&&(S.phase==='action'||canUseBackroomAbility(pi)))}
-async function finishNodeAbility(pi){
+export function canUseBackroomAbility(pi){return !!(S&&S.phase==='move'&&S.cur===pi&&S.owner.back===pi&&!S.backroomAbilityUsed&&S.steps>=2)}
+export function abilityPhase(pi){return !!(S&&(S.phase==='action'||canUseBackroomAbility(pi)))}
+export async function finishNodeAbility(pi){
  if(canUseBackroomAbility(pi)){S.steps-=2;S.backroomAbilityUsed=true;S.mode=null;log('🤝 Backroom Deals lets '+pname(pi)+' use one node ability during movement (−2 movement steps).');fxAt(pi,'−2 STEPS','#e19bff');sync()}
  else await endOfTurn();
 }
-function qantasGrounded(){return !!(S&&S.dlcGeo&&S.qantasGroundUntil>S.turn)}
-function qantasGroundedReason(){if(!S)return '';return qantasGrounded()?'THE CORPORATE BOEING is parked on the runway':'QANTAS is not grounded'}
-function strikeNode(pi,nid,opts){
+export function qantasGrounded(){return !!(S&&S.dlcGeo&&S.qantasGroundUntil>S.turn)}
+export function qantasGroundedReason(){if(!S)return '';return qantasGrounded()?'THE CORPORATE BOEING is parked on the runway':'QANTAS is not grounded'}
+export function strikeNode(pi,nid,opts){
  const silent=opts&&opts.silent;
  const n=NMAP[nid],prev=S.owner[nid];
  if(prev!=null)delete S.owner[nid];
@@ -711,31 +685,31 @@ function strikeNode(pi,nid,opts){
  }
  sync();
 }
-function isPillarShieldedNode(nid){
+export function isPillarShieldedNode(nid){
  const owner=S&&S.owner[nid];
  return owner!=null&&nid!=='geo_pillars'&&S.owner.geo_pillars===owner;
 }
-function canMissileNode(me,nid){
+export function canMissileNode(me,nid){
  return !!(S&&S.dlcGeo&&!S.rubble[nid]&&S.owner[nid]!==me&&!isPillarShieldedNode(nid));
 }
-function ownsMissileLauncher(pi){return !!(S&&S.dlcGeo&&(S.owner.geo_missile===pi||S.owner.geo_shahed===pi))}
-function canFireMissileFrom(pi){if(!S||!S.players[pi]||!ownsMissileLauncher(pi))return false;const pos=S.players[pi].pos;return (pos==='geo_missile'&&S.owner.geo_missile===pi)||(pos==='geo_shahed'&&S.owner.geo_shahed===pi)||S.owner.geo_kim===pi}
-function canReach(id){return !(id==='qantas'&&qantasGrounded())}
-function blockaded(id){return !!(S&&S.blockades&&S.blockades[id]>S.turn)}
-function seizeListPrice(pi,n){
+export function ownsMissileLauncher(pi){return !!(S&&S.dlcGeo&&(S.owner.geo_missile===pi||S.owner.geo_shahed===pi))}
+export function canFireMissileFrom(pi){if(!S||!S.players[pi]||!ownsMissileLauncher(pi))return false;const pos=S.players[pi].pos;return (pos==='geo_missile'&&S.owner.geo_missile===pi)||(pos==='geo_shahed'&&S.owner.geo_shahed===pi)||S.owner.geo_kim===pi}
+export function canReach(id){return !(id==='qantas'&&qantasGrounded())}
+export function blockaded(id){return !!(S&&S.blockades&&S.blockades[id]>S.turn)}
+export function seizeListPrice(pi,n){
  let base=n.cost;
  if(S.owner.golf===pi)base=Math.max(1,base-1);
  if(n.type==='CHART'){if(S.owner.nab===pi)base=Math.max(1,base-1);if(S.owner.econ===pi)base=Math.max(1,base-1)}
  return base;
 }
-function flatSeize(nid){return nid==='made'||nid==='qantas'||nid==='rba'||nid==='geo_pillars'}
-function takeoverCost(pi,nid,base){
+export function flatSeize(nid){return nid==='made'||nid==='qantas'||nid==='rba'||nid==='geo_pillars'}
+export function takeoverCost(pi,nid,base){
  if(flatSeize(nid))return base;
  if(S.dossier)return base;
  const prior=S.seizeCount[nid]||0;
  return base*Math.pow(2,Math.max(1,prior));
 }
-async function doMove(pi,id){
+export async function doMove(pi,id){
  if(!canReach(id)){sysTo(pi,qantasGroundedReason()+' — the jet is still at the gate.');return}
  if(blockaded(id)){sysTo(pi,NMAP[id].name.join(' ')+' is BLOCKADED — nobody gets in.');return}
  const prevPos=S.players[pi].pos;
@@ -761,7 +735,7 @@ async function doMove(pi,id){
  log('→ '+pname(pi)+' moves to '+NMAP[id].name.join(' ')+'.');
  if(S.steps<=0)await endMovement();else sync();
 }
-async function doFly(pi,id){
+export async function doFly(pi,id){
  const p=S.players[pi];
  if(!canReach(id)){sysTo(pi,qantasGroundedReason()+' — you cannot land there yet.');S.mode=null;sync();return}
  if(blockaded(id)){sysTo(pi,NMAP[id].name.join(' ')+' is BLOCKADED — you cannot land there.');S.mode=null;sync();return}
@@ -780,13 +754,13 @@ async function doFly(pi,id){
  if(flew){sync();await projPause()} /* the jet flies before the landing opens the next phase */
  await endMovement();
 }
-async function endMovement(){
+export async function endMovement(){
  if(!S||S.over||S.phase!=='move')return;
  S.phase='action';sync();
  await maybePeek();
  sync();
 }
-async function maybePeek(){
+export async function maybePeek(){
  const pi=S.cur;const p=S.players[pi];
  const anywhere=S.owner.iface===pi;
  const here=(S.owner.term===pi&&p.pos==='term')||(S.owner.timeline===pi&&p.pos==='timeline');
@@ -798,7 +772,7 @@ async function maybePeek(){
  if(v==='bury'){const cid=S.deck.pop();S.deck.unshift(cid);log('📈 '+pname(pi)+' buries the story at the bottom of the deck.')}
  else log('📈 '+pname(pi)+' peeks at tomorrow and puts it back.');
 }
-async function doSeize(pi){
+export async function doSeize(pi){
  const p=S.players[pi];const nid=p.pos;const n=NMAP[nid];const prev=S.owner[nid];
  if(S.dlcGeo&&S.rubble[nid]){sysTo(pi,'That node is rubble — it must be rebuilt before it can be owned.');return}
  if(prev===pi)return;
@@ -838,7 +812,7 @@ async function doSeize(pi){
  if(await winCheck())return;
  await endOfTurn();
 }
-async function doBug(pi,nid){
+export async function doBug(pi,nid){
  const n=NMAP[nid];const p=S.players[pi];
  if(!(ADJ[p.pos]||[]).includes(nid)||S.owner[nid]==null||S.owner[nid]===pi||S.bugs[nid]!=null){sysTo(pi,'Pick a highlighted rival node next to you (not already bugged).');return}
  const cost=(S.owner.insider===pi)?0:1;
@@ -849,7 +823,7 @@ async function doBug(pi,nid){
  log('🐛 '+pname(pi)+' plants a bug on '+n.name.join(' ')+(cost===0?' — the INSIDER TRADING graphic made it free.':'.'));
  S.mode=null;await endOfTurn();
 }
-async function doSpin(pi,kind){
+export async function doSpin(pi,kind){
  const cost=kind==='fox'?2:3;const cool=kind==='fox'?3:2;
  if(S.owner[kind==='fox'?'fox':'press']!==pi)return;
  const p=S.players[pi];
@@ -859,14 +833,14 @@ async function doSpin(pi,kind){
  if(v==='cool'){p.money-=cost;fxAt(pi,'−$'+cost,'#ff6b5e');S.spun=true;log('🗞️ '+pname(pi)+' spins the story smooth.');addCortisol(pi,-cool,'friendly coverage');await finishNodeAbility(pi);return}
  S.spinKind=kind;S.mode='roast';sync();
 }
-function drawCard(){
+export function drawCard(){
  if(!S.deck.length){S.deck=shuffle(S.discard.slice());S.discard=[];log('🎴 The rumor deck is reshuffled.')}
  const id=S.deck.pop();S.discard.push(id);
  const c=CARDBYID[id];
  log('🎴 EVENT — '+c.title);
  return c;
 }
-async function endOfTurn(){
+export async function endOfTurn(){
  if(!S||S.over||S.phase==='event')return;
  S.mode=null;S.phase='event';sync(true);
  const jtO=S.owner.jt;
@@ -884,13 +858,13 @@ async function endOfTurn(){
  if(await winCheck())return;
  nextTurn();
 }
-function nextTurn(){if(!S||S.over)return;S.cur=(S.cur+1)%S.players.length;if(S.cur===0)S.turn++;Promise.resolve(startTurn()).catch(e=>console.error(e))}
-function goalAmount(){return clampGoal(S&&S.goal?S.goal:Net.goal)}
+export function nextTurn(){if(!S||S.over)return;S.cur=(S.cur+1)%S.players.length;if(S.cur===0)S.turn++;Promise.resolve(startTurn()).catch(e=>console.error(e))}
+export function goalAmount(){return clampGoal(S&&S.goal?S.goal:Net.goal)}
 /* Money alone no longer takes it: the con needs a finished portfolio. */
-const WIN_TYPES=['BANK','REGULATOR','CHART','WILD','CORPORATE','COMMODITY','MEDIA'];
-function hasType(i,t){return NODES.some(n=>n.type===t&&S.owner[n.id]===i)}
-function missingTypes(i){return WIN_TYPES.filter(t=>!hasType(i,t))}
-async function winCheck(){
+export const WIN_TYPES=['BANK','REGULATOR','CHART','WILD','CORPORATE','COMMODITY','MEDIA'];
+export function hasType(i,t){return NODES.some(n=>n.type===t&&S.owner[n.id]===i)}
+export function missingTypes(i){return WIN_TYPES.filter(t=>!hasType(i,t))}
+export async function winCheck(){
  if(!S||S.over||Net.role!=='host')return false;
  const goal=goalAmount();
  let win=-1;
@@ -898,7 +872,7 @@ async function winCheck(){
  if(win<0)return false;
  S.over=true;S.phase='over';sync(true);
  const w=S.players[win];
- Presence.gameOver(w.name,w.char,S.players.map(pl=>({name:pl.name,money:pl.money})));
+ hooks.gameOver(w.name,w.char,S.players.map(pl=>({name:pl.name,money:pl.money})));
  log('🏆 '+pname(win)+' banks $'+w.money+' with the full set of node types — the target was $'+goal+'. The con is complete.');
  const wc=charMeta(w.char);
  const charHtml=wc?'<div style="margin:10px 0 14px;text-align:center"><img src="'+charSrc(w.char)+'" alt="'+esc(wc.name)+'" style="width:96px;height:96px;object-fit:contain;border-radius:12px;border:2px solid '+w.color+';background:#111;padding:4px"><div style="font-weight:800;margin-top:5px">'+esc(wc.name)+'</div></div>':'';
@@ -909,7 +883,7 @@ async function winCheck(){
     the lobby (or LEAVE ends the night deliberately). */
  return true;
 }
-function addChat(pi,text){
+export function addChat(pi,text){
  if(!S)return;
  /* rows past the seated table are spectators — they chat under their roster
     name with a palette colour, since they hold no seat of their own */
@@ -918,3 +892,65 @@ function addChat(pi,text){
  if(S.chat.length>60)S.chat.shift();
  sync();
 }
+/* ================= EVENT FACES (pure HTML strings) ================= */
+export function monopolyAlertFace(sub,asic){const img=asic?'./static/asic.png':'./static/accc.png';const lab=asic?'ASIC':'ACCC';const title=asic?'ASIC MARKET-MANIPULATION ALERT':'MONOPOLY ALERT';return '<div class="eventcard"><div style="display:flex;gap:16px;justify-content:center;align-items:center;margin:10px 0 8px"><img src="./static/the rock.gif" alt="The Rock" style="width:120px;height:120px;object-fit:cover;border:2px solid #168388;background:#000"><img src="'+img+'" alt="'+lab+'" style="width:120px;height:120px;object-fit:contain;border:2px solid #168388;background:#111;padding:8px"></div><div class="etitle">'+title+'</div><div class="etext">'+(sub||'')+'</div></div>';}
+export function cardFace(c){if(c.id==='crackdown')return monopolyAlertFace(c.text);return '<div class="eventcard"><div class="eicon">'+c.icon+'</div><div class="etitle">'+c.title+'</div><div class="etext">'+c.text+'</div></div>'}
+/* ================= MARKET EVENT DECK (24 cards) — every card moves the mood ================= */
+export const CARDS=[
+{id:'oilspike',icon:'🛢️',title:'OIL SPIKES — WTI +12%',text:'Crude goes vertical. The pit pays out, the tankers get rich, and everyone pays at the pump.',
+ run(){setMood('BOOM','WTI +12% — crude goes vertical');[['oil',6,'crude windfall'],['oilgraph',2,'the graph called it'],['tanker',3,'tankers rechartered at panic rates'],['petronas',3,'the national oil company'],['barrels',2,'the barrel yard']].forEach(a=>{const o=S.owner[a[0]];if(o!=null)gain(o,a[1],a[2])});const q=S.owner.quik;S.players.forEach((pl,i)=>{if(i===q)return;if(q==null)payVoid(i,1,'fuel costs — nobody minds the till');else payTo(i,1,q,'fuel costs → QuikStop')});}},
+{id:'coalrush',icon:'🚃',title:'COAL RUSH',text:'Demand for black rock goes nuclear. Everything on rails and water makes money.',
+ run(){setMood('BOOM','coal rush — everything on rails makes money');[['port',4,'the docks work overtime'],['train',2,'the train runs all night'],['tanker',3,'freight rates through the roof'],['coal',2,'COAL Corp books all of it'],['forklift',1,'pallets upon pallets'],['bhp',3,'the Big Australian books the tonnes']].forEach(a=>{const o=S.owner[a[0]];if(o!=null)gain(o,a[1],a[2])});}},
+{id:'rates',icon:'🏛️',title:'RBA CASH-RATE DECISION',text:'Governor Bullock leans into the microphone. Money gets expensive — for everyone but the insiders.',
+ run(){setMood('CALM','the RBA decides — the market holds its breath, then exhales');const r=S.owner.rba,b=S.owner.bullock;S.players.forEach((pl,i)=>{if(i===r||i===b)return;payFee(i,2,'the cost of money')});if(r!=null)log('🏛️ '+pname(r)+' set the rate — pays nothing.');if(b!=null)log('👩‍💼 The Governor takes '+pname(b)+'’s calls — pays nothing.');const c=S.owner.cash;if(c!=null)gain(c,2,'you literally set it');const j=S.owner.jim;if(j!=null)gain(j,2,'the headline sells papers');const be=S.owner.bess;if(be!=null)gain(be,2,'“BIG BESSENT” reacts live');const hs=S.owner.herald;if(hs!=null)gain(hs,2,'THE JIM REAPER reprints the decision');}},
+{id:'bondrevolt',icon:'💥',title:'BONDMAGEDDON',text:'“Government Bond: the collapse of the world’s safest investment.” Yields go vertical from Tokyo to Toronto.',
+ run(){setMood('PANIC','“the collapse of the world’s safest investment”');const bd=S.owner.bond;S.players.forEach((pl,i)=>{const banks=NODES.filter(n=>n.type==='BANK'&&S.owner[n.id]===i).length;if(!banks)return;const amt=banks*2;if(bd!=null)payTo(i,amt,bd,'the revolt eats '+banks+' bank position'+(banks>1?'s':'')+' → The Bond Desk');else payVoid(i,amt,'the revolt eats the banking book')});COUNTRY.forEach(c=>{const o=S.owner[c];if(o!=null)gain(o,c==='japan'?3:1,NMAP[c].name.join(' ')+' pays its reader')});const t=S.owner.tenyear;if(t!=null)gain(t,2,'the master chart was right');const be=S.owner.bess;if(be!=null)gain(be,2,'Big Bessent called it on air');const br=S.owner.brad;if(br!=null)gain(br,2,'he had it explained in the movie');const bs=S.owner.bigshort;if(bs!=null)gain(bs,3,'the cinema saw it coming');const lk=S.owner.leak;if(lk!=null)gain(lk,2,'the leak was first with it');}},
+{id:'ceophoto',icon:'📸',title:'CEO PHOTO LEAKS — COAL CORP',text:'Mark Watson, photographed exactly where he should not have been. Someone is holding matches.',
+ run(){setMood('FRENZY','CEO photo leaks — the front pages feed');const c=S.owner.coal;if(c==null){log('🚂 COAL CORP HQ is unowned — Watson denies everything to an empty room.');return}if(S.owner.watson===c){log('🕴️ Watson fronts the cameras himself — the photos are dismissed as “old”. No Cortisol.');return}if(S.owner.port===c)gain(c,5,'shipped the coal before the news broke');if(S.owner.press===c||S.owner.fox===c){gain(c,3,'the press room spins it beautifully');return}addCortisol(c,3,'the photos run on every front page','event');}},
+{id:'tariffs',icon:'🦅',title:'TRUMP TWEETS TARIFFS',text:'ALL CAPS. Exclamation points. Global markets do a synchronized swan dive.',
+ async run(){setMood('PANIC','TARIFFS! ALL CAPS! markets swan-dive');const t=S.owner.trump;let chain;const opts=[{label:'🛢️ OIL chain +$3 each',v:'oil'},{label:'🚂 COAL chain +$3 each',v:'coal'}];
+ if(t!=null)chain=await askPlayer(t,{title:'TRUMP TWEETS TARIFFS',body:'You own THE DONALD — which chain gets the windfall?',options:opts,def:Math.random()<.5?'oil':'coal'});
+ else chain=Math.random()<.5?'oil':'coal';
+ const list=chain==='oil'?['oil','oilgraph','barrels','tanker','petronas']:['coal','train','port','watson','forklift','bhp'];
+ const winners=new Set();list.forEach(id=>{const o=S.owner[id];if(o!=null){gain(o,3,chain+' windfall via '+NMAP[id].name[0]);winners.add(o)}});
+ const u=S.owner.us;if(u!=null){gain(u,2,'the safe-haven bid');winners.add(u)}
+ S.players.forEach((pl,i)=>{if(!winners.has(i))payVoid(i,1,'the tariff bill')});
+ if(t!=null)log('🦅 The tweet did numbers.');}},
+{id:'besspeak',icon:'🎤',title:'BIG BESSENT SPEAKS',text:'The Treasury clears its throat. Bond desks straighten their ties. Markets listen.',
+ run(){setMood('CALM','Big Bessent soothes the desk');const b=S.owner.bessent;if(b!=null)gain(b,3,'the big man speaks');const d=S.owner.bond;if(d!=null)gain(d,2,'the desk frontran the speech');const t=S.owner.tenyear;if(t!=null)gain(t,2,'yields obey');const br=S.owner.brad;if(br!=null)gain(br,2,'he had it explained to him');}},
+{id:'budget',icon:'📰',title:'THE JIM DELIVERS THE BUDGET',text:'“The Jim…” reads numbers to a sleepy chamber. Somebody, somewhere, is counting.',
+ run(){setMood('CALM','the budget is delivered — mostly numbers');const s=S.owner.spend;if(s!=null)gain(s,3,'the spending graphic glows');const ch=S.owner.chalmers;if(ch!=null)gain(ch,2,'the Treasurer delivers');const j=S.owner.jim;if(j!=null)gain(j,2,'the exclusive pays');const hs=S.owner.herald;if(hs!=null)gain(hs,2,'THE JIM REAPER special edition');const a=S.owner.albo;if(a!=null)gain(a,1,'the PM signs it');S.players.forEach((pl,i)=>{if(i!==s&&i!==ch&&i!==j&&i!==a&&i!==hs)payVoid(i,1,'return to sender (taxes)')});}},
+{id:'mpcfinals',icon:'🏆',title:'MONETARY POLICY COMPETITION FINALS',text:'The RBA’s big night. Schools. Charts. Trophies. JTPortal is rumoured to be judging.',
+ run(){setMood('BOOM','monetary policy finals — the schools deliver');const m=S.owner.mpc;if(m!=null){gain(m,4,'the champions’ purse');giveIntel(m,1,'the finalists’ data')}const sc=S.owner.school;if(sc!=null)gain(sc,2,'the school places');const ib=S.owner.ib;if(ib!=null)gain(ib,2,'the IB cohort delivers');const jt=S.owner.jt;if(jt!=null)giveIntel(jt,1,'JTPortal judged the submissions');}},
+{id:'sisyroll',icon:'🪨',title:'THE BOULDER ROLLS BACK DOWN',text:'Empires, portfolios, homework — everything heavy slides. The biggest players feel it most.',
+ run(){setMood('CALM','the boulder rolls back down, as ever');const counts=S.players.map((pl,i)=>NODES.filter(n=>S.owner[n.id]===i).length);const mx=Math.max(...counts);S.players.forEach((pl,i)=>{if(counts[i]===mx&&S.owner.sisy!==i)payVoid(i,2,'the boulder finds the biggest stack')});const s=S.owner.sisy;if(s!=null)log('🪨 '+pname(s)+' is used to this — immune.');}},
+{id:'goldrush',icon:'🪙',title:'GOLD RUSH',text:'The gold-coloured coins gleam. Paper money suddenly looks like a rumor.',
+ run(){setMood('BOOM','gold gleams — paper looks like a rumor');const g=S.owner.gold;if(g!=null)gain(g,5,'everything gleams');const n=S.owner.notes;if(n!=null)gain(n,2,'collectors pay up');const bh=S.owner.bhp;if(bh!=null)gain(bh,3,'ore prices sneak up with the gold');S.players.forEach((pl,i)=>{if(i!==g&&i!==n&&i!==bh)payVoid(i,1,'inflation bites')});}},
+{id:'rockcooks',icon:'💪',title:'THE ROCK COOKS',text:'A gym, a blender, a set of books that needed cooking. The smell is unmistakable.',
+ run(){setMood('CALM','the books are cooked; the gym is calm');const r=S.owner.rock;if(r!=null){gain(r,3,'ladder of opportunity');addCortisol(r,-1,'the calm after the cook')}else log('💪 Nobody owns The Rock. The books stay raw.');}},
+{id:'davos',icon:'🏔️',title:'DAVOS — THE CONFERENCE STAGE',text:'Lanyards, panels, fondue. Global networks tighten over canapés.',
+ run(){setMood('FRENZY','Davos — lanyards, panels, fondue');const w=S.owner.wef;if(w!=null)gain(w,3,'the big table pays out');const b=S.owner.bessent;if(b!=null)gain(b,2,'a familiar face on the panel');Object.keys(S.bugs).forEach(nid=>{const o=S.bugs[nid];S.players[o].money+=1;log('🏔️ Global skim from '+NMAP[nid].name.join(' ')+': '+pname(o)+' +$1.')});}},
+{id:'quikrob',icon:'🎭',title:'QUIKSTOP ROBBERY',text:'A ski mask, a shopping bag, an empty register. The tapes are… missing.',
+ run(){setMood('CALM','a ski mask, a shopping bag, an empty register');const q=S.owner.quik;if(q==null){S.players.forEach((pl,i)=>payVoid(i,1,'nobody was watching the till'));return}payVoid(q,2,'gone, just gone');const b=S.owner.bond007;if(b!=null)gain(b,2,'he was there in disguise (allegedly)');}},
+{id:'ibexams',icon:'📝',title:'IB EXAMS',text:'Papers, calculators, despair. The Diploma Programme does not grade on charisma.',
+ run(){setMood('CALM','IB exams — despair, indexed');const ib=S.owner.ib;if(ib!=null)giveIntel(ib,2,'HL Economics pays off');const sc=S.owner.school;if(sc!=null)giveIntel(sc,1,'the cohort crammed');S.players.forEach((pl,i)=>{const charts=NODES.filter(n=>n.type==='CHART'&&S.owner[n.id]===i).length;if(charts===0&&pl.intel>0){pl.intel-=1;fxAt(i,'🛈−1','#55c1ff');log('📝 '+pname(i)+' didn’t do the reading: −1 Intel.')}});}},
+{id:'profit',icon:'⛽',title:'PROFIT WARNING… FOR OTHERS',text:'Markets wobble, people stress-eat. Quikstop does just fine.',
+ run(){setMood('CALM','profit warning… for others');const q=S.owner.quik;if(q!=null)gain(q,4,'snack economics');else log('⛽ Quikstop is unowned — the profits drift away.');}},
+{id:'quiet',icon:'🌙',title:'A QUIET QUARTER',text:'No tweets, no leaks, no rate decisions. Everyone quietly pockets a little extra.',
+ run(){setMood('CALM','a quiet quarter — no tweets, no leaks');S.players.forEach((pl,i)=>gain(i,2,'a quiet quarter'));}},
+{id:'snoop',icon:'🔍',title:'REGULATORS SNOOP AROUND',text:'Somebody asked one question too many. The sweatiest players get a second look.',
+ run(){setMood('CALM','regulators asking one question too many');const mx=Math.max(0,...S.players.map(pl=>pl.cortisol));if(mx<=0){log('🔍 Nobody has any Cortisol — the regulators go for coffee.');return}S.players.forEach((pl,i)=>{if(pl.cortisol===mx)addCortisol(i,1,'regulators circling','event')});}},
+{id:'tip',icon:'✉️',title:'ANONYMOUS TIP',text:'A brown envelope with no return address. Everyone learns something.',
+ run(){setMood('CALM','a brown envelope, no return address');S.players.forEach((pl,i)=>giveIntel(i,1,'the envelope'));log('✉️ Every player gains 1 Intel.');}},
+{id:'frenzy',icon:'🗣️',title:'MEDIA FRENZY',text:'“Quite frankly…” The press needs a villain before deadline. Whoever owns the narrative picks one.',
+ async run(){setMood('FRENZY','the press needs a villain before deadline');const pi=S.owner.press;if(pi==null){log('🗣️ The Press Room is unowned — the story dies in committee.');return}const rivals=S.players.map((pl,i)=>i).filter(i=>i!==pi);const opts=rivals.map(i=>({label:S.players[i].name+' +2 🔥',v:i}));opts.push({label:'Sit on the story',v:-1});const v=await askPlayer(pi,{title:'MEDIA FRENZY',body:'You control the PRESS ROOM — torch which rival?',options:opts,def:-1});if(v>=0)addCortisol(v,2,'front-page frenzy','event');}},
+{id:'crackdown',icon:'🚨',title:'MONOPOLY ALERT',text:'The regulator finally does something. The hottest player pays for it.',
+ run(){setMood('PANIC','crackdown — the regulator finally does something');const mx=Math.max(0,...S.players.map(pl=>pl.cortisol));if(mx<=0){log('🚨 Nobody is hot — the crackdown hits an empty office.');return}S.players.forEach((pl,i)=>{if(pl.cortisol===mx)payFee(i,4,'crackdown fine')});const bs=S.owner.bigshort;if(bs!=null)gain(bs,3,'the cinema called it');}},
+{id:'tapes',icon:'🗑️',title:'THE TAPES GO MISSING',text:'A shredder runs all night. What you knew, you no longer know — unless you kept copies.',
+ run(){setMood('CALM','the tapes go missing — a shredder runs all night');S.players.forEach((pl,i)=>{if(S.owner.whistle===i){giveIntel(i,2,'the Whistleblower kept copies')}else if(S.owner.jt===i){giveIntel(i,2,'JTPortal keeps backups')}else if(pl.intel>0){pl.intel-=1;fxAt(i,'🛈−1','#55c1ff');log('🗑️ '+pname(i)+' loses 1 Intel — the tapes are gone.')}});}},
+{id:'bigscreen',icon:'🎬',title:'THE BIG SHORT SCREENING',text:'Brad Pitt explains subprime with a Jenga tower. Everyone watches. Nobody learns.',
+ run(){setMood('FRENZY','The Big Short screens to a packed house');const bs=S.owner.bigshort;if(bs!=null)gain(bs,3,'packed house');const br=S.owner.brad;if(br!=null)gain(br,2,'he was right there on screen');const h=S.owner.hedge;if(h!=null)gain(h,2,'somebody was short the whole time');}},
+{id:'madeout',icon:'🟣',title:'MADE PAYS OUT… PROBABLY',text:'The purple graphic does… something. Money appears. Explanations do not.',
+ run(){setMood(S.mood,'MADE does… something');if(Math.random()<1/3){madePay();log('🟣 MADE has paid out. Nobody knows why. NOBODY.')}else log('🟣 MADE remains unexplained. Again.');}}
+];
+export const CARDBYID={};CARDS.forEach(c=>CARDBYID[c.id]=c);

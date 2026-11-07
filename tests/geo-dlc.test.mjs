@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadEngine, makeGame, makeConn, makeState, withSeed, withSeedAsync, makeRng, bfs, SOURCE, repoRoot } from './helpers/harness.mjs';
 
-const engineFor = t => { const e = loadEngine(); t.after(() => e.dispose()); return e; };
+const engineFor = async t => { const e = await loadEngine(); t.after(() => e.dispose()); return e; };
 async function settle() {
   for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
 }
@@ -26,7 +26,7 @@ const quietDeck = S => { S.deck = ['quiet', 'quiet', 'quiet', 'quiet']; S.discar
 const armAction = engine => { const S = engine.acc.S; S.cur = 0; S.phase = 'action'; S.mode = null; };
 /* Boots a host game with the DLC flag on and a quiet deck. Seat 0 = host. */
 async function geoGame(t, n = 2) {
-  const e = engineFor(t);
+  const e = await engineFor(t);
   const S = await makeGame(e, n, { geo: true });
   assert.equal(e.acc.Net.myIdx, 0);
   quietDeck(S);
@@ -34,8 +34,8 @@ async function geoGame(t, n = 2) {
 }
 
 /* ================= GD-01 — the world rebuilds both ways ================= */
-test('GD-01 rebuildWorld(false) mirrors the classic 70-exhibit world; (true) deals the DLC islands', t => {
-  const e = engineFor(t);
+test('GD-01 rebuildWorld(false) mirrors the classic 70-exhibit world; (true) deals the DLC islands', async t => {
+  const e = await engineFor(t);
   const acc = e.acc;
   assert.equal(acc.NODES.length, 70, 'the base world loads at 70');
   assert.equal(acc.WORLD_GEO, false);
@@ -62,8 +62,8 @@ test('GD-01 rebuildWorld(false) mirrors the classic 70-exhibit world; (true) dea
   assert.equal(acc.HIGH_VALUE_NODE_IDS.has('geo_pillars'), false, 'high-value set rebuilt, not accumulated');
 });
 
-test('GD-01b every GEOGRAPHY node is structurally complete with a shipped asset', t => {
-  const e = engineFor(t);
+test('GD-01b every GEOGRAPHY node is structurally complete with a shipped asset', async t => {
+  const e = await engineFor(t);
   e.f.rebuildWorld(true);
   for (const n of e.acc.GEO_NODES) {
     assert.ok(Array.isArray(n.name) && n.name.length >= 1, `${n.id}: name lines`);
@@ -82,7 +82,7 @@ test('GD-01b every GEOGRAPHY node is structurally complete with a shipped asset'
 test('GD-02 with the toggle on, initGame deals 82 pins and every seed keeps the board connected', async t => {
   const seeds = [77, 78, 79, 80, 81, 82, 83, 84];
   for (const seed of seeds) {
-    const e = engineFor(t);
+    const e = await engineFor(t);
     e.acc.Net.dlcGeo = true;
     withSeed(seed, () => e.f.initGame([{ name: 'A', char: 'markwatson' }, { name: 'B', char: 'tomkins' }]));
     const S = e.acc.S;
@@ -221,8 +221,8 @@ test('GD-06 beach day at Wonsan: free −2 Cortisol, once per turn, on-site only
 });
 
 /* ================= GD-07 — PYONGYANG CITY tribute ================= */
-test('GD-07 Pyongyang City pays +$1 income per GEOGRAPHY node owned', t => {
-  const e = engineFor(t);
+test('GD-07 Pyongyang City pays +$1 income per GEOGRAPHY node owned', async t => {
+  const e = await engineFor(t);
   e.f.rebuildWorld(true);
   const S = makeState(e, { dlcGeo: true, players: [{ money: 50 }] });
   e.acc.S = S;
@@ -396,7 +396,7 @@ test('GD-11b Stage 5 guards: ESG-rich cannot be declined; no rival, no call', as
   }
   {
     /* A solo table has nobody to decline. */
-    const e = engineFor(t);
+    const e = await engineFor(t);
     const S0 = await makeGame(e, 1, { geo: true });
     quietDeck(S0);
     S0.owner.geo_stage5 = 0;
@@ -539,8 +539,8 @@ test('GD-13 Tuvalu auto-claims for the first arrival — free, no Cortisol; neve
 });
 
 /* ================= GD-14 — the DLC board sweep across seeds ================= */
-test('GD-14 the generated 82-pin board stays a valid collage across 30 seeds', { timeout: 60000 }, t => {
-  const e = engineFor(t);
+test('GD-14 the generated 82-pin board stays a valid collage across 30 seeds', { timeout: 60000 }, async t => {
+  const e = await engineFor(t);
   e.f.rebuildWorld(true);
   const slots = e.acc.QUIK_SLOTS;
   for (let s = 0; s < 30; s++) {
@@ -581,7 +581,7 @@ test('GD-15 the geo flag is host-gated in the lobby and travels with every paylo
   const lobby = c3.sent.filter(m => m.t === 'lobby').pop();
   assert.equal(lobby.dlcGeo, true, 'the lobby broadcast ships the DLC flag');
   /* The state carries it: guests rebuild their world on adopt. */
-  const guest = engineFor(t);
+  const guest = await engineFor(t);
   assert.equal(guest.acc.NODES.length, 70, 'guests start in the base world');
   guest.f.adoptState(JSON.parse(JSON.stringify(e.f.pubState(true))));
   assert.equal(guest.acc.NODES.length, 82, 'adopting a geo state rebuilds the guest world');
@@ -813,7 +813,7 @@ test('GD-20b blockade guards: rubble refused, double walls refused, move-phase r
 
 /* ================= GD-21 — Kim Jong Un ================= */
 test('GD-21 Kim Jong Un: a WILD pin that pays +1 Intel at every startTurn', async t => {
-  const e = engineFor(t);
+  const e = await engineFor(t);
   e.f.rebuildWorld(true);
   const kim = e.acc.NMAP.geo_kim;
   assert.equal(kim.type, 'WILD', 'WILD like Toktimer');
@@ -831,8 +831,8 @@ test('GD-21 Kim Jong Un: a WILD pin that pays +1 Intel at every startTurn', asyn
 });
 
 /* ================= GD-22 — strategic synergies spawn far apart ================= */
-test('GD-22 cortisol relief and strategic drone synergies spawn far apart across seeds', { timeout: 60000 }, t => {
-  const e = engineFor(t);
+test('GD-22 cortisol relief and strategic drone synergies spawn far apart across seeds', { timeout: 60000 }, async t => {
+  const e = await engineFor(t);
   e.f.rebuildWorld(true);
   const slots = e.acc.QUIK_SLOTS;
   const strategic = ['geo_missile', 'geo_shahed', 'geo_kim', 'geo_wonsan', 'geo_venice', 'geo_pillars', 'geo_scs', 'geo_pyothotel', 'geo_boeing', 'geo_pyoncity', 'geo_stage5', 'gold', 'sat', 'asics', 'rba', 'rock'];
@@ -861,7 +861,7 @@ test('GD-22 cortisol relief and strategic drone synergies spawn far apart across
 
 /* ================= GD-23 — ASIC takes the monetary book ================= */
 test('GD-23 monetary-policy concentration is an ASIC market-manipulation file, not an ACCC monopoly', async t => {
-  const e = engineFor(t);
+  const e = await engineFor(t);
   e.f.rebuildWorld(true);
   e.acc.Net.role = 'host';               // the bulletin needs a host to announce
   const S = makeState(e, { dlcGeo: false, players: [{ money: 50, intel: 10 }, { money: 30, intel: 10 }] });
@@ -883,7 +883,7 @@ test('GD-23 monetary-policy concentration is an ASIC market-manipulation file, n
   assert.ok(card.html.includes('MARKET-MANIPULATION'), 'the card says the crime');
 
   /* A plain bank book still goes to the ACCC with its own face. */
-  const e2 = engineFor(t);
+  const e2 = await engineFor(t);
   e2.f.rebuildWorld(true);
   e2.acc.Net.role = 'host';
   const S2 = makeState(e2, { dlcGeo: false, players: [{ money: 50, intel: 10 }, { money: 30, intel: 10 }] });
@@ -900,7 +900,7 @@ test('GD-23 monetary-policy concentration is an ASIC market-manipulation file, n
 
 /* ================= GD-24 — the flight animation payload ================= */
 test('GD-24 projectile fx: synced payload, nose-first rig, mirrored leftward flights', async t => {
-  const e = engineFor(t);
+  const e = await engineFor(t);
   e.f.rebuildWorld(true);
   e.acc.Net.role = 'host';
   const S = makeState(e, { dlcGeo: true, players: [{}, {}] });
@@ -1076,8 +1076,8 @@ test('GD-27b a Tuvalu reflection destroys the launcher that fired — including 
 });
 
 
-test('GD-28 ESG Pillars never inflate on hostile takeover', t => {
-  const e = engineFor(t);
+test('GD-28 ESG Pillars never inflate on hostile takeover', async t => {
+  const e = await engineFor(t);
   e.f.rebuildWorld(true);
   assert.equal(e.f.flatSeize('geo_pillars'), true, 'the Pillars are a flat-price takeover node');
   assert.equal(e.f.takeoverCost(0, 'geo_pillars', 6), 6, 'repeat takeovers remain at list price');

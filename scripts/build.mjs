@@ -9,12 +9,16 @@
  *      (never tests/, docs/, cloudflare-relay/, node_modules/, .github/, scripts/);
  *   2. bundles the Discord Embedded App SDK with esbuild straight into the
  *      output dir (the committed static/discord-sdk.bundle.js is not touched);
- *   3. stamps BUILD_COMMIT in the output's index.html from $RENDER_GIT_COMMIT,
+ *   3. bundles the game: the page's single entry module (static/js/main.js and
+ *      everything it imports — the rules engine, net, ui, bots, Discord glue)
+ *      becomes ONE ES-module file, and the individual source modules are not
+ *      shipped. Only the dynamic import of the SDK bundle stays external;
+ *   4. stamps BUILD_COMMIT in the output's index.html from $RENDER_GIT_COMMIT,
  *      falling back to `git rev-parse HEAD`, then 'dev' (first 7 characters);
- *   4. cache-busts: every local .js/.css file becomes name.<sha256-10>.ext and
+ *   5. cache-busts: every local .js/.css file becomes name.<sha256-10>.ext and
  *      every reference to it (HTML src/href, JS import()/import-from) is
  *      rewritten. Files are hashed leaves-first, so a file that imports another
- *      hashed file (discord.js -> the SDK bundle) hashes its REWRITTEN content.
+ *      hashed file (the game bundle -> the SDK bundle) hashes its REWRITTEN content.
  *      Images are copied as-is, unhashed.
  *
  * It only ever writes inside the output dir, so the repo root keeps working as a
@@ -38,6 +42,11 @@ const ASSET_DIRS = ['static', 'characters'];
 const SKIP_FILES = new Set(['static/discord-sdk-entry.js', 'static/discord-sdk.bundle.js']);
 const SDK_ENTRY = 'static/discord-sdk-entry.js';
 const SDK_OUT = 'static/discord-sdk.bundle.js';
+/* The game entry module (index.html loads only this) and the source files that
+ * are folded into its bundle and therefore not shipped on their own. */
+const GAME_ENTRY = 'static/js/main.js';
+const GAME_SOURCE_DIRS = ['static/js'];
+const GAME_SOURCE_FILES = ['static/bots.js'];
 
 const toPosix = p => p.split(path.sep).join('/');
 const isExternal = u => /^[a-z][a-z0-9+.-]*:|^\/\/|^#/i.test(u);
@@ -121,7 +130,26 @@ export async function build({ root = repoRoot, out, commit } = {}) {
     outfile: path.join(out, SDK_OUT), logLevel: 'warning',
   });
 
-  /* ---- 3. stamp BUILD_COMMIT ---- */
+  /* ---- 3. bundle the game into its entry module ----
+   * esbuild follows the real import graph from main.js. The one thing it must NOT
+   * follow is the Discord SDK: discord.js imports it dynamically by its absolute
+   * served path, which step 5 later rewrites to the hashed file name. */
+  const entryPath = path.join(out, GAME_ENTRY);
+  const bundled = await esbuild.build({
+    /* absWorkingDir keeps esbuild's `// path` comments relative to the output dir, so the
+       bundle (and its content hash) is identical wherever --out points. */
+    absWorkingDir: out, entryPoints: [GAME_ENTRY],
+    bundle: true, format: 'esm', platform: 'browser', target: 'es2020',
+    external: ['/' + SDK_OUT], write: false, logLevel: 'warning', legalComments: 'none',
+  });
+  if (bundled.outputFiles.length !== 1) throw new Error('expected one game bundle, got ' + bundled.outputFiles.length);
+  const bundleText = bundled.outputFiles[0].text;
+  for (const d of GAME_SOURCE_DIRS) fs.rmSync(path.join(out, d), { recursive: true, force: true });
+  for (const f of GAME_SOURCE_FILES) fs.rmSync(path.join(out, f), { force: true });
+  fs.mkdirSync(path.dirname(entryPath), { recursive: true });
+  fs.writeFileSync(entryPath, bundleText);
+
+  /* ---- 4. stamp BUILD_COMMIT ---- */
   const indexPath = path.join(out, 'index.html');
   let index = fs.readFileSync(indexPath, 'utf8');
   const stampRe = /const BUILD_COMMIT = '[^']*';/g;
@@ -129,7 +157,7 @@ export async function build({ root = repoRoot, out, commit } = {}) {
   index = index.replace(stampRe, () => `const BUILD_COMMIT = '${commit}';`);
   fs.writeFileSync(indexPath, index);
 
-  /* ---- 4. content-hash every local .js / .css, leaves first ---- */
+  /* ---- 5. content-hash every local .js / .css, leaves first ---- */
   const hashable = new Set(walk(out).filter(r => /\.(js|css)$/i.test(r)));
   const renamed = new Map(); // original rel -> hashed rel
   const visiting = [];

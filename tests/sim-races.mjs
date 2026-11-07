@@ -20,12 +20,7 @@
  * count and missing win types, which separates a rich loser from a poor one
  * and a type-stacker from a set-builder.
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import vm from 'node:vm';
-import { loadEngine, pump, repoRoot, withSeedAsync } from './helpers/harness.mjs';
-
-const BOT_SRC = fs.readFileSync(path.join(repoRoot, 'static', 'bots.js'), 'utf8');
+import { loadEngine, pump, withSeedAsync } from './helpers/harness.mjs';
 
 const args = {};
 for (let i = 2; i < process.argv.length; i++) {
@@ -90,16 +85,17 @@ const stats = {};   /* char -> { games, wins, winTurns, money, nodes, missing } 
 let totalTurns = 0, finished = 0, stalled = 0, totalIntents = 0;
 
 for (let g = 0; g < GAMES; g++) {
-  const engine = loadEngine();
+  const engine = await loadEngine();
   try {
     engine.ctx.window.__BIGCON_TEST__ = true; /* zero pacing — pure simulation speed */
-    vm.runInContext(BOT_SRC, engine.ctx, { filename: 'static/bots.js' });
-    engine.ctx.window.BigConBots.setVariant(VARIANT);
+    const Bots = await engine.loadBots();
+    Bots.setVariant(VARIANT);
     engine.ctx.__simIntents = 0;
-    vm.runInContext(`(() => {
-      const oa = applyIntent;
-      applyIntent = async function (pi, m) { __simIntents++; return oa(pi, m); };
-    })()`, engine.ctx, { filename: 'sim-instrument' });
+    /* count every intent the bots send through the engine's gate */
+    const wrapApi = api => ({ ...api, applyIntent: (pi, m) => { engine.ctx.__simIntents++; return api.applyIntent(pi, m); } });
+    const takeTurn = Bots.takeTurn, answerPrompt = Bots.answerPrompt;
+    Bots.takeTurn = (pi, view, api) => takeTurn(pi, view, wrapApi(api));
+    Bots.answerPrompt = (pi, opt, api) => answerPrompt(pi, opt, wrapApi(api));
 
     /* shuffle mode draws an independent, seeded table each game */
     const chars = SHUFFLE ? pickRoster(g, TABLE) : [];

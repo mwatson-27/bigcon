@@ -17,36 +17,40 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
 import { loadEngine, makeGame, makeConn, pump, snapshot, withSeedAsync, repoRoot, CHARS8 } from './helpers/harness.mjs';
 
-const BOT_SRC = fs.readFileSync(path.join(repoRoot, 'static', 'bots.js'), 'utf8');
-
-/* Boot an engine with the bot module loaded into the realm and instruments
-   wrapped around applyIntent (intent ledger) and sysTo (rejection ledger). */
-function botEngine(t, botSeed = 4242) {
-  const engine = loadEngine();
+/* Boot an engine with the shipped bot module loaded into it (the page's main.js
+   does the same through the `bots` hook) and instruments wrapped around the bots'
+   applyIntent gate (intent ledger) and the sysTo hook (rejection ledger). */
+async function botEngine(t, botSeed = 4242) {
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   engine.ctx.window.__BIGCON_TEST__ = true; /* zero bot pacing */
   engine.ctx.window.__BIGCON_BOT_SEED__ = botSeed;
-  vm.runInContext(BOT_SRC, engine.ctx, { filename: 'static/bots.js' });
-  engine.ctx.__rec = { intents: [], sys: [], freezeAfter: null, pre: null };
-  vm.runInContext(`(() => {
-    const origApply = applyIntent;
-    applyIntent = async function (pi, m) {
-      const rec = __rec;
+  const Bots = await engine.loadBots();
+  const rec = { intents: [], sys: [], freezeAfter: null, pre: null };
+  engine.ctx.__rec = rec;
+  /* A bot reaches the rules only through the api it is handed, so wrapping
+     api.applyIntent sees every bot intent — the same gate a guest's wire intent uses. */
+  const wrapApi = api => ({
+    ...api,
+    applyIntent: async (pi, m) => {
+      const S = engine.acc.S;
       if (rec.freezeAfter && rec.freezeAfter.pi === pi && !rec.freezeAfter.hit && S && S.players[pi])
         rec.pre = { money: S.players[pi].money, intel: S.players[pi].intel, cortisol: S.players[pi].cortisol };
-      await origApply(pi, m);
+      await api.applyIntent(pi, m);
       rec.intents.push({ pi, act: m && m.act, id: m && m.id });
       if (rec.freezeAfter && rec.freezeAfter.pi === pi && m.act === rec.freezeAfter.act && !rec.freezeAfter.hit) {
         rec.freezeAfter.hit = true;
         if (S && !S.over) S.over = true; /* the staged effect landed — re-freeze the table */
       }
-    };
-    const origSys = sysTo;
-    sysTo = function (pi, msg) { __rec.sys.push({ pi, msg }); return origSys(pi, msg); };
-  })()`, engine.ctx, { filename: 'bots-test-instrument' });
+    },
+  });
+  const takeTurn = Bots.takeTurn, answerPrompt = Bots.answerPrompt;
+  Bots.takeTurn = (pi, view, api) => takeTurn(pi, view, wrapApi(api));
+  Bots.answerPrompt = (pi, opt, api) => answerPrompt(pi, opt, wrapApi(api));
+  const origSys = engine.hooks.sysTo;
+  engine.hooks.sysTo = (pi, msg) => { rec.sys.push({ pi, msg }); return origSys(pi, msg); };
   return engine;
 }
 
@@ -65,7 +69,7 @@ async function driveToOver(engine, S, maxIters = 24000) {
 const REJECT_RE = /(Not your turn|red threads|afford|Not enough Intel|unavailable|cannot|Walk away)/i;
 
 test('BT-01 an all-bot table finishes the con through the same intent gate', async t => {
-  const engine = botEngine(t);
+  const engine = await botEngine(t);
   const S = await makeGame(engine, 3, { bots: [0, 1, 2], goal: 100, seeds: [41] });
   await driveToOver(engine, S);
   assert.equal(S.over, true, 'the bot game reached a winner inside the iteration budget');
@@ -84,7 +88,7 @@ test('BT-01 an all-bot table finishes the con through the same intent gate', asy
 
 test('BT-02 bot games are deterministic: same seed pair, same game', async t => {
   const run = async () => {
-    const engine = botEngine(t, 4242);
+    const engine = await botEngine(t, 4242);
     const S = await makeGame(engine, 3, { bots: [0, 1, 2], goal: 100, seeds: [41] });
     /* the realm shares the host Math, so this seeds every gameplay roll */
     await withSeedAsync(777, () => driveToOver(engine, S));
@@ -98,7 +102,7 @@ test('BT-02 bot games are deterministic: same seed pair, same game', async t => 
 });
 
 test('BT-03 botView is redacted: no deck order, log or chat ever leaves the engine', async t => {
-  const engine = botEngine(t);
+  const engine = await botEngine(t);
   const S = await makeGame(engine, 3, { bots: [0, 1, 2], goal: 100, seeds: [41] });
   /* plant secrets a cheat would love to see */
   S.deck = ['quiet', 'quiet'];
@@ -126,8 +130,8 @@ test('BT-03 botView is redacted: no deck order, log or chat ever leaves the engi
   assert.ok(Number.isFinite(v.seizePrice(1, 'us')), 'seizePrice helper answers with a number');
 });
 
-test('BT-04 the host lobby can seat and dismiss bots', t => {
-  const engine = loadEngine();
+test('BT-04 the host lobby can seat and dismiss bots', async t => {
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   const Net = engine.acc.Net;
   Net.role = 'host';
@@ -198,7 +202,7 @@ test('BT-05 the bot module covers the whole human action table', t => {
    rig can stage an exact board state and drive one bot turn by hand.
    Everything runs under a fixed Math seed so the frozen board is reproducible. */
 async function rigGame(t, geo) {
-  const engine = botEngine(t, 4242);
+  const engine = await botEngine(t, 4242);
   const S = await makeGame(engine, 3, { bots: [0, 1, 2], goal: 100, geo });
   S.over = true; /* freeze: every live chain aborts on the next beat */
   for (let i = 0; i < 60 && (engine.clock.pending() || i < 4); i++) {
@@ -352,7 +356,7 @@ test('BT-06e the 30-Intel Cortisol Overload targets the strongest rival', async 
 });
 
 test('BT-07 bots banter on the table chat — one line at a time, in voice', async t => {
-  const engine = botEngine(t);
+  const engine = await botEngine(t);
   const S = await makeGame(engine, 3, { bots: [0, 1, 2], goal: 100, seeds: [41] });
   await driveToOver(engine, S);
   const botNames = new Set(S.players.filter(p => p.bot).map(p => p.name));
@@ -365,11 +369,11 @@ test('BT-07 bots banter on the table chat — one line at a time, in voice', asy
 });
 
 test('BT-08 the host can spectate: a lobby of only bots starts and plays', async t => {
-  const engine = loadEngine();
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   engine.ctx.window.__BIGCON_TEST__ = true; /* zero bot pacing on the virtual clock */
   engine.ctx.window.__BIGCON_BOT_SEED__ = 4242;
-  vm.runInContext(BOT_SRC, engine.ctx, { filename: 'static/bots.js' });
+  await engine.loadBots();
   const Net = engine.acc.Net;
   Net.role = 'host'; Net.myIdx = 0; Net.playerId = 'host'; Net.goal = 100;
   Net.roster = [{ name: 'HOST', playerId: 'host', conn: null, char: null }];
@@ -412,7 +416,8 @@ test('BT-08 the host can spectate: a lobby of only bots starts and plays', async
   assert.ok(String(engine.elems.get('btnStart').textContent).indexOf('ALL-BOT TABLE') >= 0, 'the start button announces the all-bot table');
 
   ctx.__toasts = [];
-  vm.runInContext('(() => { const t = toast; toast = m => { __toasts.push(String(m)); return t(m); }; })()', engine.ctx, { filename: 'bots-test-toast' });
+  const realToast = engine.hooks.toast;
+  engine.hooks.toast = m => { ctx.__toasts.push(String(m)); return realToast(m); };
   const seats = Net.roster.map(e => ({ name: e.name, char: e.char, bot: !!e.bot }));
   await withSeedAsync(99, () => engine.f.initGame(seats));
   const S = engine.acc.S;
@@ -426,8 +431,8 @@ test('BT-08 the host can spectate: a lobby of only bots starts and plays', async
   assert.equal(errs.length, 0, 'no bot turn crashed, including the host seat: ' + String(errs[0] || '').slice(0, 200));
 });
 
-test('BT-09 every face plays its own con — per-character strategy profiles', t => {
-  const engine = botEngine(t);
+test('BT-09 every face plays its own con — per-character strategy profiles', async t => {
+  const engine = await botEngine(t);
   const bots = engine.ctx.window.BigConBots;
   const IDS = ['markwatson', 'tomkins', 'jimchalmers', 'bessock', 'calvinathanasius', 'denialswan',
     'japsnchen', 'thousandyardwax', 'Alexander_Lane', 'DJT', 'thebigag', 'thebigwegrzyn'];
@@ -459,7 +464,7 @@ test('BT-09 every face plays its own con — per-character strategy profiles', t
 });
 
 test('BT-10 a non-baseline variant still finishes the con deterministically', async t => {
-  const engine = botEngine(t, 777);
+  const engine = await botEngine(t, 777);
   engine.ctx.window.BigConBots.setVariant('turtle');
   const S = await makeGame(engine, 2, { bots: [0, 1], goal: 60, seeds: [41, 42, 43, 44, 45] });
   await driveToOver(engine, S);
@@ -467,7 +472,7 @@ test('BT-10 a non-baseline variant still finishes the con deterministically', as
 });
 
 test('BT-11 the payout does not kick the table out — the lobby re-arms for a rematch', async t => {
-  const engine = botEngine(t);
+  const engine = await botEngine(t);
   const S = await makeGame(engine, 3, { bots: [0, 1, 2], goal: 100, seeds: [41] });
   const Net = engine.acc.Net;
   await driveToOver(engine, S);
@@ -507,8 +512,8 @@ test('BT-11 the payout does not kick the table out — the lobby re-arms for a r
   assert.equal(engine.acc.S.over, true, 'the rematch also reaches a winner');
 });
 
-test('BT-12 a guest walked back from the payout lands in the lobby on their own row', t => {
-  const engine = loadEngine();
+test('BT-12 a guest walked back from the payout lands in the lobby on their own row', async t => {
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   const Net = engine.acc.Net;
   Net.role = 'guest'; Net.begun = true; Net.myIdx = 4;
@@ -521,7 +526,7 @@ test('BT-12 a guest walked back from the payout lands in the lobby on their own 
 });
 
 test('BT-13 an all-bot table runs its market events without popup spam', async t => {
-  const engine = botEngine(t);
+  const engine = await botEngine(t);
   const S = await makeGame(engine, 3, { bots: [0, 1, 2], goal: 100, seeds: [41] });
   await driveToOver(engine, S);
   assert.equal(S.over, true, 'the all-bot con finished');
@@ -532,7 +537,7 @@ test('BT-13 an all-bot table runs its market events without popup spam', async t
 });
 
 test('BT-14 a mid-game joiner is dealt in at Quikstop and takes their turns', async t => {
-  const engine = botEngine(t);
+  const engine = await botEngine(t);
   const S = await makeGame(engine, 2, { bots: [0, 1], goal: 100, seeds: [41] });
   const Net = engine.acc.Net;
   assert.equal(S.players.length, 2, 'the game starts as a duo');
@@ -574,7 +579,7 @@ test('BT-14 a mid-game joiner is dealt in at Quikstop and takes their turns', as
 });
 
 test('BT-15 a mid-game joiner can take the spectator rail and chat from it', async t => {
-  const engine = botEngine(t);
+  const engine = await botEngine(t);
   const S = await makeGame(engine, 2, { bots: [0, 1], goal: 100, seeds: [41] });
   const Net = engine.acc.Net;
 
@@ -608,8 +613,8 @@ test('BT-15 a mid-game joiner can take the spectator rail and chat from it', asy
   assert.ok(String(engine.elems.get('btnStart').textContent).includes('pick a face'), 'the start gate waits on them, as for any guest');
 });
 
-test('BT-16 the guest client wears the spectator flag: on at a spectator welcome, off in the lobby', t => {
-  const engine = loadEngine();
+test('BT-16 the guest client wears the spectator flag: on at a spectator welcome, off in the lobby', async t => {
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   const Net = engine.acc.Net;
   Net.role = 'guest'; Net.begun = false; Net.myIdx = 0;
@@ -646,7 +651,7 @@ function fakeView(o = {}) {
    flips the fake view out of the action phase so takeTurn returns. `fresh`
    re-seeds the module (default); pass false to keep cross-turn memory. */
 async function botDecides(t, view, stopOn, fresh = true) {
-  const Bots = engineWithBots(t).ctx.window.BigConBots;
+  const Bots = (await engineWithBots(t)).ctx.window.BigConBots;
   const intents = [];
   const api = {
     applyIntent: async (pi, m) => {
@@ -660,12 +665,12 @@ async function botDecides(t, view, stopOn, fresh = true) {
   await Bots.takeTurn(0, view, api);
   return intents;
 }
-function engineWithBots(t) {
+async function engineWithBots(t) {
   if (!engineWithBots.memo) {
-    const engine = loadEngine();
+    const engine = await loadEngine();
     engine.ctx.window.__BIGCON_TEST__ = true;
     engine.ctx.window.__BIGCON_BOT_SEED__ = 4242;
-    vm.runInContext(BOT_SRC, engine.ctx, { filename: 'static/bots.js' });
+    await engine.loadBots();
     engineWithBots.memo = engine;
     t.after(() => { engineWithBots.memo.dispose(); engineWithBots.memo = null; });
   }
@@ -763,8 +768,8 @@ test('BT-19 the win set bends acquisition: hunger scales, near-complete rivals g
   assert.equal((await botDecides(t, noDeny))[0].act, 'laylow', 'a takeover that breaks nothing is not bid up');
 });
 
-test('BT-20 lobby chatter: bots speak in character on seat and on a slow clock', t => {
-  const engine = engineWithBots(t);
+test('BT-20 lobby chatter: bots speak in character on seat and on a slow clock', async t => {
+  const engine = (await engineWithBots(t));
   const Bots = engine.ctx.window.BigConBots;
   assert.equal(typeof Bots.lobbyLine, 'function', 'the policy exports lobbyLine');
   for (const id of CHARS8) {
@@ -796,7 +801,7 @@ test('BT-20 lobby chatter: bots speak in character on seat and on a slow clock',
 });
 
 test('BT-21 sweep clears rival bugs off your own nodes — the office really is clean', async t => {
-  const engine = loadEngine();
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   const S = await makeGame(engine, 2, { seeds: [41] });
   const NM = engine.acc.NODES.filter(n => n.id.indexOf('geo_') !== 0);
@@ -865,7 +870,7 @@ test('BT-24 bots remember a takeover: the seat that took the node becomes the ta
   });
   const leakTargets = async (view, fresh) => (await botDecides(t, view, m => m.act === 'leak', fresh))
     .filter(m => m.act === 'leak').map(m => m.target);
-  const Bots = () => engineWithBots(t).ctx.window.BigConBots;
+  const Bots = () => engineWithBots.memo.ctx.window.BigConBots; await engineWithBots(t);
 
   /* control: with no theft the identical rivals tie, and the first one is picked */
   assert.deepEqual(await leakTargets(mk({ x: 0 }), true), [1], 'no grudge: the tie goes to seat 1');
@@ -904,24 +909,24 @@ test('BT-24 bots remember a takeover: the seat that took the node becomes the ta
   assert.equal(Bots().memory[0].grudge[2], undefined, 'nobody is blamed for a forced divestment');
 });
 
-test('BT-25 pacing: production realms pace bots like humans, test realms run instant', t => {
-  const prod = loadEngine();
+test('BT-25 pacing: production realms pace bots like humans, test realms run instant', async t => {
+  const prod = await loadEngine();
   t.after(() => prod.dispose());
-  vm.runInContext(BOT_SRC, prod.ctx, { filename: 'static/bots.js' });
+  await prod.loadBots();
   assert.equal(prod.ctx.window.BigConBots.paceMs, 150, 'an unflagged realm paces at 150ms per intent');
 
-  const fast = loadEngine();
+  const fast = await loadEngine();
   t.after(() => fast.dispose());
   fast.ctx.window.__BIGCON_TEST__ = true;
-  vm.runInContext(BOT_SRC, fast.ctx, { filename: 'static/bots.js' });
+  await fast.loadBots();
   assert.equal(fast.ctx.window.BigConBots.paceMs, 0, 'the test realm runs at full speed');
 });
 
-test('BT-26 the valuation weights stay in a sane band (decay guard)', t => {
+test('BT-26 the valuation weights stay in a sane band (decay guard)', async t => {
   /* The policy is hand-tuned; a decimal slip in the weight table would quietly
      wreck it without failing any behavioural pin. These are ranges, not exact
      numbers, so re-tuning stays free but decay does not. */
-  const W = engineWithBots(t).ctx.window.BigConBots.weights;
+  const W = (await engineWithBots(t)).ctx.window.BigConBots.weights;
   assert.ok(W && typeof W === 'object', 'the weight table is exported');
   for (const k of ['money', 'intel', 'incomeTurns', 'fire', 'setBonus', 'regScarcity', 'stepNode', 'intelNode', 'raidWall']) {
     assert.ok(Number.isFinite(W[k]) && W[k] > 0, k + ' is a positive finite number');
@@ -946,7 +951,7 @@ test('BT-27 the win race needs the set as well as the cash', async t => {
   const view = fakeView({ owner: { n1: 0, ...ownedBy(a, 1), ...ownedBy(b, 2) }, nmap: { n1: { id: 'n1', type: 'BANK', income: 1, cost: 5 }, ...a, ...b } });
   view.players = [fakePlayer({ intel: 2 }), fakePlayer({ pos: 'a0', cortisol: 5, money: 95 }), fakePlayer({ pos: 'b0', cortisol: 5, money: 80 })];
   view.missingTypes = realMissing(view);
-  const Bots = engineWithBots(t).ctx.window.BigConBots;
+  const Bots = (await engineWithBots(t)).ctx.window.BigConBots;
   assert.ok(Bots.etaOf(view, 2) < Bots.etaOf(view, 1), '$80 with the set is closer to winning than $95 without it');
   assert.equal(Bots.leaderSeat(view, 0), 2, 'the full-set seat is the leader');
   const leaks = (await botDecides(t, view, m => m.act === 'leak')).filter(m => m.act === 'leak');
@@ -954,8 +959,8 @@ test('BT-27 the win race needs the set as well as the cash', async t => {
   assert.equal(Bots.memory[0].guard, 2, 'and a rich full-set rival is on guard duty');
 });
 
-test('BT-28 the race works at any goal, and its horizon follows', t => {
-  const Bots = engineWithBots(t).ctx.window.BigConBots;
+test('BT-28 the race works at any goal, and its horizon follows', async t => {
+  const Bots = (await engineWithBots(t)).ctx.window.BigConBots;
   const mk = goal => {
     const nodes = fullSet('b');
     const view = fakeView({ goal, owner: ownedBy(nodes, 1), nmap: nodes });
@@ -976,7 +981,7 @@ test('BT-28 the race works at any goal, and its horizon follows', t => {
 });
 
 test('BT-29 income projection matches the engine, and marginal income works both ways', async t => {
-  const engine = botEngine(t, 4242);
+  const engine = await botEngine(t, 4242);
   const S = await makeGame(engine, 3, { bots: [0, 1, 2], goal: 100 });
   S.over = true;
   for (let i = 0; i < 60 && (engine.clock.pending() || i < 4); i++) { await pump(2); if (engine.clock.pending()) engine.clock.advance(25); }
@@ -1010,8 +1015,8 @@ test('BT-29 income projection matches the engine, and marginal income works both
   assert.equal(Bots.marginalIncome(held({ p1: 0, p2: 0 }), 0, 'citi'), 3, 'and is worth the same as buying it');
 });
 
-test('BT-30 MADE only taxes the rest of the table', t => {
-  const Bots = engineWithBots(t).ctx.window.BigConBots;
+test('BT-30 MADE only taxes the rest of the table', async t => {
+  const Bots = (await engineWithBots(t)).ctx.window.BigConBots;
   const nmap = { made: { id: 'made', type: 'WILD', income: 2, cost: 7 }, a: { id: 'a', type: 'BANK', income: 0, cost: 1 }, b: { id: 'b', type: 'BANK', income: 0, cost: 1 }, c: { id: 'c', type: 'BANK', income: 0, cost: 1 } };
   const mk = madeOwner => {
     const owner = { a: 0, b: 0, c: 0 };
@@ -1103,8 +1108,8 @@ test('BT-35 a blockade is priced on who it stops, not on the node\'s income', as
   assert.deepEqual(await walls(race([['r1', 'hop'], ['hop', 'far']], 0)), [], 'and a rival nowhere near winning is not worth one');
 });
 
-test('BT-36 a raid is priced by what it would take', t => {
-  const Bots = engineWithBots(t).ctx.window.BigConBots;
+test('BT-36 a raid is priced by what it would take', async t => {
+  const Bots = (await engineWithBots(t)).ctx.window.BigConBots;
   const nmap = {
     j1: { id: 'j1', type: 'BANK', income: 0, cost: 1 }, j2: { id: 'j2', type: 'BANK', income: 0, cost: 1 },
     g1: { id: 'g1', type: 'BANK', income: 5, cost: 9 }, g2: { id: 'g2', type: 'BANK', income: 5, cost: 9 },
@@ -1118,7 +1123,7 @@ test('BT-36 a raid is priced by what it would take', t => {
 
 test('BT-39 two seats cannot swap one prize forever', async t => {
   /* table 2, seed 37 stalled on MADE: 297 of 298 takeovers, $850 each and no set */
-  const engine = botEngine(t, 1037);
+  const engine = await botEngine(t, 1037);
   const Net = engine.acc.Net;
   Object.assign(Net, { role: 'host', myIdx: 0, goal: 100, dlcGeo: false, started: false, begun: true, lobbyChat: [], roster: [], conns: [] });
   const defs = ['denialswan', 'thousandyardwax'].map((id, i) => ({ name: 'B' + i, playerId: 'p' + i, conn: null, char: id, bot: true }));
@@ -1130,7 +1135,7 @@ test('BT-39 two seats cannot swap one prize forever', async t => {
 
   /* the mechanism: seat-to-seat swaps are tracked from the table-visible board,
      a node going back to the market is not a swap, and a new game starts clean */
-  const Bots = engineWithBots(t).ctx.window.BigConBots;
+  const Bots = (await engineWithBots(t)).ctx.window.BigConBots;
   const seenBoard = owner => {
     const v = fakeView({ owner, over: true, phase: 'over', nmap: { made: { id: 'made', type: 'WILD', income: 2, cost: 7 } } });
     v.players = [fakePlayer()];
@@ -1175,7 +1180,7 @@ test('BT-41 a boulder push is worth only the cash still needed: no parking on it
 });
 
 test('BT-42 MADE pays 2/3 of a payout a round at every table size, and bots price it the same', async t => {
-  const engine = engineWithBots(t);
+  const engine = (await engineWithBots(t));
   const Bots = engine.ctx.window.BigConBots;
   const income = seats => {
     const v = fakeView({ owner: { made: 0 }, nmap: { made: { id: 'made', type: 'WILD', income: 2, cost: 7 } } });
@@ -1184,7 +1189,7 @@ test('BT-42 MADE pays 2/3 of a payout a round at every table size, and bots pric
   };
   assert.equal(income(8), income(2), 'owning MADE is worth the same at 2 seats and 8');
   for (const seats of [2, 3, 4, 8]) {
-    const e = botEngine(t, 4300 + seats);
+    const e = await botEngine(t, 4300 + seats);
     const S = await makeGame(e, seats, { bots: [0], goal: 100 });
     assert.ok(Math.abs(e.ctx.madeChance() * seats - 2 / 3) < 1e-9, seats + ' seats: chance x seats = 2/3');
     if (seats === 2) assert.ok(Math.abs(e.ctx.madeChance() - 1 / 3) < 1e-9, '2 seats keep the old 33%');
@@ -1193,21 +1198,22 @@ test('BT-42 MADE pays 2/3 of a payout a round at every table size, and bots pric
 });
 
 test('BT-38 a bot in the host seat answers its own prompts: no popup for a spectating host', async t => {
-  const engine = botEngine(t, 4242);
+  const engine = await botEngine(t, 4242);
   const S = await makeGame(engine, 2, { bots: [0, 1], goal: 100 });
   S.over = true;
   for (let i = 0; i < 60 && (engine.clock.pending() || i < 4); i++) { await pump(2); if (engine.clock.pending()) engine.clock.advance(25); }
   assert.equal(engine.acc.Net.myIdx, 0, 'seat 0 is the host');
   assert.ok(S.players[0].bot, 'and a bot sits in it');
   engine.ctx.__asked = [];
-  vm.runInContext(`(()=>{const o=window.BigConBots.answerPrompt;window.BigConBots.answerPrompt=function(pi,opt,api){__asked.push(pi);return o(pi,opt,api)}})()`, engine.ctx);
+  const policy = engine.ctx.window.BigConBots, answerOnce = policy.answerPrompt;
+  policy.answerPrompt = function (pi, opt, api) { engine.ctx.__asked.push(pi); return answerOnce(pi, opt, api); };
   const answer = await engine.ctx.askPlayer(0, { title: 'JTPORTAL INTERVENES?', options: [{ label: 'No', v: 0 }, { label: 'Yes', v: 1 }], def: 0 });
   assert.equal(engine.ctx.__asked.length, 1, 'the policy module got the prompt');
   assert.equal(answer, 0, 'and its answer came back');
 });
 
 test('BT-37 pacing and banter never touch the decision stream', async t => {
-  const engine = engineWithBots(t);
+  const engine = (await engineWithBots(t));
   const Bots = engine.ctx.window.BigConBots;
   const run = async paceMs => {
     const view = fakeView({

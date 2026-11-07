@@ -84,11 +84,28 @@ test('every local src/href/import in the dist HTML and JS resolves to an existin
       checked++;
     }
   }
-  assert.ok(checked >= 10, 'actually checked some references (' + checked + ')');
-  // the dynamic SDK import in discord.js must be one of them
-  const discord = files.find(f => /^static\/js\/discord\.[0-9a-f]{10}\.js$/.test(f));
-  assert.ok(discord, 'discord.js was hashed');
-  assert.deepEqual(jsImports(path.join(outA, discord)).map(r => path.basename(r)).filter(n => n.startsWith('discord-sdk.bundle.')).length, 1);
+  assert.ok(checked >= 6, 'actually checked some references (' + checked + ')');
+  // the dynamic SDK import inside the game bundle must be one of them
+  const main = files.find(f => /^static\/js\/main\.[0-9a-f]{10}\.js$/.test(f));
+  assert.ok(main, 'the game bundle was hashed');
+  assert.deepEqual(jsImports(path.join(outA, main)).map(r => path.basename(r)).filter(n => n.startsWith('discord-sdk.bundle.')).length, 1);
+});
+
+test('the game ships as ONE bundled ES module: the source modules are folded in, not published', () => {
+  const files = walk(outA);
+  const js = files.filter(f => f.endsWith('.js'));
+  assert.deepEqual(js.map(f => f.replace(/\.[0-9a-f]{10}\.js$/, '.js')).sort(), ['static/discord-sdk.bundle.js', 'static/js/main.js']);
+  for (const gone of ['static/bots', 'static/js/engine', 'static/js/net', 'static/js/ui', 'static/js/hooks', 'static/js/discord', 'static/js/data'])
+    assert.ok(!files.some(f => f.startsWith(gone)), gone + ' is bundled, not shipped separately');
+  const main = files.find(f => /^static\/js\/main\.[0-9a-f]{10}\.js$/.test(f));
+  const text = fs.readFileSync(path.join(outA, main), 'utf8');
+  for (const marker of ['function applyIntent', 'function pubState', 'function initUI', 'function initDiscord', 'BigConBots', 'function boot()'])
+    assert.ok(text.includes(marker), 'the bundle contains ' + marker);
+  assert.deepEqual(jsImports(path.join(outA, main)).map(r => path.basename(r)).filter(n => !n.startsWith('discord-sdk.bundle.')), [], 'no relative module imports survive: the bundle is self-contained');
+  assert.match(text, /typeof BUILD_COMMIT/, 'the stamp is still read as a free identifier from the inline classic script');
+  const html = fs.readFileSync(path.join(outA, 'index.html'), 'utf8');
+  assert.match(html, /<script type="module" src="\.\/static\/js\/main\.[0-9a-f]{10}\.js"><\/script>/);
+  assert.ok(html.indexOf("const BUILD_COMMIT = 'abcdef1';") < html.indexOf('type="module"'), 'the inline stamp comes before the module');
 });
 
 test('no unhashed local .js/.css reference remains, and no unhashed .js/.css file is shipped', () => {
@@ -106,7 +123,7 @@ test('no unhashed local .js/.css reference remains, and no unhashed .js/.css fil
   // index.html still loads everything, in the original order
   const html = fs.readFileSync(path.join(outA, 'index.html'), 'utf8');
   const order = [...html.matchAll(/<script\b[^>]*\bsrc="\.\/static\/(?:js\/)?([a-z]+)\.[0-9a-f]{10}\.js"/g)].map(m => m[1]);
-  assert.deepEqual(order, ['core', 'data', 'boards', 'engine', 'net', 'ui', 'bots', 'discord']);
+  assert.deepEqual(order, ['main']);
   assert.match(html, /<link rel="stylesheet" href="\.\/static\/css\/game\.[0-9a-f]{10}\.css">/);
 });
 
@@ -120,13 +137,14 @@ test('hashes are deterministic across builds and match the file content', () => 
   }
 });
 
-test('discord.js hashes its rewritten content (a changed SDK bundle changes discord.js name)', () => {
+test('the game bundle hashes its rewritten content (a changed SDK bundle changes its name)', () => {
   const files = walk(outA);
   const bundle = files.find(f => /^static\/discord-sdk\.bundle\.[0-9a-f]{10}\.js$/.test(f));
   assert.ok(bundle, 'bundle emitted into dist');
   const bundleHash = bundle.match(/\.([0-9a-f]{10})\.js$/)[1];
-  const discord = files.find(f => /^static\/js\/discord\.[0-9a-f]{10}\.js$/.test(f));
-  assert.ok(fs.readFileSync(path.join(outA, discord), 'utf8').includes('discord-sdk.bundle.' + bundleHash + '.js'));
+  const main = files.find(f => /^static\/js\/main\.[0-9a-f]{10}\.js$/.test(f));
+  assert.ok(main, 'the game bundle was hashed');
+  assert.ok(fs.readFileSync(path.join(outA, main), 'utf8').includes('discord-sdk.bundle.' + bundleHash + '.js'));
   const src = fs.readFileSync(path.join(repoRoot, 'static/js/discord.js'), 'utf8');
   assert.ok(src.includes('"/static/discord-sdk.bundle.js"'), 'source keeps the plain path');
 });

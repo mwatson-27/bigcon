@@ -1,10 +1,13 @@
 'use strict';
-/* boards: node layout helpers and the random / ringworld / mega-ring board generators. */
-function nodeBox(n){
+/* boards: node layout helpers and the random / ringworld / mega-ring board generators. Pure: no DOM; they only read S and rewrite NODES positions / EDGES. */
+import { NODES, NMAP, EDGES, WORLD_EDGES, ORIGINAL_NODE_LAYOUT, ORIGINAL_LAYOUT_BY_ID, HIGH_VALUE_NODE_IDS, HIGH_VALUE_BASE_IDS, GEO_HIGH_VALUE_IDS, QUIK_SLOTS, rebuildAdj, setEdges } from './data.js';
+import { S } from './state.js';
+import { shuffle } from './util.js';
+export function nodeBox(n){
  const sizes={photo:[140,92],wide:[170,100],bubble:[150,80],logo:[150,80],chart:[130,64],news:[150,84],made:[140,74],mpc:[164,96],sat:[170,90]};
  return sizes[n.shape]||[150,80];
 }
-function separateNodes(){
+export function separateNodes(){
  const pad=16,minX=95,maxX=2305,minY=95,maxY=1455;
  for(let iter=0;iter<90;iter++){
   let moved=false;
@@ -26,23 +29,23 @@ function separateNodes(){
   if(!moved)break;
  }
 }
-function applyQuikSlot(slot){
+export function applyQuikSlot(slot){
  const q=NMAP.quik;if(!q||!slot)return;
  q.x=slot.x;q.y=slot.y;q.rot=slot.rot;
- EDGES=WORLD_EDGES.filter(e=>e[0]!=='quik'&&e[1]!=='quik').concat((slot.links||[]).map(id=>['quik',id]));
+ setEdges(WORLD_EDGES.filter(e=>e[0]!=='quik'&&e[1]!=='quik').concat((slot.links||[]).map(id=>['quik',id])));
  rebuildAdj();
  separateNodes();
 }
-function applyLayoutFromState(){
+export function applyLayoutFromState(){
  if(!S)return;
  const slot=QUIK_SLOTS[S.quikSlot|0]||QUIK_SLOTS[0];
  if(S.boardLayout){
   S.boardLayout.forEach(p=>{const n=NMAP[p.id];if(n){n.x=p.x;n.y=p.y;n.rot=p.rot}});
-  EDGES=(S.boardEdges||WORLD_EDGES).map(e=>e.slice());
+  setEdges((S.boardEdges||WORLD_EDGES).map(e=>e.slice()));
   rebuildAdj();
  }else applyQuikSlot(slot);
 }
-function generateRandomBoard(slot){
+export function generateRandomBoard(slot){
  const q=NMAP.quik;
  q.x=slot.x;q.y=slot.y;q.rot=slot.rot;
  const ids=NODES.map(n=>n.id).filter(id=>id!=='quik');
@@ -91,18 +94,18 @@ function generateRandomBoard(slot){
  let madeEdges=edges.filter(e=>e[0]==='made'||e[1]==='made');
  if(madeEdges.length>2){const kept=[];let c=0;for(const e of edges){if(e[0]==='made'||e[1]==='made'){if(c<2){c++;kept.push(e)}}else kept.push(e)};edges.length=0;edges.push(...kept)}
  if(!edges.some(e=>e[0]==='made'||e[1]==='made')){const nearMade=ids.filter(x=>x!=='made').map(x=>({id:x,d:Math.hypot(NMAP[x].x-NMAP.made.x,NMAP[x].y-NMAP.made.y)})).sort((a,b)=>a.d-b.d)[0].id;add('made',nearMade)}
- EDGES=edges;rebuildAdj();separateNodes();
+ setEdges(edges);rebuildAdj();separateNodes();
  return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
 }
 /* Perimeter of an ellipse (Ramanujan) — used to size the three tracks. */
-function ringEllipsePerimeter(rx,ry){
+export function ringEllipsePerimeter(rx,ry){
  const h=Math.pow((rx-ry)/(rx+ry),2);
  return Math.PI*(rx+ry)*(1+(3*h)/(10+Math.sqrt(4-3*h)));
 }
 /* Declare a track as a cumulative arc-length table, so nodes can be spaced by
    distance along the ellipse instead of by angle. Constant angle bunches
    neighbours together at the ends of an ellipse, where the curve is tightest. */
-function ringArcTable(rx,ry,steps){
+export function ringArcTable(rx,ry,steps){
  const angles=[],cum=[0];
  let total=0,px=rx,py=0;
  for(let i=1;i<=steps;i++){
@@ -111,7 +114,7 @@ function ringArcTable(rx,ry,steps){
  }
  return {rx,ry,total,angles,cum};
 }
-function ringPointAtArc(table,fraction){
+export function ringPointAtArc(table,fraction){
  const s=(((fraction%1)+1)%1)*table.total;
  let lo=1,hi=table.cum.length-1;
  while(lo<hi){const mid=(lo+hi)>>1;if(table.cum[mid]<s)lo=mid+1;else hi=mid}
@@ -123,7 +126,7 @@ function ringPointAtArc(table,fraction){
 /* Size all three tracks from the tightest one so every neighbour keeps an
    image-to-image gap, then scale the tracks together to preserve the gaps
    between rings. The canvas grows to fit the outer track. */
-function ringworldMetrics(nodeCount){
+export function ringworldMetrics(nodeCount){
  const n=Math.max(3,nodeCount|0);
  const pitch=202; /* the same 170px maximum image width + 32px clear space as Mega Ring */
  const base=[{x:1050,y:630},{x:780,y:465},{x:510,y:300}];
@@ -136,7 +139,7 @@ function ringworldMetrics(nodeCount){
  const h=Math.ceil((radii[0].y+margin)*2/100)*100;
  return {x:0,y:0,w,h,cx:w/2,cy:h/2,radii,counts,scale,pitch,margin};
 }
-function generateRingworldBoard(){
+export function generateRingworldBoard(){
  const ids=shuffle(NODES.map(n=>n.id).filter(id=>id!=='quik'));
  const metrics=ringworldMetrics(ids.length);
  const q=NMAP.quik;
@@ -176,12 +179,12 @@ function generateRingworldBoard(){
  // Quikstop is the central hub, with four evenly spaced spokes to the inner ring.
  const inner=rings[2];
  for(let k=0;k<4;k++)add('quik',inner[Math.floor(k*inner.length/4)]);
- EDGES=edges;rebuildAdj();
+ setEdges(edges);rebuildAdj();
  return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
 }
 /* Size the ring from the widest exhibit so every neighbour keeps an
    image-to-image gap, including when the Geography DLC adds more nodes. */
-function megaRingMetrics(nodeCount){
+export function megaRingMetrics(nodeCount){
  const n=Math.max(3,nodeCount|0);
  const nodePitch=202; /* 170px maximum image width + at least 32px clear space */
  const radius=Math.max(2500,nodePitch/(2*Math.sin(Math.PI/n)));
@@ -189,13 +192,13 @@ function megaRingMetrics(nodeCount){
  const size=Math.ceil((radius+margin)*2/100)*100;
  return {x:0,y:0,w:size,h:size,cx:size/2,cy:size/2,radius,margin};
 }
-function generateMegaRingBoard(){
+export function generateMegaRingBoard(){
  const ids=shuffle(NODES.map(n=>n.id).filter(id=>id!=='quik'));
  const n=ids.length;
  const map=megaRingMetrics(n);
  const q=NMAP.quik;
  q.x=map.cx;q.y=map.cy;q.rot=0;
- if(n===0){EDGES=[];rebuildAdj();return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:[]};}
+ if(n===0){setEdges([]);rebuildAdj();return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:[]};}
  ids.forEach((id,i)=>{
   const angle=(Math.PI*2*i/n);
   const x=map.cx+Math.cos(angle)*map.radius;
@@ -212,6 +215,14 @@ function generateMegaRingBoard(){
  };
  for(let i=0;i<n;i++)add(ids[i],ids[(i+1)%n]);
  for(let k=0;k<4;k++)add('quik',ids[Math.floor(k*n/4)]);
- EDGES=edges;rebuildAdj();
+ setEdges(edges);rebuildAdj();
  return {positions:NODES.map(n=>({id:n.id,x:n.x,y:n.y,rot:n.rot})),edges:EDGES.map(e=>e.slice())};
+}
+export function boardViewBounds(){
+ if(S&&(S.layoutKind==='megaring'||S.layoutKind==='ringworld')){
+  const count=Math.max(3,(S.boardLayout||[]).length-1||NODES.length-1);
+  const m=S.layoutKind==='ringworld'?ringworldMetrics(count):megaRingMetrics(count);
+  return {x:m.x,y:m.y,w:m.w,h:m.h};
+ }
+ return {x:0,y:0,w:2400,h:1560};
 }

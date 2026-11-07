@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadEngine, makeGame, makeConn, withSeed, SOURCE } from './helpers/harness.mjs';
 
-const engineFor = t => { const e = loadEngine(); t.after(() => e.dispose()); return e; };
+const engineFor = async t => { const e = await loadEngine(); t.after(() => e.dispose()); return e; };
 
 async function settle() {
   await new Promise(r => setImmediate(r));
@@ -33,7 +33,7 @@ const invites = (engine, i, type) => engine.acc.Net.conns[i].sent.filter(m => m.
 
 /* ================= MP-01 — seat identity after the shuffle ================= */
 test('MP-01 the seated order and the connection array agree on every seat', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const Net = engine.acc.Net;
   for (const n of [2, 4, 8]) {
     const S = await makeGame(engine, n);
@@ -55,7 +55,7 @@ test('MP-01 the seated order and the connection array agree on every seat', asyn
 });
 
 test('MP-01b repeated shuffles always keep conn/roster/state aligned per seat', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const Net = engine.acc.Net;
   Net.role = 'host'; Net.myIdx = 0; Net.goal = 100; Net.lobbyChat = [];
   const conns = [null, makeConn(engine, 'pidA'), makeConn(engine, 'pidB')];
@@ -85,7 +85,7 @@ test('MP-01b repeated shuffles always keep conn/roster/state aligned per seat', 
 
 /* ================= MP-02 — broadcast fanout ================= */
 test('MP-02 broadcasts reach every open guest exactly once and skip the host and closed conns', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const Net = engine.acc.Net;
   const S = await makeGame(engine, 4);
   assert.equal(Net.conns[Net.myIdx], null, 'the host holds no connection — state pushes are guests-only');
@@ -107,7 +107,7 @@ test('MP-02 broadcasts reach every open guest exactly once and skip the host and
 
 /* ================= MP-03 — private prompt isolation ================= */
 test('MP-03 a private prompt reaches only its recipient, and only the right seat can answer', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 3, { autoAnswer: false });
   const target = 2, other = 1;
   const opt = { title: 'SECRET BRIEFING', body: 'pick one', options: [{ label: 'A', v: 'a' }, { label: 'B', v: 'b' }], def: 'a' };
@@ -141,7 +141,7 @@ test('MP-03 a private prompt reaches only its recipient, and only the right seat
 
 /* ================= MP-04 — state convergence ================= */
 test('MP-04 after any host action every guest converges on the same public state', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 4);
   S.cur = 1; S.phase = 'move'; S.steps = 3;
   const target = [...engine.acc.ADJ[S.players[1].pos]][0];
@@ -159,7 +159,7 @@ test('MP-04 after any host action every guest converges on the same public state
 
 /* ================= MP-05 — duplicate and delayed messages ================= */
 test('MP-05 duplicate/replayed messages from dead connections cannot corrupt the game', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 2);
   S.cur = 1; S.phase = 'move'; S.steps = 3;
   const target = [...engine.acc.ADJ[S.players[1].pos]][0];
@@ -202,7 +202,7 @@ test('MP-05 duplicate/replayed messages from dead connections cannot corrupt the
 
 /* ================= MP-06 — invalid client input ================= */
 test('MP-06 invalid client input is rejected without crashing, mutating or locking', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 2, { autoAnswer: false });
   S.cur = 1; S.phase = 'move'; S.steps = 3;
   const c1 = engine.acc.Net.conns[1];
@@ -235,7 +235,7 @@ test('MP-06 invalid client input is rejected without crashing, mutating or locki
 
 /* ================= DC-01 — disconnect during movement ================= */
 test('DC-01 the away seat finishes its turn exactly once, and the seat can be reclaimed', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 2);
   S.deck = ['quiet', 'quiet']; S.discard = [];
   S.cur = 1; S.phase = 'move'; S.steps = 3;
@@ -283,7 +283,7 @@ test('DC-01 the away seat finishes its turn exactly once, and the seat can be re
 
 /* ================= DC-02 — disconnect during a private choice ================= */
 test('DC-02 a drop during a pending prompt applies the default once and the game advances', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 3);
   S.deck = ['quiet', 'quiet']; S.discard = [];
   S.owner.jt = 1; // guest 1 holds the JTPortal — endOfTurn will ask privately
@@ -304,7 +304,7 @@ test('DC-02 a drop during a pending prompt applies the default once and the game
 
 /* ================= DC-03 — reconnect around prompts ================= */
 test('DC-03 reclaiming a seat replays nothing; the defaulted prompt cannot resolve twice', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 2);
   S.deck = ['quiet', 'quiet']; S.discard = [];
   S.cur = 1; S.phase = 'move';
@@ -332,7 +332,7 @@ test('DC-03 reclaiming a seat replays nothing; the defaulted prompt cannot resol
 
 /* ================= DC-04 — disconnect during an announcement ================= */
 test('DC-04 announcements and event resolution complete without the closed client', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 3);
   S.deck = ['quiet', 'quiet']; S.discard = [];
   const departing = engine.acc.Net.conns[1];
@@ -354,7 +354,7 @@ test('DC-05 the current design has no host migration',
 
 /* ================= DC-06 — cleanup after disconnects ================= */
 test('DC-06 after the disconnect/reconnect gauntlet nothing is leaked', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 3);
   S.deck = ['quiet', 'quiet']; S.discard = [];
   // prompt + drop mid-air
@@ -397,7 +397,7 @@ const fillLog = (engine, lines, width = 20) => {
 };
 
 test('LOG-01 the host keeps every line of a long game', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 2);
   const before = S.log.length;
   fillLog(engine, 1000);
@@ -407,7 +407,7 @@ test('LOG-01 the host keeps every line of a long game', async t => {
 });
 
 test('LOG-02 a join or reconnect stays under the relay limit however long the record', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   await makeGame(engine, 2);
   fillLog(engine, 20000, 120);
   const wire = engine.f.pubState(true);
@@ -420,7 +420,7 @@ test('LOG-02 a join or reconnect stays under the relay limit however long the re
 });
 
 test('LOG-03 a guest who joined late ends up with the whole record', async t => {
-  const host = engineFor(t), guest = engineFor(t);
+  const host = await engineFor(t), guest = await engineFor(t);
   await makeGame(host, 2);
   fillLog(host, 1000);
   linkGuest(host, guest);
@@ -431,7 +431,7 @@ test('LOG-03 a guest who joined late ends up with the whole record', async t => 
 });
 
 test('LOG-04 a guest who misses updates recovers the lost history', async t => {
-  const host = engineFor(t), guest = engineFor(t);
+  const host = await engineFor(t), guest = await engineFor(t);
   await makeGame(host, 2);
   linkGuest(host, guest);
   guest.f.adoptState(JSON.parse(JSON.stringify(host.f.pubState(true))));
@@ -443,7 +443,7 @@ test('LOG-04 a guest who misses updates recovers the lost history', async t => {
 });
 
 test('LOG-05 lines arriving during a fetch are kept, in order', async t => {
-  const host = engineFor(t), guest = engineFor(t);
+  const host = await engineFor(t), guest = await engineFor(t);
   await makeGame(host, 2);
   fillLog(host, 600);
   linkGuest(host, guest);
@@ -463,7 +463,7 @@ test('LOG-06 the panel draws recent lines in play and the whole record at the en
 });
 
 test('LOG-07 the host answers a seated guest with the record, and ignores strangers', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 2);
   fillLog(engine, 300);
   const seat = engine.acc.Net.conns.findIndex(c => c);

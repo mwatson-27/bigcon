@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadEngine, makeGame, makeConn } from './helpers/harness.mjs';
 
-const engineFor = t => { const e = loadEngine(); t.after(() => e.dispose()); return e; };
+const engineFor = async t => { const e = await loadEngine(); t.after(() => e.dispose()); return e; };
 
 /* Drive intents from a guest exactly the way the wire does. */
 function guestIntent(engine, pi, act, extra = {}) {
@@ -48,7 +48,7 @@ const beginMsgs = (engine, i) => engine.acc.Net.conns[i].sent.filter(m => m.t ==
 
 /* ================= CF-01 / CF-02 — starting games ================= */
 test('CF-01 a solo test game starts without any remote connection and holds a valid state', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 1);
   assert.ok(S);
   assert.equal(S.players.length, 1);
@@ -74,7 +74,7 @@ test('CF-01 a solo test game starts without any remote connection and holds a va
 
 for (const n of [2, 4]) {
   test(`CF-02 a ${n}-player game starts host-authoritatively with per-seat begin payloads`, async t => {
-    const engine = engineFor(t);
+    const engine = await engineFor(t);
     const S = await makeGame(engine, n);
     assert.ok(engine.acc.Net.started, `Net.started with ${n} players`);
     const conns = engine.acc.Net.conns;
@@ -102,7 +102,7 @@ for (const n of [2, 4]) {
 
 /* ================= CF-03 / CF-04 — movement ================= */
 async function fresh2p(t) {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   await makeGame(engine, 2);
   return engine;
 }
@@ -341,7 +341,7 @@ test('CF-06b a hostile takeover pays list price to the victim and doubles the ta
 /* ================= CF-07 — full rounds ================= */
 for (const n of [2, 4]) {
   test(`CF-07 a full ${n}-player round: exactly one turn and one income each, one event after each turn`, async t => {
-    const engine = engineFor(t);
+    const engine = await engineFor(t);
     const S = await makeGame(engine, n);
     S.deck = Array.from({ length: n + 4 }, () => 'quiet');
     S.discard = [];
@@ -402,7 +402,7 @@ test('CF-08 exactly one event card is consumed per turn; choice cards honor the 
 });
 
 test('CF-08b a harmless event applies its effect exactly once', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 2);
   S.deck = ['quiet']; S.discard = [];
   delete S.owner.press;
@@ -421,7 +421,7 @@ test('CF-08b a harmless event applies its effect exactly once', async t => {
 
 /* ================= CF-09 — win condition through the flow ================= */
 test('CF-09 completing the con announces the winner to every seat and keeps the table up', async t => {
-  const engine = engineFor(t);
+  const engine = await engineFor(t);
   const S = await makeGame(engine, 2);
   const goal = S.goal;
   S.players.forEach(p => { p.money = goal + 5; });

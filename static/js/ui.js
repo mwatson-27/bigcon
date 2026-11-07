@@ -1,8 +1,22 @@
 'use strict';
-/* ui: modal/toast, help, rendering, pan/zoom/input wiring, setup screen and Discord invite binding. Loads last. */
-let toastTimer=null;
-function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2400)}
-function modal(o){return new Promise(res=>{
+/* ui: modal/toast, help, rendering, pan/zoom/input wiring and the setup-screen click wiring. Browser only.
+   Nothing runs at import time: initUI() (called once from app.js boot) attaches every listener. toast/modal/render are
+   installed as hooks and every module calls them through `hooks`. */
+/*<imports>*/
+import { $, IS_DISCORD_ACTIVITY, Presence } from './core.js';
+import { hooks } from './hooks.js';
+import { LOG_SHOWN, Net, S } from './state.js';
+import { GOAL_MAX, GOAL_MIN, clampGoal, esc } from './util.js';
+import { WIN_TYPES, addChat, applyIntent, blockaded, canFireMissileFrom, canMissileNode, canReach, flatSeize, goalAmount, hasType, initGame, missingTypes, ownsMissileLauncher, pname, projRig, qantasGrounded, qantasGroundedReason, seizeListPrice, takeoverCost } from './engine.js';
+import { applyLayoutFromState, boardViewBounds, megaRingMetrics, nodeBox, ringworldMetrics } from './boards.js';
+import { ADJ, BUZZWORDS, EDGES, MOODS, NMAP, NODES, QUIK_SLOTS, TYPE_COLORS, charSrc, codeLabel, matchBuzzword } from './data.js';
+import { addBotSeat, applyChar, backToLobby, broadcastLobby, cleanName, guestJoin, hostCreate, kickBotSeat, sendAll, setBoardLayout, setFogUI, setGeoUI, setGoalUI, setNetStatus, toggleSpectate } from './net.js';
+/*</imports>*/
+export const shownFx=new Set();
+export let svgEl=null;
+export let toastTimer=null;
+export function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2400)}
+export function modal(o){return new Promise(res=>{
  const ov=document.createElement('div');ov.className='overlay';
  const card=document.createElement('div');card.className='mcard';
  const t=document.createElement('div');t.className='mtitle';t.textContent=o.title||'';
@@ -13,10 +27,40 @@ function modal(o){return new Promise(res=>{
  (o.options||[{label:'Continue',v:1}]).forEach(op=>{const bt=document.createElement('button');bt.textContent=op.label;bt.onclick=()=>{document.body.removeChild(ov);res(op.v)};opts.appendChild(bt)});
  card.appendChild(t);card.appendChild(b);card.appendChild(opts);ov.appendChild(card);document.body.appendChild(ov);
 })}
-function monopolyAlertFace(sub,asic){const img=asic?'./static/asic.png':'./static/accc.png';const lab=asic?'ASIC':'ACCC';const title=asic?'ASIC MARKET-MANIPULATION ALERT':'MONOPOLY ALERT';return '<div class="eventcard"><div style="display:flex;gap:16px;justify-content:center;align-items:center;margin:10px 0 8px"><img src="./static/the rock.gif" alt="The Rock" style="width:120px;height:120px;object-fit:cover;border:2px solid #168388;background:#000"><img src="'+img+'" alt="'+lab+'" style="width:120px;height:120px;object-fit:contain;border:2px solid #168388;background:#111;padding:8px"></div><div class="etitle">'+title+'</div><div class="etext">'+(sub||'')+'</div></div>';}
-function cardFace(c){if(c.id==='crackdown')return monopolyAlertFace(c.text);return '<div class="eventcard"><div class="eicon">'+c.icon+'</div><div class="etitle">'+c.title+'</div><div class="etext">'+c.text+'</div></div>'}
-function showRules(){
- modal({title:'HOW TO PULL THE BIG CON',html:
+/* ================= LOCAL DESKTOP TURN ALERTS =================
+   Alerts are opt-out and default on. Permission is requested only from a
+   user gesture; the preference is local to this browser/device. */
+export const TURN_ALERTS_KEY='bigcon-v1.13-turn-alerts';
+export let lastTurnAlertKey='',lastDeliveredTurnAlertKey='';
+export function turnAlertsEnabled(){try{return localStorage.getItem(TURN_ALERTS_KEY)!=='off'}catch(_){return true}}
+export function requestTurnNotificationPermission(){
+ if(!turnAlertsEnabled()||typeof Notification==='undefined')return;
+ if(Notification.permission==='denied'){hooks.toast('Turn alerts are blocked by browser or system notification settings.');return}
+ if(Notification.permission==='default'){
+  try{Notification.requestPermission().then(p=>{if(p==='granted')notifyCurrentTurn(true)}).catch(()=>{})}catch(_){}
+ }else if(Notification.permission==='granted')notifyCurrentTurn(true);
+}
+export function notifyCurrentTurn(force){
+ if(!S||S.over||S.cur!==Net.myIdx||!turnAlertsEnabled())return;
+ const key=S.turn+':'+S.cur;
+ if(!force&&key===lastTurnAlertKey)return;
+ lastTurnAlertKey=key;
+ if(lastDeliveredTurnAlertKey===key||typeof Notification==='undefined'||Notification.permission!=='granted')return;
+ try{
+  const p=S.players[S.cur];const n=new Notification('THE BIG CON v1.13 — Your turn',{body:(p&&p.name?p.name+' — ':'')+'It is your move. Open the game to make your play.',tag:'bigcon-turn-'+key,renotify:false});
+  lastDeliveredTurnAlertKey=key;
+  n.onclick=()=>{try{window.focus()}catch(_){}try{n.close()}catch(_){}};
+ }catch(_){}
+}
+export function toggleTurnAlerts(){
+ const next=!turnAlertsEnabled();
+ try{localStorage.setItem(TURN_ALERTS_KEY,next?'on':'off')}catch(_){}
+ if(next)requestTurnNotificationPermission();
+ hooks.toast('Desktop turn alerts '+(next?'enabled':'disabled')+'.');
+ render();
+}
+export function showRules(){
+ hooks.modal({title:'HOW TO PULL THE BIG CON',html:
  '<h4>Online play (2–8 players)</h4><p>One player <b>hosts</b> and shares the room code — a jt portal <b>buzzword</b> (NESA, LOW CORTISOL, JAKE TOMKINS…), every one of them straight off the jt portal news ticker; the others <b>join</b> by typing it — the table seats up to <b>eight</b>. Short a friend? The host can <b>🤖 seat a bot</b> — it plays through the same rules, sends the same moves, and only ever knows what the table shows it. Or hand your <b>own seat</b> to a bot too and spectate: a table full of cons, and you just watch (and chat). Each player sees only their own secret prompts. If someone drops, their seat auto-plays “lay low” — rejoin with the <b>same name</b> to reclaim your empire. The table plays on: joining <b>mid-con</b> deals you in fresh at <b>Quikstop</b> — $15 and 2 Intel, the same stake every first turn gets — or you can take the <b>spectator rail</b> and just watch. Chat in the <b>lobby</b> before the con starts, and in the sidebar once it does.</p>'
  +'<h4>The market mood — events you can feel</h4><p>Every market event shifts the mood of the whole board — watch the <b>ticker</b> across the top, the <b>tint</b> of the board and the <b>glowing nodes</b>: <b style="color:#f5c542">BOOM</b> (commodities +$1/turn), <b style="color:#ff6b5e">PANIC</b> (banks −$1/turn, intel dearer), <b style="color:#e19bff">MEDIA FRENZY</b> (media +$1/turn), <b style="color:#8fbf7f">CALM</b>. Yields go vertical in a panic; the oil graph spikes in a boom. Money, Cortisol and Intel changes pop up on the board as they happen.</p>'
  +'<h4>Intel ops (🛈)</h4><ul><li><b>Burn a favor</b> (1 🛈, while moving) — +1 step this turn.</li><li><b>Spy on the deck</b> (2 🛈, free action) — privately see the next event card, anywhere.</li><li><b>The Dossier</b> (3 🛈, free action) — your hostile takeovers this turn cost <b>list price, not double</b>.</li><li><b>Sweep for bugs</b> (2 🛈, your action) — remove every bug on your nodes.</li><li><b>Mass panic</b> (5 🛈, your action) — every player gains +2 Cortisol.</li><li><b>Divest MADE</b> (5 🛈, your action) — take MADE from any rival and pay its former owner $7 compensation.</li><li><b>Sell intel</b> (your action, anywhere): sell 1–3 or <b>ALL</b> your Intel at once for the current market rate. Bad news is good news.</li><li><b>Overload a rival</b> (30 🛈, your action): choose one rival to receive <b>+6 Cortisol</b>, bypassing the normal one-node immunity.</li></ul>'
@@ -46,7 +90,7 @@ function showRules(){
 }
 
 /* ================= RENDERING (shared by host & guests) ================= */
-function render(){
+export function render(){
  if(!S)return;
  
  notifyCurrentTurn(false);applyLayoutFromState();renderBoard();renderSide();
@@ -56,14 +100,14 @@ function render(){
   Presence.inGame(S.turn,pname(S.cur),S.cur===Net.myIdx,me?me.money:0,goalAmount(),S.players.filter(pl=>!pl.dc).length,me?me.char:null,Net.roomLabel||Net.roomCode,cur?cur.char:null,Net.role==='host');
  }
 }
-function moodBoost(n){
+export function moodBoost(n){
  if(!S)return 0;
  if(S.mood==='BOOM'&&n.type==='COMMODITY')return 1;
  if(S.mood==='PANIC'&&n.type==='BANK')return -1;
  if(S.mood==='FRENZY'&&n.type==='MEDIA')return 1;
  return 0;
 }
-function nodeSVG(n,cls){
+export function nodeSVG(n,cls){
  const me=S&&S.players[Net.myIdx];
  const discovered=!S||!S.fogOfWar||(me&&me.visited&&me.visited[n.id]);
  if(!discovered){
@@ -111,7 +155,7 @@ function nodeSVG(n,cls){
   +ownerTag+bugTag+badges
   +'<title>'+esc(n.name.join(' '))+' — '+n.type+' · $'+n.income+'/turn · seize $'+n.cost+'&#10;'+esc(n.sub)+'&#10;'+esc(n.sp)+tip+'</title></g>';
 }
-function tokenLayer(){
+export function tokenLayer(){
  const byPos={};S.players.forEach((p,i)=>{(byPos[p.pos]=byPos[p.pos]||[]).push(i)});
  const SLOTS=[[-62,-58],[62,-58],[-90,-6],[90,-6],[-62,58],[62,58],[0,-70],[0,70]];
  let s='<g pointer-events="none"><defs>';
@@ -131,37 +175,37 @@ function tokenLayer(){
  });
  return s+'</g>';
 }
-function scribble(x,y,rx,ry,rot){return '<g transform="translate('+x+','+y+') rotate('+rot+')" opacity=".8" pointer-events="none"><ellipse rx="'+rx+'" ry="'+ry+'" fill="none" stroke="#d92b1f" stroke-width="3.5" stroke-dasharray="14 9"/><ellipse rx="'+(rx-6)+'" ry="'+(ry-4)+'" fill="none" stroke="#d92b1f" stroke-width="2" stroke-dasharray="20 14" opacity=".7"/></g>'}
-function redArrow(x1,y1,x2,y2){
+export function scribble(x,y,rx,ry,rot){return '<g transform="translate('+x+','+y+') rotate('+rot+')" opacity=".8" pointer-events="none"><ellipse rx="'+rx+'" ry="'+ry+'" fill="none" stroke="#d92b1f" stroke-width="3.5" stroke-dasharray="14 9"/><ellipse rx="'+(rx-6)+'" ry="'+(ry-4)+'" fill="none" stroke="#d92b1f" stroke-width="2" stroke-dasharray="20 14" opacity=".7"/></g>'}
+export function redArrow(x1,y1,x2,y2){
  const a=Math.atan2(y2-y1,x2-x1);const hx=x2-16*Math.cos(a),hy=y2-16*Math.sin(a);
  const px=Math.cos(a+Math.PI/2)*6,py=Math.sin(a+Math.PI/2)*6;
  return '<g pointer-events="none" opacity=".6"><path d="M'+x1+','+y1+' L'+hx+','+hy+'" stroke="#d92b1f" stroke-width="3" stroke-dasharray="10 7" fill="none"/><polygon points="'+x2+','+y2+' '+(hx+px)+','+(hy+py)+' '+(hx-px)+','+(hy-py)+'" fill="#d92b1f"/></g>';
 }
-function scribText(x,y,rot,txt){return '<text x="'+x+'" y="'+y+'" transform="rotate('+rot+' '+x+' '+y+')" font-size="15" font-style="italic" font-weight="700" fill="#d92b1f" opacity=".85" pointer-events="none">'+txt+'</text>'}
-function bugTargetable(n){
+export function scribText(x,y,rot,txt){return '<text x="'+x+'" y="'+y+'" transform="rotate('+rot+' '+x+' '+y+')" font-size="15" font-style="italic" font-weight="700" fill="#d92b1f" opacity=".85" pointer-events="none">'+txt+'</text>'}
+export function bugTargetable(n){
  const me=Net.myIdx;
  return S&&S.phase==='action'&&S.mode==='bug'&&S.cur===me
   &&S.owner[n.id]!=null&&S.owner[n.id]!==me
   &&S.bugs[n.id]==null
   &&(ADJ[S.players[me].pos]||[]).includes(n.id);
 }
-function missileTargetable(n){
+export function missileTargetable(n){
  const me=Net.myIdx;
  return S&&(S.phase==='action'||S.phase==='move')&&S.mode==='missile'&&S.cur===me&&S.dlcGeo
   &&canMissileNode(me,n.id);
 }
-function overtourTargetable(n){
+export function overtourTargetable(n){
  const me=Net.myIdx;
  return S&&S.phase==='action'&&S.mode==='overtour'&&S.cur===me&&S.dlcGeo
   &&S.owner[n.id]!=null&&S.owner[n.id]!==me&&!S.rubble[n.id]
   &&S.owner[n.id]!==S.owner.geo_pillars;
 }
-function blockadeTargetable(n){
+export function blockadeTargetable(n){
  const me=Net.myIdx;
  return S&&S.phase==='action'&&S.mode==='blockade'&&S.cur===me&&S.owner.albo===me
   &&!S.rubble[n.id]&&!blockaded(n.id);
 }
-function renderBoard(){
+export function renderBoard(){
  const svg=$('board');
  /* static content lives in #root; floating fx live in #fxg and survive re-renders */
  let root=$('root');
@@ -288,7 +332,7 @@ function renderBoard(){
   setTimeout(()=>{try{outer.remove()}catch(e){}},f.b?3600:2900);
  });
 }
-function renderSide(){
+export function renderSide(){
  const side=$('side');
  const me=Net.myIdx;const p=S.players[S.cur];const isTurn=S.cur===me;
  const md=MOODS[S.mood]||MOODS.CALM;
@@ -447,41 +491,30 @@ function renderSide(){
   ci.addEventListener('keydown',e=>{if(e.key==='Enter')send()});
  }
 }
-function sendChat(t){
+export function sendChat(t){
  if(Net.role==='host'){addChat(Net.myIdx,t)}
  else if(Net.conn&&Net.conn.open){Net.conn.send({t:'chat',text:t})}
 }
-function getPlayerId(){const key='bigcon-player-id';let id=sessionStorage.getItem(key);if(!id){id=crypto.randomUUID();sessionStorage.setItem(key,id)}return id;}
-function dispatch(m){
+export function dispatch(m){
  if(!S||S.over)return;
  if(Net.role==='host')applyIntent(Net.myIdx,m);
  else if(Net.conn&&Net.conn.open)Net.conn.send({t:'intent',act:m.act,id:m.id,target:m.target,kind:m.kind,choice:m.choice,n:m.n});
 }
 
-/* ================= INPUT — pan, zoom & taps ================= */
-const svgEl=$('board');
-let VB={x:0,y:0,w:2400,h:1560};
-function boardViewBounds(){
- if(S&&(S.layoutKind==='megaring'||S.layoutKind==='ringworld')){
-  const count=Math.max(3,(S.boardLayout||[]).length-1||NODES.length-1);
-  const m=S.layoutKind==='ringworld'?ringworldMetrics(count):megaRingMetrics(count);
-  return {x:m.x,y:m.y,w:m.w,h:m.h};
- }
- return {x:0,y:0,w:2400,h:1560};
-}
-function applyVB(){svgEl.setAttribute('viewBox',VB.x+' '+VB.y+' '+VB.w+' '+VB.h)}
-function resetBoardView(){
+export let VB={x:0,y:0,w:2400,h:1560};
+export function applyVB(){svgEl.setAttribute('viewBox',VB.x+' '+VB.y+' '+VB.w+' '+VB.h)}
+export function resetBoardView(){
  const b=boardViewBounds();
  VB={x:b.x,y:b.y,w:b.w,h:b.h};
  applyVB();
 }
-function boardDisplayMetrics(){
+export function boardDisplayMetrics(){
  const rect=svgEl.getBoundingClientRect();
  const scale=Math.min(rect.width/VB.w,rect.height/VB.h);
  const displayWidth=VB.w*scale,displayHeight=VB.h*scale;
  return {rect,scale,offsetX:(rect.width-displayWidth)/2,offsetY:(rect.height-displayHeight)/2};
 }
-function zoomAt(f,cx,cy){
+export function zoomAt(f,cx,cy){
  const bounds=boardViewBounds();
  const m=boardDisplayMetrics();
  if(!m.scale)return;
@@ -491,13 +524,41 @@ function zoomAt(f,cx,cy){
  VB.x=bx-(bx-VB.x)*(nw/VB.w);VB.y=by-(by-VB.y)*(nh/VB.h);
  VB.w=nw;VB.h=nh;clampVB();applyVB();
 }
-function clampVB(){
+export function clampVB(){
  const b=boardViewBounds();
  VB.x=Math.min(b.x+b.w-VB.w,Math.max(b.x,VB.x));
  VB.y=Math.min(b.y+b.h-VB.h,Math.max(b.y,VB.y));
 }
+export let drag=null,lastTapTarget=null;
+export function handleNodeTap(t){
+ if(!t||!t.closest)return;
+ const g=t.closest('g.node');
+ if(!g||!S||S.over)return;
+ if(S.cur!==Net.myIdx)return;
+ const id=g.dataset.id;
+ if(S.phase==='move'){
+  if(S.mode==='fly'){dispatch({act:'fly',id});return}
+  if(S.mode==='missile'){dispatch({act:'missile',id});return}
+  if(S.steps<=0)return;
+  if(!canReach(id)){hooks.toast(qantasGroundedReason()+'.');return}
+  if((ADJ[S.players[Net.myIdx].pos]||[]).includes(id))dispatch({act:'move',id});
+  else hooks.toast('You can only move along the red threads — click a highlighted node.');
+ } else if(S.phase==='action'){
+  if(S.mode==='bug')dispatch({act:'bug',id});
+  else if(S.mode==='missile')dispatch({act:'missile',id});
+  else if(S.mode==='overtour')dispatch({act:'overtour',id});
+  else if(S.mode==='blockade')dispatch({act:'blockade',id});
+ }
+}
+/* initGame / enterGame: leave the setup screen and show the board. */
+export function showGame(){
+ $('setup').style.display='none';$('app').style.display='flex';document.body.classList.add('game-open');
+ resetBoardView();
+}
+/* Everything below attaches listeners and reads the DOM, so it waits for initUI(). */
+export function initUI(){
+ svgEl=$('board');
 svgEl.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY>0?1.13:0.885,e.clientX,e.clientY)},{passive:false});
-let drag=null,lastTapTarget=null;
 svgEl.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,moved:false};lastTapTarget=e.target;});
 svgEl.addEventListener('pointermove',e=>{
  if(!drag)return;
@@ -519,26 +580,6 @@ svgEl.addEventListener('pointerup',()=>{
 });
 svgEl.addEventListener('pointercancel',()=>{drag=null;svgEl.classList.remove('panning')});
 window.addEventListener('pointerup',e=>{if(drag&&e.target&&e.target!==svgEl&&!svgEl.contains(e.target)){drag=null;svgEl.classList.remove('panning')}});
-function handleNodeTap(t){
- if(!t||!t.closest)return;
- const g=t.closest('g.node');
- if(!g||!S||S.over)return;
- if(S.cur!==Net.myIdx)return;
- const id=g.dataset.id;
- if(S.phase==='move'){
-  if(S.mode==='fly'){dispatch({act:'fly',id});return}
-  if(S.mode==='missile'){dispatch({act:'missile',id});return}
-  if(S.steps<=0)return;
-  if(!canReach(id)){toast(qantasGroundedReason()+'.');return}
-  if((ADJ[S.players[Net.myIdx].pos]||[]).includes(id))dispatch({act:'move',id});
-  else toast('You can only move along the red threads — click a highlighted node.');
- } else if(S.phase==='action'){
-  if(S.mode==='bug')dispatch({act:'bug',id});
-  else if(S.mode==='missile')dispatch({act:'missile',id});
-  else if(S.mode==='overtour')dispatch({act:'overtour',id});
-  else if(S.mode==='blockade')dispatch({act:'blockade',id});
- }
-}
  $('zin').onclick=()=>{const r=svgEl.getBoundingClientRect();zoomAt(0.8,r.left+r.width/2,r.top+r.height/2)};
  $('zout').onclick=()=>{const r=svgEl.getBoundingClientRect();zoomAt(1.25,r.left+r.width/2,r.top+r.height/2)};
  $('zreset').onclick=()=>resetBoardView();
@@ -603,7 +644,7 @@ function handleNodeTap(t){
  if(act==='notifications'){toggleTurnAlerts();return}
  if(act==='copyrecord'){
   const rec=(S.log||[]).join('\n');
-  try{navigator.clipboard.writeText(rec).then(()=>toast('Record copied.')).catch(()=>toast('Could not copy the record.'))}catch(e){toast('Could not copy the record.')}
+  try{navigator.clipboard.writeText(rec).then(()=>hooks.toast('Record copied.')).catch(()=>hooks.toast('Could not copy the record.'))}catch(e){hooks.toast('Could not copy the record.')}
   return;
  }
  if(act==='reviewlog'){
@@ -611,14 +652,14 @@ function handleNodeTap(t){
   let saved=false;
   try{localStorage.setItem('bigcon-record-pending',JSON.stringify(meta));saved=true}catch(e){}
   const w=window.open('logs.html','_blank');
-  if(!w)toast('Allow pop-ups to open the log reviewer.');
-  else if(!saved)toast('Could not hand the record over — use COPY and paste it into the reviewer.');
+  if(!w)hooks.toast('Allow pop-ups to open the log reviewer.');
+  else if(!saved)hooks.toast('Could not hand the record over — use COPY and paste it into the reviewer.');
   return;
  }
  if(act==='tolobby'){if(Net.role==='host')backToLobby();return}
  if(act==='leave'){
-  if(Net.role==='host'){const v=await modal({title:'END THE GAME?',body:'This will disconnect everyone and return all players to the lobby screen. Proceed?',options:[{label:'Yes — end it',v:1},{label:'Keep scheming',v:0}]});if(v){sendAll({t:'reload'});setTimeout(()=>location.reload(),300)}}
-  else{const v=await modal({title:'LEAVE THE TABLE?',body:'Your seat will be held — rejoin later with the same name and room code.',options:[{label:'Yes — leave',v:1},{label:'Stay',v:0}]});if(v)location.reload()}
+  if(Net.role==='host'){const v=await hooks.modal({title:'END THE GAME?',body:'This will disconnect everyone and return all players to the lobby screen. Proceed?',options:[{label:'Yes — end it',v:1},{label:'Keep scheming',v:0}]});if(v){sendAll({t:'reload'});setTimeout(()=>location.reload(),300)}}
+  else{const v=await hooks.modal({title:'LEAVE THE TABLE?',body:'Your seat will be held — rejoin later with the same name and room code.',options:[{label:'Yes — leave',v:1},{label:'Stay',v:0}]});if(v)location.reload()}
   return;
  }
  if(S.cur!==Net.myIdx||S.over)return;
@@ -661,75 +702,6 @@ function handleNodeTap(t){
  }
 });
 
-/* Initialise optional transport preferences after the setup controls exist. */
-loadTransportSettings();
-/* ================= SETUP SCREEN ================= */
-/* Only the host may move the target; guests mirror whatever comes off the wire. */
-function setGoalUI(v){
- Net.goal=clampGoal(v);
- const inp=$('goalInput');
- if(inp&&document.activeElement!==inp)inp.value=Net.goal;
- const note=$('goalNote');
- if(note)note.textContent=Net.role==='host'?'first player to $'+Net.goal+' wins the con':'the host set the target at $'+Net.goal;
-}
-/* 🌍 The Geography DLC is the same anchor: the host flips it, the table mirrors it. */
-function setGeoUI(v){
- Net.dlcGeo=!!v;
- const t=$('geoToggle');
- if(t)t.checked=!!v;
-}
-function setFogUI(v){
- Net.fogOfWar=!!v;
- const t=$('fogToggle');
- if(t)t.checked=!!v;
-}
-function setBoardLayout(val){
- const allowed=['random','ringworld','megaring'];
- Net.boardLayout=allowed.includes(val)?val:'random';
- Net.ringworld=Net.boardLayout==='ringworld';
- const t=$('boardLayoutSelect');
- if(t){t.value=Net.boardLayout;t.disabled=Net.role!=='host'}
- const note=$('boardLayoutNote');
- if(note)note.textContent=Net.role==='host'?'the host chooses the map':(Net.boardLayout==='megaring'?'Mega Ring selected by the host':(Net.ringworld?'Ringworld selected by the host':'random board selected by the host'));
-}
-function setRingworldUI(v){
- setBoardLayout(v?'ringworld':'random');
-}
-/* After the payout the table keeps its room: everyone is walked back to the
-   lobby with the same code, roster and faces — no reload, no rejoin. The
-   roster sits in shuffled seating order after initGame, so each guest is told
-   their own row index for the "YOU" marker. */
-function backToLobby(){
- if(Net.role!=='host'||!S||!S.over)return;
- Net.started=false;Net.begun=false;S=null;
- /* spectators step off the rail and pick a face like anyone else for the next con */
- Net.roster.forEach(e=>{if(e.spect)e.spect=false});
- for(let i=0;i<Net.roster.length;i++){
-  if(i===Net.myIdx)continue;
-  const c=Net.conns[i];if(c&&c.open)sendTo(i,{t:'tolobby',idx:i});
- }
- showLobby(true);
- setNetStatus('Back in the lobby — same room, same faces. Deal the next con when ready.');
- broadcastLobby();
-}
-function showLobby(asHost){
- $('hostForm').classList.remove('show');$('joinForm').classList.remove('show');
- $('lobbyView').style.display='block';
- $('app').style.display='none';document.body.classList.remove('game-open');
- $('roomCodeBig').textContent=Net.roomLabel||Net.roomCode||'·····';
- $('btnStart').style.display=asHost?'block':'none';
- $('btnCopy').style.display=asHost?'inline-block':'none';
- const gi=$('goalInput');
- if(gi)gi.disabled=!asHost;
- const layout=$('boardLayoutSelect');if(layout)layout.disabled=!asHost;
- setGoalUI(Net.goal);
- setBoardLayout(Net.boardLayout||(Net.ringworld?'ringworld':'random'));
- if(!asHost)setNetStatus('In the lobby. Pick a face — the host starts when everyone is in.');
- renderLobbyList();renderLobbyChat();
- const inp=$('lobbyChatInput'),btn=$('lobbyChatSend');
- if(btn)btn.onclick=sendLobbyChat;
- if(inp)inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();sendLobbyChat()}};
-}
  $('btnHost').onclick=()=>{$('hostForm').classList.add('show');$('joinForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
  $('btnJoin').onclick=()=>{$('joinForm').classList.add('show');$('hostForm').classList.remove('show');$('lobbyView').style.display='none';setNetStatus('')};
  $('btnCreate').onclick=()=>{
@@ -745,7 +717,7 @@ function showLobby(asHost){
  $('btnJoinGo').disabled=true;guestJoin(nm,code);
 };
  $('btnStart').onclick=()=>{
- if(Net.roster.length<1||Net.roster.some(e=>!e.char)){toast('Pick a character before starting.');return}
+ if(Net.roster.length<1||Net.roster.some(e=>!e.char)){hooks.toast('Pick a character before starting.');return}
  requestTurnNotificationPermission();$('btnStart').disabled=true;
  initGame(Net.roster.map(e=>({name:e.name,char:e.char,bot:!!e.bot})));
 };
@@ -753,7 +725,7 @@ function showLobby(asHost){
   const b=e.target.closest('#charGrid .charpick');
   if(!b||b.disabled)return;
   const id=b.dataset.char;
-  if(Net.role==='host'){if(Net.roster[0]&&Net.roster[0].bot){toast('You are spectating — take your seat back to pick a face.');return}applyChar(0,id)}
+  if(Net.role==='host'){if(Net.roster[0]&&Net.roster[0].bot){hooks.toast('You are spectating — take your seat back to pick a face.');return}applyChar(0,id)}
   else if(Net.conn&&Net.conn.open)Net.conn.send({t:'pick',char:id});
  });
  document.addEventListener('click',e=>{
@@ -771,15 +743,15 @@ function showLobby(asHost){
 })();
 (function(){
  const gt=$('geoToggle');
- if(gt)gt.onchange=()=>{if(Net.role!=='host'){gt.checked=Net.dlcGeo;toast('The host decides whether the Geography DLC is played.');return}setGeoUI(gt.checked);broadcastLobby()};
+ if(gt)gt.onchange=()=>{if(Net.role!=='host'){gt.checked=Net.dlcGeo;hooks.toast('The host decides whether the Geography DLC is played.');return}setGeoUI(gt.checked);broadcastLobby()};
  const ft=$('fogToggle');
- if(ft)ft.onchange=()=>{if(Net.role!=='host'){ft.checked=Net.fogOfWar;toast('The host decides whether Fog of War is enabled.');return}setFogUI(ft.checked);broadcastLobby()};
+ if(ft)ft.onchange=()=>{if(Net.role!=='host'){ft.checked=Net.fogOfWar;hooks.toast('The host decides whether Fog of War is enabled.');return}setFogUI(ft.checked);broadcastLobby()};
  const layout=$('boardLayoutSelect');
- if(layout)layout.onchange=()=>{if(Net.role!=='host'){setBoardLayout(Net.boardLayout);toast('The host decides which board layout is played.');return}setBoardLayout(layout.value);broadcastLobby()};
+ if(layout)layout.onchange=()=>{if(Net.role!=='host'){setBoardLayout(Net.boardLayout);hooks.toast('The host decides which board layout is played.');return}setBoardLayout(layout.value);broadcastLobby()};
 })();
  $('btnCopy').onclick=()=>{
  const code=Net.roomLabel||Net.roomCode||'';
- try{navigator.clipboard.writeText(code).then(()=>toast('Room code copied: '+code))}catch(e){toast('Code: '+code)}
+ try{navigator.clipboard.writeText(code).then(()=>hooks.toast('Room code copied: '+code))}catch(e){hooks.toast('Code: '+code)}
 };
 (function(){
  const dl=$('buzzwords');
@@ -798,7 +770,7 @@ Presence.menu();
   const code=Presence.decodeJoinSecret(secret);
   if(!code){setNetStatus('That Discord invite did not contain a room.',true);return}
   if(Net.role||Net.begun){
-   toast('Already at a table. Buzzword for the invite was '+codeLabel(code)+'.');
+   hooks.toast('Already at a table. Buzzword for the invite was '+codeLabel(code)+'.');
    return;
   }
   $('joinForm').classList.add('show');
@@ -830,3 +802,4 @@ Presence.menu();
   Promise.resolve(b.takePendingJoin()).then(s=>{if(s)applySecret(s)}).catch(()=>{});
  }
 })();
+}

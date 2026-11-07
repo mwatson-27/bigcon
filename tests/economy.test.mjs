@@ -10,8 +10,8 @@ import {
   loadEngine, makeState, withSeed, withRandomSeq, pump,
 } from './helpers/harness.mjs';
 
-function ctx_engine(t) {
-  const engine = loadEngine();
+async function ctx_engine(t) {
+  const engine = await loadEngine();
   t.after(() => engine.dispose());
   return engine;
 }
@@ -22,8 +22,8 @@ function fixture(engine, over = {}) {
 }
 
 /* ================= EC-01 / EC-02 — MADE ================= */
-test('EC-01 MADE pays its owner $10 and 1 Intel, and takes 15% only from rich multi-holders', t => {
-  const engine = ctx_engine(t);
+test('EC-01 MADE pays its owner $10 and 1 Intel, and takes 15% only from rich multi-holders', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, {
     owner: { made: 0, citi: 1, commbank: 1, anz: 1 }, // P1 holds exactly three real nodes
     players: [
@@ -39,8 +39,8 @@ test('EC-01 MADE pays its owner $10 and 1 Intel, and takes 15% only from rich mu
   assert.equal(S.players[2].money, 20, 'poorer players do not pay');
 });
 
-test('EC-02 MADE edge cases: no owner, $49/$50, 2/3/4 nodes, maximum resources', t => {
-  const engine = ctx_engine(t);
+test('EC-02 MADE edge cases: no owner, $49/$50, 2/3/4 nodes, maximum resources', async t => {
+  const engine = await ctx_engine(t);
   // No owner: nothing happens at all.
   const S0 = fixture(engine, { players: [{ money: 100, intel: 5 }] });
   engine.f.madePay();
@@ -64,7 +64,7 @@ test('EC-02 MADE edge cases: no owner, $49/$50, 2/3/4 nodes, maximum resources',
 
 /* ================= EC-03 — Sisyphus ================= */
 test('EC-03 repeated pushes double the payout and cost no Cortisol; the growth is uncapped', async t => {
-  const engine = ctx_engine(t);
+  const engine = await ctx_engine(t);
   const S = fixture(engine, {
     owner: { sisy: 0, citi: 0, infl: 0 }, // 2+ nodes keeps the Cortisol protection satisfied
     players: [{ pos: 'sisy', money: 0, intel: 0, cortisol: 0 }],
@@ -85,7 +85,7 @@ test('EC-03 repeated pushes double the payout and cost no Cortisol; the growth i
 });
 
 test('EC-03b a push pays the current doubling amount to the pusher', async t => {
-  const engine = ctx_engine(t);
+  const engine = await ctx_engine(t);
   const S = fixture(engine, {
     owner: { sisy: 0, citi: 0, infl: 0 },
     players: [{ pos: 'sisy', money: 0, intel: 0 }],
@@ -104,8 +104,8 @@ test('EC-03b a push pays the current doubling amount to the pusher', async t => 
 });
 
 /* ================= EC-04 — passive income and synergies ================= */
-test('EC-04a baseline salary and plain node income', t => {
-  const engine = ctx_engine(t);
+test('EC-04a baseline salary and plain node income', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { players: [{}] });
   assert.equal(S.players[0].money, 0);
   engine.f.income(0);
@@ -116,8 +116,8 @@ test('EC-04a baseline salary and plain node income', t => {
   assert.equal(S2.players[0].money, 3 + 8, 'oil pays $8/turn');
 });
 
-test('EC-04b the IB Diploma doubles chart income; the master chart adds $3 per extra chart', t => {
-  const engine = ctx_engine(t);
+test('EC-04b the IB Diploma doubles chart income; the master chart adds $3 per extra chart', async t => {
+  const engine = await ctx_engine(t);
   // ib is owned too: it is a WILD node with income 1 that does NOT double itself.
   // infl raises the salary to $4 (it is also a chart).
   const S = fixture(engine, { owner: { ib: 0, tenyear: 0, infl: 0, stock: 0 }, players: [{}] });
@@ -125,8 +125,8 @@ test('EC-04b the IB Diploma doubles chart income; the master chart adds $3 per e
   assert.equal(S.players[0].money, 4 + (2 * (1 + 1 + 1) + 1) + 3 * (3 - 1), 'salary 4 + doubled charts 6 + ib 1 + master 6');
 });
 
-test('EC-04c headline synergies each apply exactly once', t => {
-  const engine = ctx_engine(t);
+test('EC-04c headline synergies each apply exactly once', async t => {
+  const engine = await ctx_engine(t);
   const cases = [
     { owner: { citi: 0, coal: 0, quik: 0, market: 0 }, keep: 'citi $1/sp CORPORATE + anchor stores pair', expect: 3 + (3 + 3 + 2 + 2) + 3 + 2 },
     { owner: { commbank: 0, anz: 0 }, keep: 'the big four stick together', expect: 3 + (2 + 2) + 2 },
@@ -146,8 +146,8 @@ test('EC-04c headline synergies each apply exactly once', t => {
   }
 });
 
-test('EC-04d the market mood pays — and taxes — the right node types', t => {
-  const engine = ctx_engine(t);
+test('EC-04d the market mood pays — and taxes — the right node types', async t => {
+  const engine = await ctx_engine(t);
   const boom = fixture(engine, { owner: { oil: 0, forklift: 0 }, mood: 'BOOM', players: [{}] });
   engine.f.income(0);
   assert.equal(boom.players[0].money, 3 + (8 + 1) + 2 + 2, 'BOOM: +$1 per commodity AND the forklift synergy');
@@ -165,8 +165,8 @@ test('EC-04d the market mood pays — and taxes — the right node types', t => 
   assert.equal(calm.players[0].money, 3 + 8 + 0, 'CALM: no modifier');
 });
 
-test('EC-04e bug skims pay $1/turn, or $2 with the World Economic Forum', t => {
-  const engine = ctx_engine(t);
+test('EC-04e bug skims pay $1/turn, or $2 with the World Economic Forum', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { owner: { oil: 1, gold: 1 }, bugs: { oil: 0, gold: 0 }, players: [{}, {}] });
   engine.f.income(0);
   assert.equal(S.players[0].money, 3 + 1 + 1, 'salary + two $1 skims');
@@ -176,8 +176,8 @@ test('EC-04e bug skims pay $1/turn, or $2 with the World Economic Forum', t => {
   assert.equal(S2.players[0].money, 3 + 2 + 2, 'salary + the WEF\'s own $2 + one $2 skim (WEF doubles)');
 });
 
-test('EC-04f inflation compensation raises the salary to $4 (and the chart itself pays)', t => {
-  const engine = ctx_engine(t);
+test('EC-04f inflation compensation raises the salary to $4 (and the chart itself pays)', async t => {
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { owner: { infl: 0 }, players: [{}] });
   engine.f.income(0);
   assert.equal(S.players[0].money, 4 + 1);
@@ -185,7 +185,7 @@ test('EC-04f inflation compensation raises the salary to $4 (and the chart itsel
 
 /* ================= EC-05 — income timing ================= */
 test('EC-05 income is paid in startTurn only: not on sync, not on adoptState, skipped under caution', async t => {
-  const engine = ctx_engine(t);
+  const engine = await ctx_engine(t);
   const S = fixture(engine, { owner: { oil: 0 }, players: [{ money: 0, raided: 1 }], deck: ['quiet'] });
   engine.f.startTurn();
   await new Promise(r => setImmediate(r));
@@ -221,7 +221,7 @@ function winFixture(engine, goal, params = {}) {
 }
 
 test('EC-06 one owned node of each type satisfies it; missing any one type blocks victory', async t => {
-  const engine = ctx_engine(t);
+  const engine = await ctx_engine(t);
   engine.acc.Net.role = 'host';
   for (const missing of engine.acc.WIN_TYPES) {
     const S = winFixture(engine, 100, { missing, money: 100 });
@@ -238,7 +238,7 @@ test('EC-06 one owned node of each type satisfies it; missing any one type block
 });
 
 test('EC-07 cash threshold: one below fails, exactly at wins; the richest simultaneous candidate wins; post-over intents rejected', async t => {
-  const engine = ctx_engine(t);
+  const engine = await ctx_engine(t);
   engine.acc.Net.role = 'host';
 
   const below = winFixture(engine, 100, { money: 99 });
@@ -282,8 +282,8 @@ async function win_run(engine, S) {
 }
 
 /* ================= EC-08 — ACCC concentration ================= */
-test('EC-08 0/1/2 holdings in an industry never trigger the ACCC; charts are exempt', t => {
-  const engine = ctx_engine(t);
+test('EC-08 0/1/2 holdings in an industry never trigger the ACCC; charts are exempt', async t => {
+  const engine = await ctx_engine(t);
   const cases = [
     { keep: 'two BANK nodes only', owner: { citi: 0, commbank: 0 } },
     { keep: 'four CHART nodes only (charts exempt)', owner: { us: 0, japan: 0, uk: 0, aus: 0 } },
@@ -299,8 +299,8 @@ test('EC-08 0/1/2 holdings in an industry never trigger the ACCC; charts are exe
 
 function hostMode(engine) { engine.acc.Net.role = 'host'; }
 
-test('EC-08b 3+ BANK nodes in Banking trigger the 1-in-3 investigation: divest, redistribute, fine 20%', t => {
-  const engine = ctx_engine(t);
+test('EC-08b 3+ BANK nodes in Banking trigger the 1-in-3 investigation: divest, redistribute, fine 20%', async t => {
+  const engine = await ctx_engine(t);
   hostMode(engine);
   const S = fixture(engine, {
     owner: { citi: 0, commbank: 0, nab: 0, oil: 1 },
@@ -323,8 +323,8 @@ test('EC-08b 3+ BANK nodes in Banking trigger the 1-in-3 investigation: divest, 
   assert.equal(S.players[0].intel, 10 - Math.floor(10 * 0.2), '20% Intel fine');
 });
 
-test('EC-08c the same bank book CAN be safe when the 1-in-3 gate misses', t => {
-  const engine = ctx_engine(t);
+test('EC-08c the same bank book CAN be safe when the 1-in-3 gate misses', async t => {
+  const engine = await ctx_engine(t);
   hostMode(engine);
   const S = fixture(engine, {
     owner: { citi: 0, commbank: 0, nab: 0 },
@@ -338,8 +338,8 @@ test('EC-08c the same bank book CAN be safe when the 1-in-3 gate misses', t => {
   assert.equal(engine.modalRec.filter(m => m.title === 'MONOPOLY ALERT').length, 0);
 });
 
-test('EC-08d Mark Watson alone is not a monopoly offence', t => {
-  const engine = ctx_engine(t);
+test('EC-08d Mark Watson alone is not a monopoly offence', async t => {
+  const engine = await ctx_engine(t);
   hostMode(engine);
   const S = fixture(engine, { owner: { watson: 0 }, players: [{ money: 50, intel: 10 }, { money: 0 }] });
   withRandomSeq([0.1], () => engine.f.acccInvestigate(0));
@@ -349,8 +349,8 @@ test('EC-08d Mark Watson alone is not a monopoly offence', t => {
   assert.equal(engine.modalRec.filter(m => m.title === 'MONOPOLY ALERT').length, 0);
 });
 
-test('EC-08g three COAL holdings trigger ACCC unless the owner also holds Mark Watson', t => {
-  const engine = ctx_engine(t);
+test('EC-08g three COAL holdings trigger ACCC unless the owner also holds Mark Watson', async t => {
+  const engine = await ctx_engine(t);
   hostMode(engine);
   const S = fixture(engine, {
     owner: { coal: 0, train: 0, port: 0 },
@@ -378,8 +378,8 @@ test('EC-08g three COAL holdings trigger ACCC unless the owner also holds Mark W
   assert.equal(engine.modalRec.filter(m => m.title === 'MONOPOLY ALERT').length, alertsBefore, 'no new alert for the protected COAL book');
 });
 
-test('EC-08e fewer rivals than divested nodes: one node max per rival, the rest return to market', t => {
-  const engine = ctx_engine(t);
+test('EC-08e fewer rivals than divested nodes: one node max per rival, the rest return to market', async t => {
+  const engine = await ctx_engine(t);
   hostMode(engine);
   const S = fixture(engine, {
     // OIL industry: oil, oilgraph, barrels, tanker, petronas — 5 nodes
@@ -394,8 +394,8 @@ test('EC-08e fewer rivals than divested nodes: one node max per rival, the rest 
   assert.equal(returned.length, 3, 'the remainder rebounds to the market');
 });
 
-test('EC-08f overlapping industry groups break ONE book with a single alert', t => {
-  const engine = ctx_engine(t);
+test('EC-08f overlapping industry groups break ONE book with a single alert', async t => {
+  const engine = await ctx_engine(t);
   hostMode(engine);
   const S = fixture(engine, {
     // press/jt/iface are MEDIA ×3 AND the JTPORTAL group ×3

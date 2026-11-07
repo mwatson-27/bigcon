@@ -4,9 +4,8 @@
  * from there. There is no search over future turns; event-card EV only informs
  * rival evaluation and the bury/intervene answers.
  *
- * Loaded as a classic script AFTER the inline game script, so every top-level
- * binding of the engine exists by the time these functions run. The module
- * NEVER touches engine state directly: the engine hands it a redacted per-seat
+ * An ES module with no imports: it needs nothing from the engine's scope. The
+ * module NEVER touches engine state directly: the engine hands it a redacted per-seat
  * VIEW (a JSON snapshot carrying nothing the wire wouldn't carry — the event
  * deck order is excluded) plus a curated API of engine helpers and the one
  * mutating entrypoint, applyIntent, which is the same gate human guests
@@ -28,7 +27,7 @@
  * Fallback: if this file fails to load, bot seats play it quiet — the same
  * away-seat path the engine already runs (see the startTurn branch).
  */
-(function () {
+export const BigConBots = (function () {
   'use strict';
 
   const B = {
@@ -1786,4 +1785,5 @@
   B.strategyOf = strategyOf;
   B.lobbyLine = lobbyLine;
   B.weights = W;
+  return B;
 })();
