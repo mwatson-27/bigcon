@@ -49,9 +49,27 @@ fs.writeFileSync(tmp, code);
 const { default: worker, BigConRoom } = await import(pathToFileURL(tmp).href);
 fs.unlinkSync(tmp);
 
+/* Async KV + alarm storage, as a Durable Object's ctx.storage. */
+function makeStorage() {
+  const kv = new Map();
+  let alarm = null;
+  return {
+    kv,
+    get: async k => (kv.has(k) ? structuredClone(kv.get(k)) : undefined),
+    put: async (k, v) => { kv.set(k, structuredClone(v)); },
+    delete: async k => kv.delete(k),
+    getAlarm: async () => alarm,
+    setAlarm: async t => { alarm = t; },
+    deleteAlarm: async () => { alarm = null; },
+  };
+}
+
+const HOST_SECRET = 'h'.repeat(64);
+
 function makeRoom() {
   const sockets = [];
   const ctx = {
+    storage: makeStorage(),
     getWebSockets: () => sockets.filter(ws => ws.readyState !== 3),
     acceptWebSocket: ws => sockets.push(ws),
     setWebSocketAutoResponse() {},
@@ -62,9 +80,11 @@ function makeRoom() {
     const res = await room.fetch(new Request(`https://relay/ws/ROOM?role=${role}`, { headers: { Upgrade: 'websocket' } }));
     return { res, ws: res.webSocket ? sockets[sockets.length - 1] : null };
   };
-  room.join = async role => {
+  room.storage = ctx.storage;
+  room.allSockets = sockets;
+  room.join = async (role, secret = HOST_SECRET) => {
     const { ws } = await room.open(role);
-    room.webSocketMessage(ws, JSON.stringify({ type: 'join' }));
+    await room.webSocketMessage(ws, JSON.stringify(role === 'host' ? { type: 'join', role, secret } : { type: 'join', role }));
     return ws;
   };
   room.say = (ws, msg) => room.webSocketMessage(ws, JSON.stringify(msg));
@@ -197,13 +217,13 @@ test('RL-10 a guest join is announced to the host, and data routes both ways', a
   const gid = guest.of('ready')[0].id;
   assert.deepEqual(host.of('incoming'), [{ type: 'incoming', id: gid }]);
 
-  room.say(guest, { type: 'data', data: { hello: 1 } });
+  await room.say(guest, { type: 'data', data: { hello: 1 } });
   assert.deepEqual(host.of('data'), [{ type: 'data', source: gid, data: { hello: 1 } }]);
 
-  room.say(host, { type: 'data', target: gid, data: { reply: 2 } });
+  await room.say(host, { type: 'data', target: gid, data: { reply: 2 } });
   assert.equal(guest.of('data')[0].data.reply, 2);
 
-  room.say(host, { type: 'data', target: 'unknown', data: 1 });
+  await room.say(host, { type: 'data', target: 'unknown', data: 1 });
   assert.equal(guest.of('data').length, 1, 'unknown target receives nothing');
 });
 
@@ -211,11 +231,11 @@ test('RL-11 messages before join are ignored; bad JSON and oversize frames are h
   const room = makeRoom();
   const host = await room.join('host');
   const { ws: early } = await room.open('guest');
-  room.say(early, { type: 'data', data: 'sneaky' });
+  await room.say(early, { type: 'data', data: 'sneaky' });
   assert.equal(host.of('data').length, 0, 'unjoined sockets cannot send data');
-  room.webSocketMessage(early, '{not json');
+  await room.webSocketMessage(early, '{not json');
   assert.equal(early.of('error')[0].code, 'bad-message');
-  room.webSocketMessage(early, 'x'.repeat(256_001));
+  await room.webSocketMessage(early, 'x'.repeat(256_001));
   assert.equal(early.closed.code, 1009);
 });
 
@@ -223,10 +243,10 @@ test('RL-12 closing a guest tells the host; closing the host tells guests', asyn
   const room = makeRoom();
   const host = await room.join('host');
   const guest = await room.join('guest');
-  room.webSocketClose(guest, 1000, '');
+  await room.webSocketClose(guest, 1000, '');
   assert.equal(host.of('left')[0].id, guest.of('ready')[0].id);
   guest.readyState = 1; // still counted: simulate the reconnect window
-  room.webSocketClose(host, 1006, '');
+  await room.webSocketClose(host, 1006, '');
   assert.equal(guest.of('host_lost').length, 1);
 });
 
@@ -234,7 +254,7 @@ test('RL-13 a reconnecting host re-announces joined guests and they get host_bac
   const room = makeRoom();
   const host1 = await room.join('host');
   const guest = await room.join('guest');
-  host1.close(1006, ''); room.webSocketClose(host1, 1006, '');
+  host1.close(1006, ''); await room.webSocketClose(host1, 1006, '');
   const host2 = await room.join('host');
   assert.equal(host2.of('incoming')[0].id, guest.of('ready')[0].id);
   assert.equal(guest.of('host_back').length, 1);
@@ -244,7 +264,7 @@ test('RL-14 host can kick a guest with "leave"', async () => {
   const room = makeRoom();
   const host = await room.join('host');
   const guest = await room.join('guest');
-  room.say(host, { type: 'leave', target: guest.of('ready')[0].id });
+  await room.say(host, { type: 'leave', target: guest.of('ready')[0].id });
   assert.equal(guest.closed.code, 1000);
 });
 
@@ -279,4 +299,196 @@ test('RL-17 joined guests are never evicted by the idle sweep', async () => {
   Date.now = () => realNow() + 60_000;
   try { await room.open('guest'); } finally { Date.now = realNow; }
   assert.equal(guest.closed, null);
+});
+
+/* ---------- host claim (anti-squatting) ---------- */
+const OTHER_SECRET = 'o'.repeat(64);
+const CLAIM_IDLE = 10 * 60_000;
+const withNow = async (offsetMs, fn) => {
+  const realNow = Date.now;
+  Date.now = () => realNow() + offsetMs;
+  try { return await fn(); } finally { Date.now = realNow; }
+};
+/* Simulate the runtime closing a socket: the readyState flips, then webSocketClose fires. */
+const drop = async (room, ws) => { ws.readyState = 3; await room.webSocketClose(ws, 1006, ''); };
+
+test('RL-18 the first host to join claims the room and only a hash is stored', async () => {
+  const room = makeRoom();
+  const host = await room.join('host');
+  assert.equal(host.of('ready').length, 1);
+  assert.equal(host.attachment.joined, true);
+  const claim = await room.storage.get('claim');
+  assert.match(claim.hash, /^[0-9a-f]{64}$/);
+  assert.notEqual(claim.hash, HOST_SECRET, 'the secret itself is never stored');
+  assert.equal(claim.idleSince, null);
+  assert.equal(await room.storage.getAlarm(), null, 'no expiry clock while a host is connected');
+});
+
+test('RL-19 a host reconnecting with the right secret is accepted and guests are re-announced', async () => {
+  const room = makeRoom();
+  const host1 = await room.join('host');
+  const guest = await room.join('guest');
+  await drop(room, host1);
+  assert.equal(guest.of('host_lost').length, 1);
+  const host2 = await room.join('host');
+  assert.equal(host2.of('ready').length, 1);
+  assert.equal(host2.of('error').length, 0);
+  assert.equal(host2.of('incoming')[0].id, guest.of('ready')[0].id);
+  assert.equal(guest.of('host_back').length, 1);
+});
+
+test('RL-20 a wrong host secret is rejected without disturbing guests', async () => {
+  const room = makeRoom();
+  const host1 = await room.join('host');
+  const guest = await room.join('guest');
+  await drop(room, host1);
+  const before = guest.sent.length;
+  const squatter = await room.join('host', OTHER_SECRET);
+  assert.equal(squatter.of('error')[0].code, 'room-claimed');
+  assert.equal(squatter.closed.code, 1008);
+  assert.equal(squatter.of('ready').length, 0);
+  assert.equal(squatter.attachment.joined, false);
+  await room.webSocketClose(squatter, 1008, 'Room claimed'); // the runtime's follow-up callback
+  assert.equal(guest.sent.length, before, 'guest saw nothing: no host_back, no extra host_lost');
+  assert.equal(guest.closed, null);
+  await room.say(guest, { type: 'data', data: 'secret chatter' });
+  assert.equal(squatter.of('data').length, 0, 'guest traffic never reaches the squatter');
+  // The rightful host still gets back in afterwards.
+  const host2 = await room.join('host');
+  assert.equal(host2.of('ready').length, 1);
+  assert.equal(guest.of('host_back').length, 1);
+});
+
+test('RL-21 a missing or malformed host secret is rejected, even on an unclaimed room', async () => {
+  const room = makeRoom();
+  for (const msg of [{ type: 'join', role: 'host' }, { type: 'join', role: 'host', secret: 'short' }, { type: 'join', role: 'host', secret: 12345678901234567890 }, { type: 'join', role: 'host', secret: 'bad chars!'.repeat(4) }]) {
+    const { ws } = await room.open('host');
+    await room.webSocketMessage(ws, JSON.stringify(msg));
+    assert.equal(ws.of('error')[0].code, 'host-secret-required');
+    assert.equal(ws.closed.code, 1008);
+    assert.equal(ws.of('ready').length, 0);
+  }
+  assert.equal(await room.storage.get('claim'), undefined, 'a rejected join never claims the room');
+  // And a missing secret can't take over a claimed room either.
+  await room.join('host');
+  assert.ok(await room.storage.get('claim'));
+});
+
+test('RL-22 a second host join while a host is connected is refused, even with the right secret', async () => {
+  const room = makeRoom();
+  const host = await room.join('host');
+  // Two sockets open before either joins (the fetch-time check can't see the race).
+  const a = (await room.open('host'));
+  assert.equal(a.res.status, 409, 'refused at fetch while a host is connected');
+  host.readyState = 3; // host socket silently gone: fetch passes, then both join
+  const s1 = (await room.open('host')).ws, s2 = (await room.open('host')).ws;
+  await Promise.all([
+    room.webSocketMessage(s1, JSON.stringify({ type: 'join', role: 'host', secret: HOST_SECRET })),
+    room.webSocketMessage(s2, JSON.stringify({ type: 'join', role: 'host', secret: HOST_SECRET })),
+  ]);
+  const joined = [s1, s2].filter(s => s.of('ready').length);
+  assert.equal(joined.length, 1, 'only one racing host wins');
+  const loser = [s1, s2].find(s => !s.of('ready').length);
+  assert.equal(loser.of('error')[0].code, 'host-taken');
+});
+
+test('RL-23 racing first-claims from different secrets: exactly one wins', async () => {
+  const room = makeRoom();
+  const s1 = (await room.open('host')).ws, s2 = (await room.open('host')).ws;
+  await Promise.all([
+    room.webSocketMessage(s1, JSON.stringify({ type: 'join', role: 'host', secret: HOST_SECRET })),
+    room.webSocketMessage(s2, JSON.stringify({ type: 'join', role: 'host', secret: OTHER_SECRET })),
+  ]);
+  assert.equal([s1, s2].filter(s => s.of('ready').length).length, 1);
+  assert.equal([s1, s2].filter(s => s.of('error').length).length, 1);
+});
+
+test('RL-24 the claim starts expiring when the room empties, and a reconnect cancels it', async () => {
+  const room = makeRoom();
+  const host = await room.join('host');
+  const guest = await room.join('guest');
+  await drop(room, host);
+  assert.equal((await room.storage.get('claim')).idleSince, null, 'a guest is still connected: not abandoned');
+  assert.equal(await room.storage.getAlarm(), null);
+  await drop(room, guest);
+  const claim = await room.storage.get('claim');
+  assert.ok(claim.idleSince, 'empty room: idle clock started');
+  assert.equal(await room.storage.getAlarm(), claim.idleSince + CLAIM_IDLE);
+
+  const host2 = await room.join('host');
+  assert.equal(host2.of('ready').length, 1);
+  assert.equal((await room.storage.get('claim')).idleSince, null);
+  assert.equal(await room.storage.getAlarm(), null, 'reconnect cancels the pending expiry');
+});
+
+test('RL-25 an abandoned room can be reclaimed by a different host after the idle period (alarm)', async () => {
+  const room = makeRoom();
+  const host = await room.join('host');
+  await drop(room, host);
+  // Too early: still claimed, and the alarm leaves it alone.
+  await withNow(CLAIM_IDLE - 1000, async () => {
+    await room.alarm();
+    assert.ok(await room.storage.get('claim'));
+    const early = await room.join('host', OTHER_SECRET);
+    assert.equal(early.of('error')[0].code, 'room-claimed');
+  });
+  // Past the deadline the alarm deletes the claim and the code is free.
+  await withNow(CLAIM_IDLE + 1000, async () => {
+    await room.alarm();
+    assert.equal(await room.storage.get('claim'), undefined);
+    const fresh = await room.join('host', OTHER_SECRET);
+    assert.equal(fresh.of('ready').length, 1);
+    assert.equal((await room.storage.get('claim')).idleSince, null);
+  });
+});
+
+test('RL-26 an expired claim is also honoured lazily if the alarm never ran', async () => {
+  const room = makeRoom();
+  const host = await room.join('host');
+  await drop(room, host);
+  let fresh;
+  await withNow(CLAIM_IDLE + 1000, async () => {
+    fresh = await room.join('host', OTHER_SECRET);
+    assert.equal(fresh.of('ready').length, 1, 'no alarm needed');
+  });
+  // The new claim replaced the old one: the original secret no longer works.
+  await drop(room, fresh);
+  const old = await room.join('host', HOST_SECRET);
+  assert.equal(old.of('error')[0].code, 'room-claimed');
+});
+
+test('RL-26b an unjoined host socket is never a routing target for guests', async () => {
+  const room = makeRoom();
+  const host = await room.join('host');
+  await drop(room, host);
+  const { ws: squatter } = await room.open('host'); // connects but never proves the secret
+  assert.equal((await room.open('guest')).res.status, 404, 'an unjoined socket is not a host');
+  const host2 = await room.join('host');
+  const guest = await room.join('guest');
+  await room.say(guest, { type: 'data', data: 'hi' });
+  assert.equal(host2.of('data').length, 1);
+  assert.equal(squatter.of('data').length + squatter.of('incoming').length, 0);
+});
+
+test('RL-27 stray connections cannot extend an abandoned claim, and a busy room is never expired', async () => {
+  const room = makeRoom();
+  const host = await room.join('host');
+  await drop(room, host);
+  const idleSince = (await room.storage.get('claim')).idleSince;
+  const stray = await room.join('host', OTHER_SECRET); // rejected
+  await room.webSocketClose(stray, 1008, '');
+  assert.equal((await room.storage.get('claim')).idleSince, idleSince, 'idle clock not restarted');
+
+  // A live socket at alarm time keeps the claim.
+  const room2 = makeRoom();
+  const h = await room2.join('host');
+  await drop(room2, h);
+  const guest = (await room2.open('guest')); // fetch refuses (no host) so nothing is connected
+  assert.equal(guest.res.status, 404);
+  await withNow(CLAIM_IDLE + 1000, async () => {
+    const h2 = await room2.join('host');
+    assert.equal(h2.of('ready').length, 1);
+    await room2.alarm(); // claim was refreshed when h2 joined
+    assert.ok(await room2.storage.get('claim'));
+  });
 });

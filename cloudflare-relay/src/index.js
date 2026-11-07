@@ -4,6 +4,23 @@ const MAX_CONNECTIONS = 8;
 const DISCORD_CLIENT_ID = "1565709969913815060";
 const UNJOINED_TTL_MS = 10_000;
 const ROOM_RE = /^[A-Z0-9-]{1,40}$/;
+// A room's host claim lapses once the room has had no connected sockets for this long.
+const CLAIM_IDLE_MS = 10 * 60_000;
+const CLAIM_KEY = "claim";
+const SECRET_RE = /^[A-Za-z0-9_-]{16,128}$/;
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Compare without bailing out at the first differing character.
+function safeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
 
 export default {
   async fetch(request, env) {
@@ -178,15 +195,21 @@ export class BigConRoom extends DurableObject {
     super(ctx, env);
     this.ctx = ctx;
     this.env = env;
+    // In-memory only: both guard work inside a single awake period, which can
+    // never span a hibernation. The claim itself lives in storage.
+    this.hostQueue = Promise.resolve();
+    this.joining = new WeakSet();
     this.ctx.setWebSocketAutoResponse?.(
       new WebSocketRequestResponsePair("ping", "pong")
     );
   }
 
+  // Joined, open sockets of a role. A socket that has not completed "join" (for
+  // a host: has not proven the room secret) is never a routing target.
   sockets(role) {
     return this.ctx.getWebSockets().filter((ws) => {
       const a = ws.deserializeAttachment();
-      return a?.role === role && ws.readyState === WebSocket.OPEN;
+      return a?.role === role && a.joined && ws.readyState === WebSocket.OPEN;
     });
   }
 
@@ -203,6 +226,9 @@ export class BigConRoom extends DurableObject {
     const url = new URL(request.url);
     const role = url.searchParams.get("role");
     const hosts = this.sockets("host");
+    // Cheap early refusal while a host is connected. The host secret can't be
+    // checked here (it travels in the join message, not the URL); the join
+    // handler verifies it and re-checks this under a lock.
     if (role === "host" && hosts.length) {
       return new Response("Room already has a host", { status: 409 });
     }
@@ -230,7 +256,7 @@ export class BigConRoom extends DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  webSocketMessage(ws, raw) {
+  async webSocketMessage(ws, raw) {
     let msg;
     try {
       if (typeof raw !== "string" || raw.length > 256_000) {
@@ -247,37 +273,32 @@ export class BigConRoom extends DurableObject {
     if (!attachment) return;
 
     if (msg.type === "join") {
-      if (attachment.joined) return;
-      const hosts = this.sockets("host");
-      if (attachment.role === "guest" && !hosts.length) {
+      if (attachment.joined || this.joining.has(ws)) return;
+      if (attachment.role === "host") {
+        this.joining.add(ws);
+        // One host join at a time, so two racing joins can't both claim the room.
+        const run = this.hostQueue.then(() => this.joinHost(ws, attachment, msg.secret));
+        this.hostQueue = run.catch(() => {});
+        try {
+          await run;
+        } catch {
+          this.send(ws, { type: "error", code: "internal", message: "Could not join the room" });
+          try { ws.close(1011, "Internal error"); } catch {}
+        } finally {
+          this.joining.delete(ws);
+        }
+        return;
+      }
+      const host = this.sockets("host")[0];
+      if (!host) {
         this.send(ws, { type: "error", code: "peer-unavailable", message: "Room host is not connected" });
         ws.close(1013, "Host unavailable");
         return;
       }
       attachment.joined = true;
       ws.serializeAttachment(attachment);
-
-      if (attachment.role === "host") {
-        this.send(ws, { type: "ready", id: attachment.id });
-        // Preserve guest sockets across a host transport reconnect. Re-announce
-        // each guest so the host can rebuild its per-player connection objects.
-        for (const guest of this.sockets("guest")) {
-          const a = guest.deserializeAttachment();
-          if (a?.joined) {
-            this.send(ws, { type: "incoming", id: a.id });
-            this.send(guest, { type: "host_back" });
-          }
-        }
-      } else {
-        const host = this.sockets("host")[0];
-        if (!host) {
-          this.send(ws, { type: "error", code: "peer-unavailable", message: "Room host is not connected" });
-          ws.close(1013, "Host unavailable");
-          return;
-        }
-        this.send(ws, { type: "ready", id: attachment.id });
-        this.send(host, { type: "incoming", id: attachment.id });
-      }
+      this.send(ws, { type: "ready", id: attachment.id });
+      this.send(host, { type: "incoming", id: attachment.id });
       return;
     }
 
@@ -301,15 +322,88 @@ export class BigConRoom extends DurableObject {
     }
   }
 
-  webSocketClose(ws, code, reason) {
+  reject(ws, code, message, closeReason) {
+    this.send(ws, { type: "error", code, message });
+    try { ws.close(1008, closeReason); } catch {}
+  }
+
+  // Host join: the first host to join claims the room by storing a hash of its
+  // secret. Later hosts must present the same secret until the claim lapses.
+  async joinHost(ws, attachment, secret) {
+    if (typeof secret !== "string" || !SECRET_RE.test(secret)) {
+      this.reject(ws, "host-secret-required",
+        "A host secret is required to host a room. Reload the page to update.", "Host secret required");
+      return;
+    }
+    const hash = await sha256Hex(secret);
+    if (ws.readyState !== WebSocket.OPEN) return; // went away while hashing
+
+    let claim = await this.ctx.storage.get(CLAIM_KEY);
+    if (claim?.idleSince && Date.now() - claim.idleSince >= CLAIM_IDLE_MS) claim = null; // lapsed
+    if (claim && !safeEqual(claim.hash, hash)) {
+      this.reject(ws, "room-claimed",
+        "This room code is already claimed by another host. Pick a different code.", "Room claimed");
+      return;
+    }
+    if (this.sockets("host").some((h) => h !== ws)) {
+      this.reject(ws, "host-taken", "Room already has a host", "Host taken");
+      return;
+    }
+    if (ws.readyState !== WebSocket.OPEN) return;
+
+    if (!claim || claim.idleSince) {
+      await this.ctx.storage.put(CLAIM_KEY, { hash, idleSince: null });
+      await this.ctx.storage.deleteAlarm();
+    }
+    if (ws.readyState !== WebSocket.OPEN) return;
+
+    attachment.joined = true;
+    ws.serializeAttachment(attachment);
+    this.send(ws, { type: "ready", id: attachment.id });
+    // Preserve guest sockets across a host transport reconnect. Re-announce
+    // each guest so the host can rebuild its per-player connection objects.
+    for (const guest of this.sockets("guest")) {
+      const a = guest.deserializeAttachment();
+      if (a?.joined) {
+        this.send(ws, { type: "incoming", id: a.id });
+        this.send(guest, { type: "host_back" });
+      }
+    }
+  }
+
+  async webSocketClose(ws, code, reason) {
     const attachment = ws.deserializeAttachment();
     if (!attachment) return;
-    if (attachment.role === "host") {
-      // Guests can remain connected during the host's reconnect backoff.
-      for (const guest of this.sockets("guest")) this.send(guest, { type: "host_lost" });
-    } else {
-      for (const host of this.sockets("host")) this.send(host, { type: "left", id: attachment.id });
+    // Sockets that never joined (including rejected hosts) are invisible to the room.
+    if (attachment.joined) {
+      if (attachment.role === "host") {
+        // Guests can remain connected during the host's reconnect backoff.
+        for (const guest of this.sockets("guest")) this.send(guest, { type: "host_lost" });
+      } else {
+        for (const host of this.sockets("host")) this.send(host, { type: "left", id: attachment.id });
+      }
     }
+    await this.markIdleIfEmpty(ws);
+  }
+
+  // Start the claim's expiry clock when the last socket leaves. It is never
+  // restarted while running, so stray connections can't keep an abandoned code locked.
+  async markIdleIfEmpty(closing) {
+    if (this.ctx.getWebSockets().some((s) => s !== closing && s.readyState === WebSocket.OPEN)) return;
+    const claim = await this.ctx.storage.get(CLAIM_KEY);
+    if (!claim || claim.idleSince) return;
+    const idleSince = Date.now();
+    await this.ctx.storage.put(CLAIM_KEY, { ...claim, idleSince });
+    await this.ctx.storage.setAlarm(idleSince + CLAIM_IDLE_MS);
+  }
+
+  async alarm() {
+    const claim = await this.ctx.storage.get(CLAIM_KEY);
+    if (!claim?.idleSince) return;
+    if (this.ctx.getWebSockets().some((s) => s.readyState === WebSocket.OPEN)) return;
+    const due = claim.idleSince + CLAIM_IDLE_MS;
+    if (Date.now() >= due) await this.ctx.storage.delete(CLAIM_KEY);
+    else await this.ctx.storage.setAlarm(due);
   }
 
   webSocketError(ws) {
