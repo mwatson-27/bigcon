@@ -22,7 +22,7 @@ Relevant implementation areas include `applyIntent()`, `addCortisol()`, `raid()`
 
 **Implemented (all uncommitted at time of writing — review before any commit):**
 
-- `tests/helpers/harness.mjs` — shared harness: loads the entire inline `<script>` of `index.html` into a `node:vm` context with a stubbed DOM, virtual clock, and fake PeerJS connections (recorded sends, auto-acked events, scripted answers, held modals). Seeded `makeGame` retries the seat shuffle (mulberry32) until the host seats at index 0.
+- `tests/helpers/harness.mjs` — shared harness: loads the game scripts of `index.html` (the inline BUILD_COMMIT script plus the classic `<script src>` files under `static/js/`, in document order, joined; `static/bots.js` and the Discord module are excluded) into a `node:vm` context with a stubbed DOM, virtual clock, and fake PeerJS connections (recorded sends, auto-acked events, scripted answers, held modals). Seeded `makeGame` retries the seat shuffle (mulberry32) until the host seats at index 0.
 - `tests/smoke-engine.test.mjs`, `tests/smoke.test.mjs`, `tests/rules-smoke.test.mjs` — pre-existing smoke layer.
 - `tests/cortisol-raids.test.mjs` (CR) — 14 tests; `tests/economy.test.mjs` (EC) — 20 tests.
 - `tests/game-flow.test.mjs` (CF) — 13 tests including the hostile-takeover pricing (CF-06b) and the in-flight action lock.
