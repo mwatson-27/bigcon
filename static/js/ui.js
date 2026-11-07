@@ -205,6 +205,138 @@ export function blockadeTargetable(n){
  return S&&S.phase==='action'&&S.mode==='blockade'&&S.cur===me&&S.owner.albo===me
   &&!S.rubble[n.id]&&!blockaded(n.id);
 }
+/* Edge geometry shared by the board and the hover/path overlay. Under fog of war an edge only shows once both
+   ends are known (or it leads out of the node you stand on), so the overlay can never reveal the hidden map. */
+function edgeVisible(e){
+ if(!(S&&S.fogOfWar))return true;
+ const me=S.players[Net.myIdx],seen=me&&me.visited||{},pos=me&&me.pos,knownA=!!seen[e[0]],knownB=!!seen[e[1]];
+ const frontier=(e[0]===pos&&!knownB)||(e[1]===pos&&!knownA);
+ return (knownA&&knownB)||frontier;
+}
+function edgeCurve(e,i){
+ const A=NMAP[e[0]],B=NMAP[e[1]];
+ if(!A||!B)return null;
+ const dx=B.x-A.x,dy=B.y-A.y,len=Math.hypot(dx,dy)||1;
+ const nx=-dy/len,ny=dx/len;
+ const bow=(i%2===0?1:-1)*(18+Math.min(46,len*0.08));
+ const mx=(A.x+B.x)/2+nx*bow,my=(A.y+B.y)/2+ny*bow;
+ return {d:'M'+A.x+','+A.y+' Q'+mx+','+my+' '+B.x+','+B.y,len,mx,my};
+}
+/* Hover a node: its connections light up. Right-click a node: the shortest route from your seat to it is pinned
+   (any time, not just on your turn) until you right-click it again, click the board, or press Escape. */
+let hoverId=null,pinnedId=null;
+const EDGEIDX={};
+let indexedEdges=null,indexedCount=-1;
+function indexEdges(){
+ Object.keys(EDGEIDX).forEach(k=>delete EDGEIDX[k]);
+ EDGES.forEach((e,i)=>{EDGEIDX[e[0]+'|'+e[1]]=i;EDGEIDX[e[1]+'|'+e[0]]=i});
+ indexedEdges=EDGES;indexedCount=EDGES.length;
+}
+/* the edge list is replaced when the world changes (Geography DLC), so re-index whenever it is a different list */
+function ensureEdgeIndex(){if(indexedEdges!==EDGES||indexedCount!==EDGES.length)indexEdges()}
+function discoveredNode(id){
+ if(!NMAP[id])return false;
+ if(!(S&&S.fogOfWar))return true;
+ const me=S.players[Net.myIdx];
+ return !!(me&&me.visited&&me.visited[id]);
+}
+function visibleLink(a,b){
+ ensureEdgeIndex();
+ const i=EDGEIDX[a+'|'+b];
+ return i!=null&&edgeVisible(EDGES[i])&&discoveredNode(b);
+}
+function myPos(){
+ const me=S&&S.players[Net.myIdx];
+ return me&&NMAP[me.pos]?me.pos:null;
+}
+/* Shortest route over the edges the viewer can see, as a node-id list from `from` to `to` (null if none). */
+export function shortestPath(from,to){
+ if(!S||!NMAP[from]||!NMAP[to])return null;
+ if(from===to)return [from];
+ const prev={};prev[from]=null;
+ const q=[from];
+ for(let h=0;h<q.length;h++){
+  const u=q[h];
+  for(const v of (ADJ[u]||[])){
+   if(v in prev||!visibleLink(u,v))continue;
+   prev[v]=u;
+   if(v===to){const path=[v];for(let x=u;x!=null;x=prev[x])path.push(x);return path.reverse()}
+   q.push(v);
+  }
+ }
+ return null;
+}
+function overlayEdge(a,b,color,w,glowW){
+ ensureEdgeIndex();
+ const i=EDGEIDX[a+'|'+b];
+ if(i==null)return '';
+ const c=edgeCurve(EDGES[i],i);
+ if(!c)return '';
+ const A=NMAP[a],B=NMAP[b];
+ const d='M'+A.x+','+A.y+' Q'+c.mx+','+c.my+' '+B.x+','+B.y;
+ return '<path d="'+d+'" fill="none" stroke="#000" stroke-width="'+glowW+'" opacity=".55" stroke-linecap="round"/><path d="'+d+'" fill="none" stroke="'+color+'" stroke-width="'+w+'" stroke-linecap="round"/>';
+}
+function nodeRing(id,color,w,pad,dash){
+ const n=NMAP[id];if(!n)return '';
+ const b=nodeBox(n),bw=b[0],bh=b[1];
+ return '<rect x="'+(n.x-bw/2-pad)+'" y="'+(n.y-bh/2-pad)+'" width="'+(bw+pad*2)+'" height="'+(bh+pad*2)+'" fill="none" stroke="'+color+'" stroke-width="'+w+'"'+(dash?' stroke-dasharray="'+dash+'"':'')+'/>';
+}
+export function drawHighlights(){
+ const g=$('hlg');
+ if(!g)return;
+ if(!S){g.innerHTML='';return}
+ ensureEdgeIndex();
+ let lines='',out='';
+ const me=myPos();
+ const hov=hoverId&&discoveredNode(hoverId)?hoverId:null;
+ const path=(pinnedId&&discoveredNode(pinnedId)&&me)?shortestPath(me,pinnedId):null;
+ const links=hov?(ADJ[hov]||[]).filter(v=>visibleLink(hov,v)):[];
+ links.forEach(v=>{lines+=overlayEdge(hov,v,'#ffd24a',3.5,8)});
+ if(path&&path.length>1)for(let i=0;i<path.length-1;i++)lines+=overlayEdge(path[i],path[i+1],'#ff5e9c',4.5,10);
+ if(lines){
+  /* the lines stop at the node cards instead of striking across them or over the player tokens */
+  const bounds=boardViewBounds();
+  let cut='';
+  NODES.forEach(n=>{
+   if(!discoveredNode(n.id))return;
+   const b=nodeBox(n);
+   cut+='<rect x="'+(n.x-b[0]/2-3)+'" y="'+(n.y-b[1]/2-3)+'" width="'+(b[0]+6)+'" height="'+(b[1]+6)+'" fill="#000"/>';
+  });
+  out+='<mask id="hlmask" maskUnits="userSpaceOnUse" x="0" y="0" width="'+bounds.w+'" height="'+bounds.h+'"><rect x="0" y="0" width="'+bounds.w+'" height="'+bounds.h+'" fill="#fff"/>'+cut+'</mask><g mask="url(#hlmask)">'+lines+'</g>';
+ }
+ if(hov){
+  out+=nodeRing(hov,'#ffd24a',4,8);
+  links.forEach(v=>{out+=nodeRing(v,'#ffd24a',2.5,6,'6 5')});
+ }
+ if(path&&path.length>1){
+  path.forEach((id,i)=>{
+   const n=NMAP[id],b=nodeBox(n);
+   out+=nodeRing(id,'#ff5e9c',i===0||i===path.length-1?4:2.5,8);
+   if(i>0)out+='<g transform="translate('+(n.x-b[0]/2)+','+(n.y-b[1]/2)+')"><circle r="13" fill="#ff5e9c" stroke="#000" stroke-width="2"/><text text-anchor="middle" y="5" font-size="14" font-weight="900" fill="#000">'+i+'</text></g>';
+  });
+  const t=NMAP[pinnedId],tb=nodeBox(t),steps=path.length-1;
+  out+='<g transform="translate('+t.x+','+(t.y+tb[1]/2+22)+')"><rect x="-52" y="-13" width="104" height="22" fill="#000" stroke="#ff5e9c" stroke-width="2"/><text text-anchor="middle" y="3" font-size="12" font-weight="900" letter-spacing="1" fill="#ff5e9c">'+steps+(steps===1?' STEP':' STEPS')+'</text></g>';
+ }
+ g.innerHTML=out;
+}
+function setHover(id){
+ if(id===hoverId)return;
+ hoverId=id;drawHighlights();
+}
+function clearPin(){
+ if(pinnedId==null)return;
+ pinnedId=null;drawHighlights();
+}
+function pinPathTo(id){
+ if(!S)return;
+ if(pinnedId===id){clearPin();return}
+ const me=myPos();
+ if(!me){hooks.toast('You have no seat on the board to route from.');return}
+ if(!discoveredNode(id))return;
+ if(id===me){clearPin();hooks.toast('You are standing on it.');return}
+ if(!shortestPath(me,id)){pinnedId=null;drawHighlights();hooks.toast('No known route there yet.');return}
+ pinnedId=id;drawHighlights();
+}
 export function renderBoard(){
  const svg=$('board');
  /* static content lives in #root; floating fx live in #fxg and survive re-renders */
@@ -213,7 +345,8 @@ export function renderBoard(){
   svg.innerHTML='';
   root=document.createElementNS('http://www.w3.org/2000/svg','g');root.id='root';
   const fxg=document.createElementNS('http://www.w3.org/2000/svg','g');fxg.id='fxg';
-  svg.appendChild(root);svg.appendChild(fxg);
+  const hlg=document.createElementNS('http://www.w3.org/2000/svg','g');hlg.id='hlg';hlg.setAttribute('pointer-events','none');
+  svg.appendChild(root);svg.appendChild(hlg);svg.appendChild(fxg);
  }
  const md=MOODS[S.mood]||MOODS.CALM;
  const mega=!!(S&&S.layoutKind==='megaring');
@@ -228,14 +361,10 @@ export function renderBoard(){
  s+='<rect x="0" y="0" width="'+bounds.w+'" height="'+bounds.h+'" fill="'+md.tint+'" pointer-events="none"/>';
  s+='<rect x="7" y="7" width="'+(bounds.w-14)+'" height="'+(bounds.h-14)+'" rx="0" fill="none" stroke="#168388" stroke-width="'+(special?8:3)+'" opacity=".7"/>';
  EDGES.forEach((e,i)=>{
-  if(S&&S.fogOfWar){const me=S.players[Net.myIdx],seen=me&&me.visited||{},pos=me&&me.pos,knownA=!!seen[e[0]],knownB=!!seen[e[1]],frontier=(e[0]===pos&&!knownB)||(e[1]===pos&&!knownA);if(!(knownA&&knownB)&&!frontier)return;}
-  const A=NMAP[e[0]],B=NMAP[e[1]];
-  if(!A||!B)return;
-  const dx=B.x-A.x,dy=B.y-A.y,len=Math.hypot(dx,dy)||1;
-  const nx=-dy/len,ny=dx/len;
-  const bow=(i%2===0?1:-1)*(18+Math.min(46,len*0.08));
-  const mx=(A.x+B.x)/2+nx*bow, my=(A.y+B.y)/2+ny*bow;
-  const d='M'+A.x+','+A.y+' Q'+mx+','+my+' '+B.x+','+B.y;
+  if(!edgeVisible(e))return;
+  const c=edgeCurve(e,i);
+  if(!c)return;
+  const d=c.d,len=c.len;
   const hot=S&&!S.over&&S.phase==='move'&&S.mode!=='fly'&&S.steps>0&&(e[0]===curpos||e[1]===curpos);
   const long=len>520;
   s+='<path d="'+d+'" fill="none" stroke="#08383a" stroke-width="'+(hot?6:long?3.5:5)+'" opacity="'+(hot?'.7':'.35')+'"/>';
@@ -286,6 +415,7 @@ export function renderBoard(){
  });
  if(S)s+=tokenLayer();
  root.innerHTML=s;
+ drawHighlights();
  /* floating fx — animate each exactly once, on every screen */
  const fxg=$('fxg');
  const present=new Set(S.fx.map(f=>f.id));
@@ -559,7 +689,7 @@ export function showGame(){
 export function initUI(){
  svgEl=$('board');
 svgEl.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY>0?1.13:0.885,e.clientX,e.clientY)},{passive:false});
-svgEl.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,moved:false};lastTapTarget=e.target;});
+svgEl.addEventListener('pointerdown',e=>{if(e.button>0)return;if(pinnedId!=null&&!(e.target.closest&&e.target.closest('g.node')))clearPin();drag={x:e.clientX,y:e.clientY,moved:false};lastTapTarget=e.target;});
 svgEl.addEventListener('pointermove',e=>{
  if(!drag)return;
  const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
@@ -578,6 +708,18 @@ svgEl.addEventListener('pointerup',()=>{
  if(drag&&!drag.moved)handleNodeTap(lastTapTarget);
  drag=null;svgEl.classList.remove('panning');
 });
+svgEl.addEventListener('mouseover',e=>{
+ if(drag&&drag.moved)return;
+ const g=e.target.closest?e.target.closest('g.node'):null;
+ setHover(g?g.dataset.id:null);
+});
+svgEl.addEventListener('mouseleave',()=>setHover(null));
+svgEl.addEventListener('contextmenu',e=>{
+ e.preventDefault();
+ const g=e.target.closest?e.target.closest('g.node'):null;
+ if(g)pinPathTo(g.dataset.id);else clearPin();
+});
+window.addEventListener('keydown',e=>{if(e.key==='Escape')clearPin()});
 svgEl.addEventListener('pointercancel',()=>{drag=null;svgEl.classList.remove('panning')});
 window.addEventListener('pointerup',e=>{if(drag&&e.target&&e.target!==svgEl&&!svgEl.contains(e.target)){drag=null;svgEl.classList.remove('panning')}});
  $('zin').onclick=()=>{const r=svgEl.getBoundingClientRect();zoomAt(0.8,r.left+r.width/2,r.top+r.height/2)};

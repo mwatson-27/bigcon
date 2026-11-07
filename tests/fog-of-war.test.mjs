@@ -31,7 +31,9 @@ test('Fog of War starts each player knowing only Quikstop and reveals movement d
 
 test('Fog of War masks unexplored map nodes, hides unseen edges and rival tokens', t => {
   assert.match(SOURCE, /class="node fog-node/);
-  assert.match(SOURCE, /if\(!\(knownA&&knownB\)&&!frontier\)return/);
+  /* the edge rule lives in one helper shared by the board and the hover/path overlay */
+  assert.match(SOURCE, /return \(knownA&&knownB\)\|\|frontier/);
+  assert.match(SOURCE, /EDGES\.forEach\(\(e,i\)=>\{\s*if\(!edgeVisible\(e\)\)return/);
   assert.match(SOURCE, /S\.fogOfWar&&pi!==Net\.myIdx/);
   assert.match(SOURCE, /stroke-dasharray="7 6"/);
 });
