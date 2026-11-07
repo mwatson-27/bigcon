@@ -46,7 +46,7 @@ const code = fs.readFileSync(SRC, 'utf8').replace(
   'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }');
 assert.notEqual(code.indexOf('class DurableObject'), -1, 'import stub applied');
 fs.writeFileSync(tmp, code);
-const { default: worker, BigConRoom } = await import(pathToFileURL(tmp).href);
+const { default: worker, BigConRoom, NotifyLimiter } = await import(pathToFileURL(tmp).href);
 fs.unlinkSync(tmp);
 
 /* Async KV + alarm storage, as a Durable Object's ctx.storage. */
@@ -150,22 +150,60 @@ test('RL-04 /api/token: method, config, body validation and exchange', async () 
 
 /* ---------- /api/notify ---------- */
 const CHANNEL = '123456789012345678';
-const notify = (body, token = 'good') => post('/api/notify', body, token ? { Authorization: 'Bearer ' + token } : {});
+const USER = '205519959982473217';
+const INSTANCE = 'i-1276580072400224306-gc-912952092627435520-' + CHANNEL;
+const ORIGIN = `https://${CLIENT_ID}.discordsays.com`;
+const notify = (body, token = 'good', headers = {}) => post('/api/notify', { instance_id: INSTANCE, ...body }, token ? { Authorization: 'Bearer ' + token, ...headers } : headers);
 const turnEvent = { type: 'turn', turn: 3, player: 'Alice' };
 
+/* NotifyLimiter's real class, one instance per Durable Object name, each on a Map-backed fake storage. */
+function makeLimiterNamespace() {
+  const instances = new Map();
+  return {
+    idFromName: n => n,
+    get(id) {
+      if (!instances.has(id)) {
+        const store = new Map();
+        const ctx = { storage: {
+          get: async k => store.get(k), put: async (k, v) => { store.set(k, structuredClone(v)); },
+          setAlarm: async t => { ctx.alarmAt = t; }, deleteAll: async () => { store.clear(); },
+        } };
+        instances.set(id, new NotifyLimiter(ctx, {}));
+      }
+      return instances.get(id);
+    },
+    instances,
+  };
+}
+const makeEnv = (extra = {}) => ({ DISCORD_BOT_TOKEN: 'bot', NOTIFY_LIMITER: makeLimiterNamespace(), ...extra });
+
+/* Discord fake: oauth2/@me, activity-instances and message posting. */
+const discordFake = ({ users = [USER], channel = CHANNEL, instanceStatus = 200, appId = CLIENT_ID, userId = USER } = {}) => url => {
+  if (url.includes('/oauth2/@me')) return Response.json({ application: { id: appId }, user: { id: userId } });
+  if (url.includes('/activity-instances/')) {
+    return instanceStatus === 200
+      ? Response.json({ application_id: CLIENT_ID, instance_id: INSTANCE, location: { id: 'gc-1-' + channel, kind: 'gc', channel_id: channel, guild_id: '912952092627435520' }, users })
+      : Response.json({ message: '404: Not Found', code: 0 }, { status: instanceStatus });
+  }
+  return Response.json({});
+};
+const messagePosts = calls => calls.filter(c => c.url.endsWith('/messages'));
+
 test('RL-05 /api/notify rejects unconfigured, unauthenticated and malformed requests', async () => {
-  const env = { DISCORD_BOT_TOKEN: 'bot' };
+  const env = makeEnv();
   assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), {})).status, 503);
   assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }, null), env)).status, 401);
   assert.equal((await worker.fetch(notify({ channel_id: 'nope', event: turnEvent }), env)).status, 400);
+  assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, instance_id: '../x', event: turnEvent }), env)).status, 400);
+  assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, instance_id: undefined, event: turnEvent }), env)).status, 400, 'instance_id is required');
 });
 
 test('RL-06 /api/notify refuses tokens issued to a different Discord application', async () => {
-  const env = { DISCORD_BOT_TOKEN: 'bot' };
-  await withFetch(() => Response.json({ application: { id: '999' } }), async calls => {
+  const env = makeEnv();
+  await withFetch(() => Response.json({ application: { id: '999' }, user: { id: USER } }), async calls => {
     const res = await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env);
     assert.equal(res.status, 403);
-    assert.equal(calls.length, 1, 'the bot must never be asked to post');
+    assert.equal(calls.length, 1, 'neither the instance lookup nor the bot post may happen');
   });
   await withFetch(() => Response.json({ message: 'bad' }, { status: 401 }), async () => {
     assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env)).status, 401);
@@ -173,11 +211,12 @@ test('RL-06 /api/notify refuses tokens issued to a different Discord application
 });
 
 test('RL-07 /api/notify posts a sanitised turn message with mentions disabled', async () => {
-  const env = { DISCORD_BOT_TOKEN: 'bot' };
-  await withFetch(url => url.includes('/oauth2/@me') ? Response.json({ application: { id: CLIENT_ID } }) : Response.json({}), async calls => {
+  const env = makeEnv();
+  await withFetch(discordFake(), async calls => {
     const res = await worker.fetch(notify({ channel_id: CHANNEL, event: { type: 'turn', turn: 3, player: '@everyone <@1>' } }), env);
     assert.equal(res.status, 200);
-    const post = calls.find(c => c.url.endsWith(`/channels/${CHANNEL}/messages`));
+    const post = messagePosts(calls)[0];
+    assert.ok(post.url.endsWith(`/channels/${CHANNEL}/messages`));
     const body = JSON.parse(post.init.body);
     assert.equal(post.init.headers.Authorization, 'Bot bot');
     assert.deepEqual(body.allowed_mentions, { parse: [] });
@@ -187,8 +226,8 @@ test('RL-07 /api/notify posts a sanitised turn message with mentions disabled', 
 });
 
 test('RL-08 /api/notify game_over lists clamped scores; bad events are rejected', async () => {
-  const env = { DISCORD_BOT_TOKEN: 'bot' };
-  await withFetch(url => url.includes('/oauth2/@me') ? Response.json({ application: { id: CLIENT_ID } }) : Response.json({}), async calls => {
+  const env = makeEnv();
+  await withFetch(discordFake(), async calls => {
     const event = { type: 'game_over', winner: 'Bob', scores: [{ name: 'Bob', money: 1e12 }, { name: 'Eve', money: -5 }, { name: 'Zed', money: 'x' }] };
     assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event }), env)).status, 200);
     const content = JSON.parse(calls.at(-1).init.body).content;
@@ -199,6 +238,131 @@ test('RL-08 /api/notify game_over lists clamped scores; bad events are rejected'
       assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: bad }), env)).status, 400);
     }
   });
+});
+
+/* ---------- /api/notify: instance binding, rate limit, CORS ---------- */
+test('RL-30 happy path: the instance is looked up with the bot token for this application and the message is posted', async () => {
+  const env = makeEnv();
+  await withFetch(discordFake(), async calls => {
+    const res = await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env);
+    assert.equal(res.status, 200);
+    const lookup = calls.find(c => c.url.includes('/activity-instances/'));
+    assert.equal(lookup.url, `https://discord.com/api/v10/applications/${CLIENT_ID}/activity-instances/${INSTANCE}`);
+    assert.equal(lookup.init.headers.Authorization, 'Bot bot');
+    assert.equal(messagePosts(calls).length, 1);
+  });
+});
+
+test("RL-31 a channel that is not the instance's channel is refused with 403 and the bot never posts", async () => {
+  const env = makeEnv();
+  await withFetch(discordFake({ channel: '999999999999999999' }), async calls => {
+    const res = await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env);
+    assert.equal(res.status, 403);
+    assert.equal(messagePosts(calls).length, 0);
+  });
+});
+
+test('RL-32 a caller who is not in the instance, or an unknown instance, gets 403 and the bot never posts', async () => {
+  const env = makeEnv();
+  await withFetch(discordFake({ users: ['111'] }), async calls => {
+    assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env)).status, 403);
+    assert.equal(messagePosts(calls).length, 0);
+  });
+  await withFetch(discordFake({ instanceStatus: 404 }), async calls => {
+    assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env)).status, 403);
+    assert.equal(messagePosts(calls).length, 0);
+  });
+  await withFetch(discordFake({ instanceStatus: 500 }), async () => {
+    assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env)).status, 502);
+  });
+});
+
+test('RL-33 turn notifications are rate limited per channel with 429 + Retry-After; other channels are unaffected', async () => {
+  const env = makeEnv();
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    await withFetch(discordFake(), async calls => {
+      assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env)).status, 200);
+      const limited = await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env);
+      assert.equal(limited.status, 429);
+      assert.equal(limited.headers.get('Retry-After'), '3');
+      assert.equal(messagePosts(calls).length, 1, 'a limited request does not post');
+
+      now += 3_000; // spacing satisfied
+      assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env)).status, 200);
+
+      // per-minute cap: 10 turn messages per channel per minute
+      for (let i = 0; i < 8; i++) { now += 3_000; assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env)).status, 200, 'message ' + (i + 3)); }
+      now += 3_000; // 10 sent in the last 27s
+      const capped = await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env);
+      assert.equal(capped.status, 429);
+      assert.ok(Number(capped.headers.get('Retry-After')) > 3, 'must wait for the window, not just the gap');
+
+      now += 61_000; // window passes
+      assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env)).status, 200);
+    });
+
+    // an unrelated channel has its own budget
+    const OTHER = '223456789012345678';
+    await withFetch(discordFake({ channel: OTHER }), async () => {
+      assert.equal((await worker.fetch(notify({ channel_id: OTHER, event: turnEvent }), env)).status, 200);
+    });
+    assert.ok(env.NOTIFY_LIMITER.instances.has('notify:' + CHANNEL) && env.NOTIFY_LIMITER.instances.has('notify:' + OTHER));
+  } finally { Date.now = realNow; }
+});
+
+test('RL-34 game_over is not starved by a just-sent turn message; the limiter schedules a cleanup alarm', async () => {
+  const env = makeEnv();
+  await withFetch(discordFake(), async () => {
+    assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), env)).status, 200);
+    const over = { type: 'game_over', winner: 'Bob', scores: [] };
+    assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: over }), env)).status, 200);
+    const again = await worker.fetch(notify({ channel_id: CHANNEL, event: over }), env);
+    assert.equal(again.status, 429);
+    assert.equal(again.headers.get('Retry-After'), '10');
+  });
+  const limiter = env.NOTIFY_LIMITER.instances.get('notify:' + CHANNEL);
+  assert.ok(limiter.ctx.alarmAt > Date.now());
+  await limiter.alarm();
+  assert.equal(await limiter.ctx.storage.get('log'), undefined, 'alarm clears stored state');
+});
+
+test('RL-35 rate limiter missing or failing gives 503 and the bot never posts', async () => {
+  await withFetch(discordFake(), async calls => {
+    assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), { DISCORD_BOT_TOKEN: 'bot' })).status, 503);
+    const broken = { DISCORD_BOT_TOKEN: 'bot', NOTIFY_LIMITER: { idFromName: n => n, get: () => ({ take: async () => { throw new Error('boom'); } }) } };
+    assert.equal((await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }), broken)).status, 503);
+    assert.equal(messagePosts(calls).length, 0);
+  });
+});
+
+test('RL-36 CORS: only the Activity origin is reflected (with Vary: Origin); others get no ACAO header', async () => {
+  const env = makeEnv({ DISCORD_CLIENT_SECRET: 's' });
+  for (const path of ['/api/token', '/api/notify']) {
+    const preflight = origin => worker.fetch(new Request('https://relay' + path, { method: 'OPTIONS', headers: origin ? { Origin: origin } : {} }), env);
+    const ok = await preflight(ORIGIN);
+    assert.equal(ok.status, 204);
+    assert.equal(ok.headers.get('Access-Control-Allow-Origin'), ORIGIN);
+    assert.equal(ok.headers.get('Vary'), 'Origin');
+    for (const bad of ['https://evil.example', 'https://other.discordsays.com', 'http://' + CLIENT_ID + '.discordsays.com', 'null']) {
+      const res = await preflight(bad);
+      assert.equal(res.headers.get('Access-Control-Allow-Origin'), null, bad);
+      assert.equal(res.headers.get('Vary'), 'Origin');
+    }
+    assert.equal((await preflight(null)).headers.get('Access-Control-Allow-Origin'), null, 'no Origin header');
+  }
+  // real responses carry the same headers
+  await withFetch(discordFake(), async () => {
+    const good = await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }, 'good', { Origin: ORIGIN }), env);
+    assert.equal(good.headers.get('Access-Control-Allow-Origin'), ORIGIN);
+    const evil = await worker.fetch(notify({ channel_id: CHANNEL, event: turnEvent }, 'good', { Origin: 'https://evil.example' }), env);
+    assert.equal(evil.headers.get('Access-Control-Allow-Origin'), null);
+  });
+  const tok = await worker.fetch(post('/api/token', {}, { Origin: 'https://evil.example' }), env);
+  assert.equal(tok.status, 400);
+  assert.equal(tok.headers.get('Access-Control-Allow-Origin'), null);
 });
 
 /* ---------- BigConRoom ---------- */

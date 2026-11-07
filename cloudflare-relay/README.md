@@ -32,7 +32,7 @@ The OAuth2 client secret is used to exchange Embedded App SDK authorisation code
 
 Create the bot under the **existing Big Con Discord application**, invite it to the server with the `bot` scope, and grant it `Send Messages` in the channel where the Activity runs.
 
-The Activity host sends one turn announcement when the active player changes and one final standings announcement when the game ends. The Worker validates the Activity user's OAuth token before using the bot token.
+The Activity host sends one turn announcement when the active player changes and one final standings announcement when the game ends. The Worker validates the Activity user's OAuth token before using the bot token. It also asks Discord (with the bot token) whether the supplied Activity `instance_id` exists for this application, is running in the requested channel and includes that user, so the bot only posts into the caller's own Activity channel. Notifications are rate limited per channel by the `NotifyLimiter` Durable Object (turns: 1 per 3 s, 10 per minute; game over: 1 per 10 s; 15 per minute total) and return `429` with `Retry-After` when exceeded. CORS allows only `https://<client_id>.discordsays.com`.
 
 ## Relay behaviour
 
